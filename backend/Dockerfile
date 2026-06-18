@@ -4,7 +4,6 @@ WORKDIR /app
 COPY package*.json ./
 COPY prisma ./prisma
 RUN npm install
-
 RUN npx prisma generate
 
 COPY tsconfig.json .
@@ -16,17 +15,12 @@ FROM node:20-alpine
 WORKDIR /app
 ENV NODE_ENV=production
 
-# Prisma 실행에 필요한 OpenSSL 설치
 RUN apk add --no-cache openssl
 
-# builder의 node_modules 복사 후 dev 의존성만 제거 (npm install 재실행 없음)
+# node_modules 전체 복사 (Prisma 바이너리 포함)
 COPY --from=builder /app/node_modules ./node_modules
-RUN npm prune --omit=dev
-
 COPY package*.json ./
 COPY prisma ./prisma
-
-# 빌드 결과물 복사
 COPY --from=builder /app/dist ./dist
 
 EXPOSE 3001
