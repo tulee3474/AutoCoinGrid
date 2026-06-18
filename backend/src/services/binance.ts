@@ -1,0 +1,166 @@
+import axios, { AxiosInstance } from 'axios';
+import crypto from 'crypto';
+import { Kline } from '../types';
+
+const SPOT_BASE = 'https://api.binance.com';
+const FUTURES_BASE = 'https://fapi.binance.com';
+const TESTNET_FUTURES = 'https://testnet.binancefuture.com';
+
+export class BinanceService {
+  private apiKey: string;
+  private apiSecret: string;
+  private futuresBase: string;
+  private spotClient: AxiosInstance;
+  private futuresClient: AxiosInstance;
+
+  constructor(apiKey?: string, apiSecret?: string) {
+    this.apiKey    = apiKey    ?? process.env.BINANCE_API_KEY    ?? '';
+    this.apiSecret = apiSecret ?? process.env.BINANCE_API_SECRET ?? '';
+    this.futuresBase = process.env.USE_TESTNET === 'true' ? TESTNET_FUTURES : FUTURES_BASE;
+
+    this.spotClient = axios.create({ baseURL: SPOT_BASE, timeout: 10000 });
+    this.futuresClient = axios.create({
+      baseURL: this.futuresBase,
+      timeout: 10000,
+      headers: { 'X-MBX-APIKEY': this.apiKey }
+    });
+  }
+
+  private sign(params: Record<string, string | number>): string {
+    const query = new URLSearchParams(params as Record<string, string>).toString();
+    return crypto.createHmac('sha256', this.apiSecret).update(query).digest('hex');
+  }
+
+  private signedParams(params: Record<string, string | number> = {}) {
+    const withTimestamp = { ...params, timestamp: Date.now() };
+    const signature = this.sign(withTimestamp);
+    return { ...withTimestamp, signature };
+  }
+
+  // ── 퍼블릭 API ──────────────────────────────────────────────
+
+  async getKlines(symbol: string, interval: string, limit = 500): Promise<Kline[]> {
+    const { data } = await this.spotClient.get('/api/v3/klines', {
+      params: { symbol, interval, limit }
+    });
+    return data.map((k: any[]) => ({
+      openTime: k[0], open: +k[1], high: +k[2], low: +k[3],
+      close: +k[4], volume: +k[5], closeTime: k[6]
+    }));
+  }
+
+  async getFuturesKlines(symbol: string, interval: string, limit = 500): Promise<Kline[]> {
+    const { data } = await this.futuresClient.get('/fapi/v1/klines', {
+      params: { symbol, interval, limit }
+    });
+    return data.map((k: any[]) => ({
+      openTime: k[0], open: +k[1], high: +k[2], low: +k[3],
+      close: +k[4], volume: +k[5], closeTime: k[6]
+    }));
+  }
+
+  async get24hrTickers(): Promise<any[]> {
+    const { data } = await this.spotClient.get('/api/v3/ticker/24hr');
+    return data;
+  }
+
+  async getFuturesExchangeInfo(): Promise<any> {
+    const { data } = await this.futuresClient.get('/fapi/v1/exchangeInfo');
+    return data;
+  }
+
+  async getFuturesPremiumIndex(): Promise<any[]> {
+    const { data } = await this.futuresClient.get('/fapi/v1/premiumIndex');
+    return data;
+  }
+
+  // ── 인증 필요 API ────────────────────────────────────────────
+
+  async getAccountInfo(): Promise<any> {
+    const { data } = await this.futuresClient.get('/fapi/v2/account', {
+      params: this.signedParams()
+    });
+    return data;
+  }
+
+  async getPositions(): Promise<any[]> {
+    const { data } = await this.futuresClient.get('/fapi/v2/positionRisk', {
+      params: this.signedParams()
+    });
+    return (data as any[]).filter(p => parseFloat(p.positionAmt) !== 0);
+  }
+
+  async getOpenOrders(symbol?: string): Promise<any[]> {
+    const params = symbol ? this.signedParams({ symbol }) : this.signedParams();
+    const { data } = await this.futuresClient.get('/fapi/v1/openOrders', { params });
+    return data;
+  }
+
+  async setLeverage(symbol: string, leverage: number): Promise<any> {
+    const { data } = await this.futuresClient.post('/fapi/v1/leverage', null, {
+      params: this.signedParams({ symbol, leverage })
+    });
+    return data;
+  }
+
+  async setMarginType(symbol: string, marginType: 'ISOLATED' | 'CROSSED'): Promise<any> {
+    try {
+      const { data } = await this.futuresClient.post('/fapi/v1/marginType', null, {
+        params: this.signedParams({ symbol, marginType })
+      });
+      return data;
+    } catch {
+      // 이미 설정된 경우 에러 무시
+    }
+  }
+
+  async placeOrder(params: {
+    symbol: string;
+    side: 'BUY' | 'SELL';
+    type: 'LIMIT' | 'MARKET' | 'STOP_MARKET' | 'TAKE_PROFIT_MARKET';
+    quantity: string;
+    price?: string;
+    stopPrice?: string;
+    reduceOnly?: boolean;
+    positionSide?: 'BOTH' | 'LONG' | 'SHORT';
+  }): Promise<any> {
+    const body: Record<string, string | number> = {
+      symbol: params.symbol,
+      side: params.side,
+      type: params.type,
+      quantity: params.quantity,
+    };
+    if (params.price) { body.price = params.price; body.timeInForce = 'GTC'; }
+    if (params.stopPrice) body.stopPrice = params.stopPrice;
+    if (params.reduceOnly) body.reduceOnly = 'true';
+    if (params.positionSide) body.positionSide = params.positionSide;
+
+    const { data } = await this.futuresClient.post('/fapi/v1/order', null, {
+      params: this.signedParams(body)
+    });
+    return data;
+  }
+
+  async cancelOrder(symbol: string, orderId: number): Promise<any> {
+    const { data } = await this.futuresClient.delete('/fapi/v1/order', {
+      params: this.signedParams({ symbol, orderId })
+    });
+    return data;
+  }
+
+  async cancelAllOrders(symbol: string): Promise<any> {
+    const { data } = await this.futuresClient.delete('/fapi/v1/allOpenOrders', {
+      params: this.signedParams({ symbol })
+    });
+    return data;
+  }
+
+  async getOrder(symbol: string, orderId: number): Promise<any> {
+    const { data } = await this.futuresClient.get('/fapi/v1/order', {
+      params: this.signedParams({ symbol, orderId })
+    });
+    return data;
+  }
+}
+
+export const binance = new BinanceService();

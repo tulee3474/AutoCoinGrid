@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; }
+  body {
+    @apply bg-surface text-gray-100 font-sans;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { @apply bg-card; }
+  ::-webkit-scrollbar-thumb { @apply bg-border rounded-full; }
+}
+
+@layer components {
+  .card { @apply bg-card border border-border rounded-xl p-5; }
+  .btn { @apply px-4 py-2 rounded-lg font-medium text-sm transition-colors cursor-pointer inline-flex items-center gap-1.5; }
+  .btn-primary { @apply btn bg-accent hover:bg-accent-hover text-white; }
+  .btn-danger  { @apply btn bg-red-600 hover:bg-red-500 text-white; }
+  .btn-ghost   { @apply btn bg-transparent hover:bg-border text-gray-300; }
+  .btn-outline { @apply btn border border-border hover:border-accent text-gray-300 hover:text-accent; }
+  .badge-up   { @apply text-up bg-up/10 px-2 py-0.5 rounded text-xs font-semibold; }
+  .badge-down { @apply text-down bg-down/10 px-2 py-0.5 rounded text-xs font-semibold; }
+  .badge-warn { @apply text-warn bg-warn/10 px-2 py-0.5 rounded text-xs font-semibold; }
+  .input  { @apply bg-surface border border-border rounded-lg px-3 py-2 text-sm text-gray-100 w-full focus:outline-none focus:border-accent transition-colors; }
+  .label  { @apply text-xs text-gray-400 mb-1.5 block font-medium; }
+  .page-title { @apply text-xl font-bold text-gray-100; }
+  .page-sub   { @apply text-sm text-gray-400 mt-0.5; }
+  .section-title { @apply text-sm font-semibold text-gray-200; }
+  /* 숫자/가격은 별도로 font-mono 적용 */
+  .num { @apply font-mono; }
+}

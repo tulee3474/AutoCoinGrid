@@ -1,0 +1,136 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  apiKey       String?
+  apiSecret    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  strategies    Strategy[]
+  paperWallet   PaperWallet?
+  livePositions LivePosition[]
+  liveTradeLogs LiveTradeLog[]
+
+  @@map("users")
+}
+
+model Strategy {
+  id         String   @id @default(uuid())
+  userId     String
+  name       String
+  enabled    Boolean  @default(false)
+  conditions Json
+  trade      Json
+  coins      Json     @default("[]")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("strategies")
+}
+
+model PaperWallet {
+  id             String   @id @default(uuid())
+  userId         String   @unique
+  balance        Float    @default(10000)
+  initialBalance Float    @default(10000)
+  updatedAt      DateTime @updatedAt
+
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  openPositions PaperPosition[]
+  tradeLogs     PaperTradeLog[]
+
+  @@map("paper_wallets")
+}
+
+model PaperPosition {
+  id              String   @id @default(uuid())
+  walletId        String
+  symbol          String
+  entryPrice      Float
+  takeProfitPrice Float
+  stopLossPrice   Float
+  entryAmountUsdt Float
+  leverage        Int
+  openedAt        DateTime @default(now())
+  expiresAt       DateTime
+  strategyName    String
+
+  wallet PaperWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@map("paper_positions")
+}
+
+model PaperTradeLog {
+  id              String   @id @default(uuid())
+  walletId        String
+  symbol          String
+  entryTime       DateTime
+  exitTime        DateTime
+  entryPrice      Float
+  exitPrice       Float
+  pnlPct          Float
+  pnlUsdt         Float
+  exitReason      String
+  entryAmountUsdt Float
+  leverage        Int
+  strategyName    String
+
+  wallet PaperWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@map("paper_trade_logs")
+}
+
+model LivePosition {
+  id              String   @id @default(uuid())
+  userId          String
+  symbol          String
+  side            String   @default("SHORT")
+  qty             Float
+  entryPrice      Float
+  takeProfitPrice Float
+  stopLossPrice   Float
+  tpOrderId       BigInt
+  slOrderId       BigInt
+  entryAmountUsdt Float
+  leverage        Int
+  openedAt        DateTime @default(now())
+  expiresAt       DateTime
+  strategyName    String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("live_positions")
+}
+
+model LiveTradeLog {
+  id              String   @id @default(uuid())
+  userId          String
+  symbol          String
+  side            String   @default("SHORT")
+  entryTime       DateTime
+  exitTime        DateTime
+  entryPrice      Float
+  exitPrice       Float
+  pnlPct          Float
+  pnlUsdt         Float
+  exitReason      String
+  entryAmountUsdt Float
+  leverage        Int
+  strategyName    String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("live_trade_logs")
+}

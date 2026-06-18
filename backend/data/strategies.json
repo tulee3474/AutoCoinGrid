@@ -1,0 +1,138 @@
+[
+  {
+    "name": "기본 전략",
+    "enabled": true,
+    "coins": [],
+    "conditions": {
+      "rsi": {
+        "min": 70,
+        "max": 90,
+        "period": 14,
+        "timeframe": "1h"
+      },
+      "priceChange24h": {
+        "min": 30,
+        "max": 200
+      },
+      "volumeMultiplier": {
+        "min": 3,
+        "max": 50
+      },
+      "priceAboveMa200": true,
+      "btcDominanceMax": 55
+    },
+    "trade": {
+      "leverage": 2,
+      "entryAmountUsdt": 100,
+      "gridLevels": 5,
+      "gridSpacing": 10,
+      "takeProfitPct": 20,
+      "stopLossPct": 60,
+      "maxDurationHours": 72
+    },
+    "id": "7fbbb2dc-52d2-45ca-b2d5-f9b3a080028b",
+    "createdAt": 1781677949522
+  },
+  {
+    "name": "넓은 전략",
+    "enabled": true,
+    "coins": [],
+    "conditions": {
+      "rsi": {
+        "min": 10,
+        "max": 90,
+        "period": 14,
+        "timeframe": "1h"
+      },
+      "priceChange24h": {
+        "min": 10,
+        "max": 200
+      },
+      "volumeMultiplier": {
+        "min": 3,
+        "max": 50
+      },
+      "priceAboveMa200": true,
+      "btcDominanceMax": 50
+    },
+    "trade": {
+      "leverage": 2,
+      "entryAmountUsdt": 100,
+      "gridLevels": 5,
+      "gridSpacing": 10,
+      "takeProfitPct": 20,
+      "stopLossPct": 60,
+      "maxDurationHours": 72
+    },
+    "id": "51a70f6d-9161-4e49-91da-a100fa6031e3",
+    "createdAt": 1781687854099
+  },
+  {
+    "name": "도미넌스 57",
+    "enabled": true,
+    "coins": [],
+    "conditions": {
+      "rsi": {
+        "min": 40,
+        "max": 90,
+        "period": 14,
+        "timeframe": "1h"
+      },
+      "priceChange24h": {
+        "min": 20,
+        "max": 200
+      },
+      "volumeMultiplier": {
+        "min": 3,
+        "max": 50
+      },
+      "priceAboveMa200": true,
+      "btcDominanceMax": 57
+    },
+    "trade": {
+      "leverage": 2,
+      "entryAmountUsdt": 100,
+      "gridLevels": 5,
+      "gridSpacing": 10,
+      "takeProfitPct": 20,
+      "stopLossPct": 60,
+      "maxDurationHours": 72
+    },
+    "id": "980920a4-c828-469e-8e94-5f6346b96c7f",
+    "createdAt": 1781697461995
+  },
+  {
+    "name": "테스트",
+    "enabled": true,
+    "coins": [],
+    "conditions": {
+      "rsi": {
+        "min": 5,
+        "max": 90,
+        "period": 14,
+        "timeframe": "1h"
+      },
+      "priceChange24h": {
+        "min": 20,
+        "max": 200
+      },
+      "volumeMultiplier": {
+        "min": 1,
+        "max": 50
+      },
+      "priceAboveMa200": true,
+      "btcDominanceMax": 57
+    },
+    "trade": {
+      "leverage": 2,
+      "entryAmountUsdt": 100,
+      "gridLevels": 5,
+      "gridSpacing": 10,
+      "takeProfitPct": 20,
+      "stopLossPct": 60,
+      "maxDurationHours": 72
+    },
+    "id": "edb74a19-2ae4-420b-a5e3-edc73b6efeba",
+    "createdAt": 1781697547862
+  }
+]

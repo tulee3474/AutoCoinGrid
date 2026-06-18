@@ -1,0 +1,19 @@
+# 프로덕션용 — RDS MySQL 사용 (MySQL 컨테이너 없음)
+# 사용: docker compose -f docker-compose.prod.yml up -d
+
+services:
+  backend:
+    image: autocoin-backend:latest
+    restart: unless-stopped
+    env_file: ./backend/.env
+    ports:
+      - "3001:3001"
+    command: sh -c "npx prisma migrate deploy && node dist/index.js"
+
+  frontend:
+    image: autocoin-frontend:latest
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend

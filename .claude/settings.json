@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "Bash(curl -s http://localhost:3001/api/health)",
+      "Bash(curl -s http://localhost:3001/api/market/dominance)",
+      "Bash(curl -s \"http://localhost:3001/api/market/tickers\")"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\tulee3474\\.claude\\projects\\c--workspaces-AutoCoin\\memory"
+    ]
+  }
+}
