@@ -8,6 +8,8 @@ services:
     env_file: ./backend/.env
     ports:
       - "3001:3001"
+    volumes:
+      - ./backend/data:/app/data   # BTC 도미넌스 CSV 등 영구 저장
     command: sh -c "npx prisma migrate deploy && node dist/index.js"
 
   frontend:
