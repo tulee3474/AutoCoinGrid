@@ -199,11 +199,12 @@ export const getBtcDomDataInfo = () =>
 export const getBtcDomRawCSV = () =>
   api.get('/data/btc-dominance/raw').then(r => r.data.content as string);
 
+// 관리자 전용 (adminApi 사용)
 export const uploadBtcDomCSV = (csv: string) =>
-  api.post('/data/btc-dominance', { csv }).then(r => r.data);
+  adminApi.post('/data/btc-dominance', { csv }).then(r => r.data);
 
 export const deleteBtcDomData = () =>
-  api.delete('/data/btc-dominance').then(r => r.data);
+  adminApi.delete('/data/btc-dominance').then(r => r.data);
 
 export const fetchBtcDomFromCoinGecko = (days = 365) =>
-  api.post('/data/btc-dominance/fetch', null, { params: { days }, timeout: 30_000 }).then(r => r.data);
+  adminApi.post('/data/btc-dominance/fetch', null, { params: { days }, timeout: 60_000 }).then(r => r.data);

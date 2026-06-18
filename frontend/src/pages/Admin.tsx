@@ -1,6 +1,7 @@
 import { useState, useEffect, FormEvent } from 'react';
 import {
   adminLogin, getAdminStats, getAdminUsers, deleteAdminUser,
+  getBtcDomDataInfo, fetchBtcDomFromCoinGecko, uploadBtcDomCSV, deleteBtcDomData,
   AdminUser
 } from '../utils/api';
 
@@ -20,6 +21,11 @@ export default function Admin() {
   const [stats, setStats]     = useState<Stats | null>(null);
   const [users, setUsers]     = useState<AdminUser[]>([]);
   const [search, setSearch]   = useState('');
+
+  const [domInfo, setDomInfo]       = useState<{ hasData: boolean; count?: number; dateRange?: string } | null>(null);
+  const [domLoading, setDomLoading] = useState(false);
+  const [domMsg, setDomMsg]         = useState('');
+  const [csvText, setCsvText]       = useState('');
 
   async function handleLogin(e: FormEvent) {
     e.preventDefault();
@@ -45,10 +51,55 @@ export default function Admin() {
 
   useEffect(() => {
     if (!authed) return;
-    Promise.all([getAdminStats(), getAdminUsers()])
-      .then(([s, u]) => { setStats(s); setUsers(u); })
+    Promise.all([getAdminStats(), getAdminUsers(), getBtcDomDataInfo()])
+      .then(([s, u, d]) => { setStats(s); setUsers(u); setDomInfo(d); })
       .catch(() => { handleLogout(); });
   }, [authed]);
+
+  async function handleDomFetch() {
+    setDomLoading(true);
+    setDomMsg('');
+    try {
+      const r = await fetchBtcDomFromCoinGecko(730);
+      setDomInfo(r.info);
+      setDomMsg(`완료: ${r.saved}개 저장 (${r.dateRange})`);
+    } catch (e: any) {
+      setDomMsg(`오류: ${e.response?.data?.error ?? e.message}`);
+    } finally {
+      setDomLoading(false);
+    }
+  }
+
+  async function handleDomUpload() {
+    if (!csvText.trim()) return;
+    setDomLoading(true);
+    setDomMsg('');
+    try {
+      const r = await uploadBtcDomCSV(csvText);
+      setDomInfo(r.info);
+      setDomMsg(`완료: ${r.saved}개 저장, 오류 ${r.errors}개`);
+      setCsvText('');
+    } catch (e: any) {
+      setDomMsg(`오류: ${e.response?.data?.error ?? e.message}`);
+    } finally {
+      setDomLoading(false);
+    }
+  }
+
+  async function handleDomDelete() {
+    if (!confirm('도미넌스 데이터를 모두 삭제하시겠습니까?')) return;
+    setDomLoading(true);
+    setDomMsg('');
+    try {
+      await deleteBtcDomData();
+      setDomInfo({ hasData: false });
+      setDomMsg('삭제 완료');
+    } catch (e: any) {
+      setDomMsg(`오류: ${e.response?.data?.error ?? e.message}`);
+    } finally {
+      setDomLoading(false);
+    }
+  }
 
   async function handleDelete(userId: string, email: string) {
     if (!confirm(`${email} 계정을 삭제하시겠습니까?`)) return;
@@ -140,6 +191,63 @@ export default function Admin() {
           ))}
         </div>
       )}
+
+      {/* BTC 도미넌스 데이터 관리 */}
+      <div className="bg-card border border-border rounded-xl p-4 mb-6">
+        <h2 className="text-sm font-semibold text-gray-300 mb-3">BTC 도미넌스 데이터</h2>
+
+        <div className="flex items-center gap-3 mb-3 flex-wrap">
+          <div className="text-sm text-gray-400">
+            {domInfo?.hasData
+              ? <span className="text-green-400">{domInfo.count}개 · {domInfo.dateRange}</span>
+              : <span className="text-gray-500">데이터 없음</span>}
+          </div>
+          <button
+            onClick={handleDomFetch}
+            disabled={domLoading}
+            className="text-xs bg-accent text-black font-semibold px-3 py-1.5 rounded-lg hover:bg-accent/90 disabled:opacity-50"
+          >
+            {domLoading ? '처리 중...' : 'CoinGecko 자동 수집 (최근 2년)'}
+          </button>
+          {domInfo?.hasData && (
+            <button
+              onClick={handleDomDelete}
+              disabled={domLoading}
+              className="text-xs text-red-400 border border-red-400/30 px-3 py-1.5 rounded-lg hover:text-red-300 disabled:opacity-50"
+            >
+              데이터 삭제
+            </button>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          <div className="text-xs text-gray-500">CSV 직접 업로드 (형식: date,dominance)</div>
+          <textarea
+            value={csvText}
+            onChange={e => setCsvText(e.target.value)}
+            rows={4}
+            placeholder={"date,dominance\n2024-01-01,52.3\n2024-01-02,51.8"}
+            className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-xs text-gray-300 font-mono focus:outline-none focus:border-accent resize-none"
+          />
+          <button
+            onClick={handleDomUpload}
+            disabled={domLoading || !csvText.trim()}
+            className="text-xs bg-blue-500/20 text-blue-400 border border-blue-400/30 px-3 py-1.5 rounded-lg hover:bg-blue-500/30 disabled:opacity-50"
+          >
+            CSV 업로드
+          </button>
+        </div>
+
+        {domMsg && (
+          <div className={`mt-2 text-xs px-3 py-2 rounded-lg ${
+            domMsg.startsWith('오류')
+              ? 'bg-red-400/10 text-red-400 border border-red-400/20'
+              : 'bg-green-400/10 text-green-400 border border-green-400/20'
+          }`}>
+            {domMsg}
+          </div>
+        )}
+      </div>
 
       {/* 사용자 목록 */}
       <div className="bg-card border border-border rounded-xl p-4">

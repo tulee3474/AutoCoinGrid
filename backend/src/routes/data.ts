@@ -1,23 +1,24 @@
 import { Router } from 'express';
 import { getDataInfo, saveCSV, deleteCSV, fetchFromCoinGecko, CSV_PATH } from '../services/btcDominanceHistory';
 import { existsSync, readFileSync } from 'fs';
+import { requireAdmin } from '../middleware/admin';
 
 const router = Router();
 
-// GET /api/data/btc-dominance - 현재 데이터 현황
+// GET /api/data/btc-dominance - 현재 데이터 현황 (공개)
 router.get('/btc-dominance', (_req, res) => {
   const info = getDataInfo();
   res.json(info);
 });
 
-// GET /api/data/btc-dominance/raw - CSV 원본 반환
+// GET /api/data/btc-dominance/raw - CSV 원본 반환 (공개)
 router.get('/btc-dominance/raw', (_req, res) => {
   if (!existsSync(CSV_PATH)) return res.json({ content: '' });
   res.json({ content: readFileSync(CSV_PATH, 'utf-8') });
 });
 
-// POST /api/data/btc-dominance - CSV 업로드 (body: { csv: string })
-router.post('/btc-dominance', (req, res) => {
+// POST /api/data/btc-dominance - CSV 업로드 (관리자 전용)
+router.post('/btc-dominance', requireAdmin, (req, res) => {
   const { csv } = req.body;
   if (!csv || typeof csv !== 'string') {
     return res.status(400).json({ error: 'csv 필드 필요 (문자열)' });
@@ -26,9 +27,9 @@ router.post('/btc-dominance', (req, res) => {
   res.json({ ...result, info: getDataInfo() });
 });
 
-// POST /api/data/btc-dominance/fetch - CoinGecko에서 자동 수집
+// POST /api/data/btc-dominance/fetch - CoinGecko에서 자동 수집 (관리자 전용)
 // ?days=365 (기본값 365, 최대 730)
-router.post('/btc-dominance/fetch', async (req, res) => {
+router.post('/btc-dominance/fetch', requireAdmin, async (req, res) => {
   const days = Math.min(parseInt(req.query.days as string) || 365, 730);
   try {
     const result = await fetchFromCoinGecko(days);
@@ -41,8 +42,8 @@ router.post('/btc-dominance/fetch', async (req, res) => {
   }
 });
 
-// DELETE /api/data/btc-dominance - 데이터 삭제
-router.delete('/btc-dominance', (_req, res) => {
+// DELETE /api/data/btc-dominance - 데이터 삭제 (관리자 전용)
+router.delete('/btc-dominance', requireAdmin, (_req, res) => {
   deleteCSV();
   res.json({ ok: true });
 });
