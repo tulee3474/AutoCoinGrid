@@ -16,6 +16,9 @@ FROM node:20-alpine
 WORKDIR /app
 ENV NODE_ENV=production
 
+# Prisma 실행에 필요한 OpenSSL 설치
+RUN apk add --no-cache openssl
+
 # builder의 node_modules 복사 후 dev 의존성만 제거 (npm install 재실행 없음)
 COPY --from=builder /app/node_modules ./node_modules
 RUN npm prune --omit=dev
