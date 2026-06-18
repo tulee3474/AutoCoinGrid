@@ -4,7 +4,7 @@ WORKDIR /app
 # 의존성 설치
 COPY package*.json ./
 COPY prisma ./prisma
-RUN npm ci
+RUN npm install
 
 # Prisma 클라이언트 생성 (alpine 네이티브 바이너리)
 RUN npx prisma generate
@@ -23,7 +23,7 @@ COPY package*.json ./
 COPY prisma ./prisma
 
 # 프로덕션 의존성만 설치
-RUN npm ci --omit=dev
+RUN npm install --omit=dev
 
 # 빌더에서 생성된 Prisma 네이티브 바이너리 복사 (같은 alpine 환경이므로 호환)
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
