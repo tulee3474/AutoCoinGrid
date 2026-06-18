@@ -14,8 +14,8 @@ export class BinanceService {
   private futuresClient: AxiosInstance;
 
   constructor(apiKey?: string, apiSecret?: string) {
-    this.apiKey    = apiKey    ?? process.env.BINANCE_API_KEY    ?? '';
-    this.apiSecret = apiSecret ?? process.env.BINANCE_API_SECRET ?? '';
+    this.apiKey    = apiKey    ?? '';
+    this.apiSecret = apiSecret ?? '';
     this.futuresBase = process.env.USE_TESTNET === 'true' ? TESTNET_FUTURES : FUTURES_BASE;
 
     this.spotClient = axios.create({ baseURL: SPOT_BASE, timeout: 10000 });

@@ -4,12 +4,10 @@ import { useStore } from '../store';
 import { getBtcDominance } from '../utils/api';
 
 const NAV = [
-  { to: '/dashboard', label: '대시보드',   icon: '◈' },
-  { to: '/scanner',   label: '스캐너',     icon: '⟳' },
-  { to: '/strategy',  label: '전략 설정',  icon: '◧' },
-  { to: '/backtest',  label: '백테스트',   icon: '◎' },
-  { to: '/paper',     label: '가상 지갑',  icon: '◷' },
-  { to: '/positions', label: '실제 포지션', icon: '◉' },
+  { to: '/dashboard', label: '대시보드',  icon: '◈' },
+  { to: '/strategy',  label: '전략 설정', icon: '◧' },
+  { to: '/backtest',  label: '백테스트',  icon: '◎' },
+  { to: '/paper',     label: '가상 지갑', icon: '◷' },
 ];
 
 export default function Layout() {
@@ -26,13 +24,11 @@ export default function Layout() {
     <div className="flex h-screen overflow-hidden">
       {/* Sidebar */}
       <aside className="w-52 bg-card border-r border-border flex flex-col flex-shrink-0">
-        {/* Logo */}
         <div className="px-5 py-5 border-b border-border">
           <div className="text-base font-bold text-accent tracking-wide">AutoCoin</div>
           <div className="text-xs text-gray-500 mt-0.5">숏 그리드 자동매매</div>
         </div>
 
-        {/* Navigation */}
         <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
           {NAV.map(({ to, label, icon }) => (
             <NavLink
@@ -51,7 +47,6 @@ export default function Layout() {
             </NavLink>
           ))}
 
-          {/* 구분선 */}
           <div className="border-t border-border my-2" />
 
           <NavLink

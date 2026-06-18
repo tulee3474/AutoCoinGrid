@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
-import { getTopTickers, getAccount } from '../utils/api';
+import { getTopTickers } from '../utils/api';
 import { useStore } from '../store';
-import { AccountInfo } from '../types';
 
 interface Ticker {
   symbol: string;
@@ -21,21 +20,18 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
 }
 
 export default function Dashboard() {
-  const { btcDominance, positions, setTopTickers } = useStore();
+  const { btcDominance, setTopTickers } = useStore();
   const [tickers, setTickers] = useState<Ticker[]>([]);
-  const [account, setAccount] = useState<AccountInfo | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchTickers = () =>
       getTopTickers().then(data => {
         setTickers(data);
-        // 급등 코인 목록을 전역 스토어에 저장 (Backtest 등 다른 페이지에서 사용)
         setTopTickers(data.map((t: Ticker) => ({ symbol: t.symbol, change24h: t.change24h, volume24h: t.volume24h })));
       }).catch(() => {});
 
-    Promise.all([fetchTickers(), getAccount().then(setAccount).catch(() => {})])
-      .finally(() => setLoading(false));
+    fetchTickers().finally(() => setLoading(false));
 
     const id = setInterval(fetchTickers, 10_000);
     return () => clearInterval(id);
@@ -49,11 +45,10 @@ export default function Dashboard() {
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold text-gray-100">대시보드</h1>
-        <p className="text-sm text-gray-500 mt-0.5">실시간 시장 현황 및 포지션 요약</p>
+        <p className="text-sm text-gray-500 mt-0.5">실시간 시장 현황</p>
       </div>
 
-      {/* 통계 카드 */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
         <StatCard
           label="BTC 도미넌스"
           value={`${btcDominance.toFixed(1)}%`}
@@ -65,14 +60,9 @@ export default function Dashboard() {
           sub="24h +30% 이상"
         />
         <StatCard
-          label="오픈 포지션"
-          value={`${positions.length}개`}
-          sub="활성 숏 포지션"
-        />
-        <StatCard
-          label="잔고"
-          value={account ? `$${account.totalWalletBalance.toFixed(2)}` : '—'}
-          sub={account ? `미실현: $${account.totalUnrealizedProfit.toFixed(2)}` : 'API 키 필요'}
+          label="모니터링 코인"
+          value={`${tickers.length}개`}
+          sub="선물 마켓"
         />
       </div>
 
@@ -130,12 +120,6 @@ export default function Dashboard() {
               value={`${shortCandidates.length}개`}
               pass={shortCandidates.length >= 3}
               detail="24h +30% 이상 3개 이상"
-            />
-            <ConditionRow
-              label="API 연결"
-              value={account ? '연결됨' : '미연결'}
-              pass={!!account}
-              detail="트레이딩 기능 활성화"
             />
           </div>
 

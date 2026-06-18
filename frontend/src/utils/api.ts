@@ -144,27 +144,6 @@ export const runMultiBacktest = (params: {
   trade: TradeConfig;
 }) => api.post('/backtest/multi', params).then(r => r.data);
 
-// ── 트레이딩 ─────────────────────────────────────────────────
-
-export const getPositions = () =>
-  api.get('/trading/positions').then(r => r.data);
-
-export const getAccount = () =>
-  api.get('/trading/account').then(r => r.data);
-
-export const openShort = (params: {
-  symbol: string;
-  leverage: number;
-  entryAmountUsdt: number;
-  gridLevels: number;
-  gridSpacing: number;
-  takeProfitPct: number;
-  stopLossPct: number;
-}) => api.post('/trading/short', params).then(r => r.data);
-
-export const closePosition = (symbol: string) =>
-  api.delete(`/trading/position/${symbol}`).then(r => r.data);
-
 // ── 가상 지갑 (Paper Trading) ─────────────────────────────────
 
 export const getPaperWallet = () =>

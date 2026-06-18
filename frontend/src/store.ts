@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import {
   StrategyConfig, MarketSnapshot, BacktestResult,
-  FuturesPosition, AccountInfo, ValidationResult,
+  ValidationResult,
   DEFAULT_CONDITIONS, DEFAULT_TRADE
 } from './types';
 
@@ -29,12 +29,6 @@ interface AppState {
   backtesting: boolean;
   setBacktestResult: (r: BacktestResult | null) => void;
   setBacktesting: (v: boolean) => void;
-
-  // 포지션
-  positions: FuturesPosition[];
-  account: AccountInfo | null;
-  setPositions: (p: FuturesPosition[]) => void;
-  setAccount: (a: AccountInfo | null) => void;
 
   // BTC 도미넌스
   btcDominance: number;
@@ -73,11 +67,6 @@ export const useStore = create<AppState>((set) => ({
   backtesting: false,
   setBacktestResult: (backtestResult) => set({ backtestResult }),
   setBacktesting: (backtesting) => set({ backtesting }),
-
-  positions: [],
-  account: null,
-  setPositions: (positions) => set({ positions }),
-  setAccount: (account) => set({ account }),
 
   btcDominance: 50,
   setBtcDominance: (btcDominance) => set({ btcDominance }),

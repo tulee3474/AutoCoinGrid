@@ -7,7 +7,6 @@ import { WebSocketServer, WebSocket } from 'ws';
 import marketRoutes from './routes/market';
 import strategyRoutes from './routes/strategy';
 import backtestRoutes from './routes/backtest';
-import tradingRoutes from './routes/trading';
 import paperRoutes, { setPaperBroadcast } from './routes/paper';
 import dataRoutes from './routes/data';
 import liveRoutes, { setLiveBroadcast } from './routes/live';
@@ -24,14 +23,11 @@ const allowedOrigins = process.env.CORS_ORIGIN
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
 
-// API rate limit (Binance 제한 보호)
 app.use('/api', rateLimit({ windowMs: 60_000, max: 120, message: 'Too many requests' }));
 
-// 라우트
 app.use('/api/market', marketRoutes);
 app.use('/api/strategy', strategyRoutes);
 app.use('/api/backtest', backtestRoutes);
-app.use('/api/trading', tradingRoutes);
 app.use('/api/paper', paperRoutes);
 app.use('/api/data', dataRoutes);
 app.use('/api/live', liveRoutes);
@@ -39,8 +35,6 @@ app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', time: Date.now() }));
-
-// ── WebSocket: 실시간 스캐너/포지션 스트림 ───────────────────
 
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
