@@ -1,6 +1,7 @@
 import { Outlet, NavLink } from 'react-router-dom';
 import { useEffect } from 'react';
 import { useStore } from '../store';
+import { useAuth } from '../context/AuthContext';
 import { getBtcDominance } from '../utils/api';
 
 const NAV = [
@@ -13,6 +14,7 @@ const NAV = [
 
 export default function Layout() {
   const { btcDominance, setBtcDominance } = useStore();
+  const { user } = useAuth();
 
   useEffect(() => {
     const fetch = () => getBtcDominance().then(setBtcDominance).catch(() => {});
@@ -62,6 +64,23 @@ export default function Layout() {
           >
             <span className="text-base w-5 text-center opacity-70">?</span>
             사용 가이드
+          </NavLink>
+
+          <NavLink
+            to="/profile"
+            className={({ isActive }) =>
+              `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                isActive
+                  ? 'bg-accent/15 text-accent font-semibold'
+                  : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
+              }`
+            }
+          >
+            <span className="text-base w-5 text-center opacity-70">◌</span>
+            <span className="flex-1 truncate">내 정보</span>
+            {user && !user.hasApiKeys && (
+              <span className="w-1.5 h-1.5 rounded-full bg-down flex-shrink-0" title="API 키 미등록" />
+            )}
           </NavLink>
         </nav>
 

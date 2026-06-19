@@ -9,6 +9,7 @@ import LiveTrading from './components/LiveTrading';
 import Guide from './components/Guide';
 import Login from './pages/Login';
 import Admin from './pages/Admin';
+import Profile from './pages/Profile';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { token } = useAuth();
@@ -42,6 +43,7 @@ function AppRoutes() {
         <Route path="backtest"  element={<Backtest />} />
         <Route path="paper"     element={<PaperTrading />} />
         <Route path="live"      element={<LiveTrading />} />
+        <Route path="profile"   element={<Profile />} />
         <Route path="guide"     element={<Guide />} />
       </Route>
 
