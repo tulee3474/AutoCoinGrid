@@ -207,7 +207,7 @@ export default function Admin() {
   async function handleDomFetch() {
     setDomLoading(true); setDomMsg('');
     try {
-      const r = await fetchBtcDomFromCoinGecko(730);
+      const r = await fetchBtcDomFromCoinGecko(365);
       setDomInfo(r.info);
       setDomMsg(`완료: ${r.saved}개 저장 (${r.dateRange})`);
     } catch (e: any) {
@@ -478,7 +478,7 @@ export default function Admin() {
           </div>
           <button onClick={handleDomFetch} disabled={domLoading}
             className="text-xs bg-accent text-black font-semibold px-3 py-1.5 rounded-lg hover:bg-accent/90 disabled:opacity-50">
-            {domLoading ? '처리 중... (~4초)' : 'CoinGecko 지금 수집 (최근 2년)'}
+            {domLoading ? '처리 중... (~4초)' : 'CoinGecko 지금 수집 (최근 1년)'}
           </button>
           {domInfo?.hasData && (
             <button onClick={handleDomDelete} disabled={domLoading}
