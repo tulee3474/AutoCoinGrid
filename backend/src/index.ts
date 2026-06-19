@@ -16,6 +16,7 @@ import presetRoutes from './routes/presets';
 import { fetchFromCoinGecko } from './services/btcDominanceHistory';
 
 const app = express();
+app.set('trust proxy', 1); // Docker/nginx 뒤에서 X-Forwarded-For 신뢰
 const PORT = process.env.PORT || 3001;
 
 const allowedOrigins = process.env.CORS_ORIGIN

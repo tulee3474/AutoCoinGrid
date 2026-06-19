@@ -200,13 +200,17 @@ export async function fetchFromCoinGecko(days = 365): Promise<{
       if (actualToday === 0) return { saved: 0, dateRange: null, error: 'CoinGecko /global 응답 오류' };
 
       // 2. 상위 10개 코인 시총 히스토리 수집 (순차 — rate limit 대응)
-      // Demo: interval 파라미터 미지원 → 생략 (days>90 시 자동 일별 반환)
-      // 30 req/min 한도: 11 calls × 350ms = ~4초 소요, 분당 11건 사용 → 여유
+      // /coins/{id}/market_chart 는 Demo 키 없이 무료 티어로 호출해야 함
+      // (Demo 키를 보내면 401 반환 — /global 과 달리 이 엔드포인트는 익명 접근 사용)
+      // 무료 티어 rate limit: 10~30 req/min → 350ms 간격으로 11건 = 분당 11건 ✓
+      const freeHeaders = { Accept: 'application/json' };
       const coinData = new Map<string, Map<string, number>>();
       for (const coinId of TRACKED_COINS) {
         try {
-          const r = await req(`${baseUrl}/coins/${coinId}/market_chart`, {
-            vs_currency: 'usd', days
+          const r = await axios.get(`${baseUrl}/coins/${coinId}/market_chart`, {
+            params: { vs_currency: 'usd', days },
+            timeout: 20_000,
+            headers: freeHeaders
           });
           const dateMap = new Map<string, number>();
           for (const [ts, v] of (r.data.market_caps ?? []) as [number, number][]) {
