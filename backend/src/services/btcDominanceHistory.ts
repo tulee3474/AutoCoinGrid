@@ -146,9 +146,7 @@ export function deleteCSV() {
   cache = null;
 }
 
-// Demo 플랜에서 사용 가능한 상위 10개 코인으로 전체 시총 근사
-// BTC 도미넌스 = BTC 시총 / 전체 시총 × 100
-// 보정: 오늘 /global의 실제 도미넌스와 비교해 스케일 팩터 적용 → 오차 ±3~5%
+// Demo 플랜: 상위 10개 코인 시총 합산 + /global 보정 계수 → 오차 ±3~5%
 const TRACKED_COINS = [
   'bitcoin', 'ethereum', 'tether', 'binancecoin', 'solana',
   'ripple', 'usd-coin', 'cardano', 'dogecoin', 'tron'
@@ -170,102 +168,102 @@ export async function fetchFromCoinGecko(days = 365): Promise<{
     ? { [isPro ? 'x-cg-pro-api-key' : 'x-cg-demo-api-key']: apiKey }
     : {};
   const req = (url: string, params?: object) =>
-    axios.get(url, { params, timeout: 15_000, headers: { Accept: 'application/json', ...authHeaders } });
+    axios.get(url, { params, timeout: 20_000, headers: { Accept: 'application/json', ...authHeaders } });
 
   try {
-    // 1. 오늘의 실제 BTC 도미넌스 (보정용)
-    const globalRes = await req(`${baseUrl}/global`);
-    const actualDominanceToday: number =
-      globalRes.data?.data?.market_cap_percentage?.btc ?? 0;
-    if (actualDominanceToday === 0) {
-      return { saved: 0, dateRange: null, error: 'CoinGecko /global 응답 오류' };
-    }
+    let rows: string[];
 
-    // 2. 상위 10개 코인 시총 히스토리 수집 (순차 호출 — rate limit 대응)
-    const coinData = new Map<string, Map<string, number>>(); // coinId → (date → mcap)
+    if (isPro) {
+      // ── Pro: /global/market_cap_chart 사용 (정확) ─────────────
+      const [btcRes, globalRes] = await Promise.all([
+        req(`${baseUrl}/coins/bitcoin/market_chart`, { vs_currency: 'usd', days, interval: 'daily' }),
+        req(`${baseUrl}/global/market_cap_chart`, { days })
+      ]);
+      const btcMcaps:   [number, number][] = btcRes.data.market_caps ?? [];
+      const totalMcaps: [number, number][] = globalRes.data.market_cap_chart?.market_cap ?? [];
+      if (btcMcaps.length === 0 || totalMcaps.length === 0) {
+        return { saved: 0, dateRange: null, error: 'CoinGecko Pro 응답 데이터 없음' };
+      }
+      const totalMap = new Map<string, number>();
+      for (const [ts, v] of totalMcaps) totalMap.set(new Date(ts).toISOString().slice(0, 10), v);
+      rows = [];
+      for (const [ts, btc] of btcMcaps) {
+        const date  = new Date(ts).toISOString().slice(0, 10);
+        const total = totalMap.get(date);
+        if (total && total > 0) rows.push(`${date},${((btc / total) * 100).toFixed(2)}`);
+      }
+    } else {
+      // ── Demo: 상위 10개 코인 시총 합산 + /global 보정 ──────────
+      // 1. 오늘의 실제 BTC 도미넌스 (보정 계수용)
+      const globalRes = await req(`${baseUrl}/global`);
+      const actualToday: number = globalRes.data?.data?.market_cap_percentage?.btc ?? 0;
+      if (actualToday === 0) return { saved: 0, dateRange: null, error: 'CoinGecko /global 응답 오류' };
 
-    for (const coinId of TRACKED_COINS) {
-      try {
-        const r = await req(`${baseUrl}/coins/${coinId}/market_chart`, {
-          vs_currency: 'usd', days, interval: 'daily'
-        });
-        const mcaps: [number, number][] = r.data.market_caps ?? [];
-        const dateMap = new Map<string, number>();
-        for (const [ts, mcap] of mcaps) {
-          dateMap.set(new Date(ts).toISOString().slice(0, 10), mcap);
+      // 2. 상위 10개 코인 시총 히스토리 수집 (순차 — rate limit 대응)
+      // Demo: 30 req/min → 11 calls × 350ms = ~4초, 분당 사용 11/30 = 문제없음
+      const coinData = new Map<string, Map<string, number>>();
+      for (const coinId of TRACKED_COINS) {
+        try {
+          const r = await req(`${baseUrl}/coins/${coinId}/market_chart`, {
+            vs_currency: 'usd', days, interval: 'daily'
+          });
+          const dateMap = new Map<string, number>();
+          for (const [ts, v] of (r.data.market_caps ?? []) as [number, number][]) {
+            dateMap.set(new Date(ts).toISOString().slice(0, 10), v);
+          }
+          coinData.set(coinId, dateMap);
+        } catch { /* 개별 코인 실패 시 스킵 */ }
+        await new Promise(r => setTimeout(r, 350)); // 분당 30건 한도 내 여유 유지
+      }
+
+      const btcData = coinData.get('bitcoin');
+      if (!btcData || btcData.size === 0) return { saved: 0, dateRange: null, error: 'BTC 시총 데이터 없음' };
+
+      // 3. 날짜별 합산
+      const totalByDate = new Map<string, number>();
+      for (const [, dm] of coinData)
+        for (const [date, v] of dm)
+          totalByDate.set(date, (totalByDate.get(date) ?? 0) + v);
+
+      // 4. 오늘 기준 보정 계수 (상위 10개는 전체의 ~80% → 실제보다 높게 나옴 → 보정)
+      const dates      = [...btcData.keys()].sort();
+      const lastDate   = dates[dates.length - 1];
+      const calcToday  = ((btcData.get(lastDate) ?? 0) / (totalByDate.get(lastDate) ?? 1)) * 100;
+      const corrFactor = calcToday > 0 ? actualToday / calcToday : 1;
+
+      // 5. 날짜별 도미넌스
+      rows = [];
+      for (const date of dates) {
+        const btc   = btcData.get(date) ?? 0;
+        const total = totalByDate.get(date) ?? 0;
+        if (btc > 0 && total > 0) {
+          const dom = Math.min(Math.max((btc / total) * 100 * corrFactor, 0), 100);
+          rows.push(`${date},${dom.toFixed(2)}`);
         }
-        coinData.set(coinId, dateMap);
-      } catch {
-        // 개별 코인 실패 시 스킵
-      }
-      // CoinGecko Demo: 30 req/min → 코인당 300ms 대기
-      await new Promise(r => setTimeout(r, 350));
-    }
-
-    const btcData = coinData.get('bitcoin');
-    if (!btcData || btcData.size === 0) {
-      return { saved: 0, dateRange: null, error: 'BTC 시총 데이터 없음' };
-    }
-
-    // 3. 날짜별 전체 시총 합산 (상위 10개 기준)
-    const totalByDate = new Map<string, number>();
-    for (const [, dateMap] of coinData) {
-      for (const [date, mcap] of dateMap) {
-        totalByDate.set(date, (totalByDate.get(date) ?? 0) + mcap);
       }
     }
 
-    // 4. 보정 계수 계산 (오늘 기준)
-    const allDates   = [...btcData.keys()].sort();
-    const latestDate = allDates[allDates.length - 1];
-    const btcToday   = btcData.get(latestDate) ?? 0;
-    const sumToday   = totalByDate.get(latestDate) ?? 0;
-    const calcToday  = sumToday > 0 ? (btcToday / sumToday) * 100 : 0;
-    const corrFactor = calcToday > 0 ? actualDominanceToday / calcToday : 1;
+    if (rows.length === 0) return { saved: 0, dateRange: null, error: '도미넌스 계산 실패' };
 
-    // 5. 날짜별 도미넌스 계산
-    const rows: string[] = [];
-    for (const date of allDates) {
-      const btcMcap   = btcData.get(date) ?? 0;
-      const totalMcap = totalByDate.get(date) ?? 0;
-      if (btcMcap > 0 && totalMcap > 0) {
-        const dominance = Math.min(Math.max((btcMcap / totalMcap) * 100 * corrFactor, 0), 100);
-        rows.push(`${date},${dominance.toFixed(2)}`);
-      }
-    }
-
-    if (rows.length === 0) {
-      return { saved: 0, dateRange: null, error: '도미넌스 계산 실패' };
-    }
-
-    // 6. 기존 데이터와 병합 후 저장
+    // 기존 데이터와 병합 후 저장
     const existing = getCache();
     const merged   = new Map(existing);
     for (const row of rows) {
-      const [date, dom] = row.split(',');
-      merged.set(date, parseFloat(dom));
+      const [d, v] = row.split(',');
+      merged.set(d, parseFloat(v));
     }
-
     const sorted = [...merged.entries()].sort((a, b) => a[0].localeCompare(b[0]));
     if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-    writeFileSync(
-      CSV_PATH,
-      ['date,dominance', ...sorted.map(([d, v]) => `${d},${v.toFixed(2)}`)].join('\n'),
-      'utf-8'
-    );
+    writeFileSync(CSV_PATH, ['date,dominance', ...sorted.map(([d, v]) => `${d},${v.toFixed(2)}`)].join('\n'), 'utf-8');
     cache = null;
 
-    const dates = sorted.map(r => r[0]);
-    return {
-      saved:     sorted.length,
-      dateRange: `${dates[0]} ~ ${dates[dates.length - 1]}`
-    };
+    const allDates = sorted.map(r => r[0]);
+    return { saved: sorted.length, dateRange: `${allDates[0]} ~ ${allDates[allDates.length - 1]}` };
+
   } catch (e: any) {
-    const status = e.response?.status;
-    const msg = status === 429
-      ? 'CoinGecko 요청 한도 초과 (1분 후 재시도)'
-      : status === 401
-      ? `CoinGecko 인증 실패 — API 키를 확인하세요 (키: ${(process.env.COINGECKO_API_KEY ?? '미설정').slice(0, 8)}...)`
+    const s = e.response?.status;
+    const msg = s === 429 ? 'CoinGecko 요청 한도 초과 (1분 후 재시도)'
+      : s === 401 ? `CoinGecko 인증 실패 — API 키를 확인하세요 (${(process.env.COINGECKO_API_KEY ?? '미설정').slice(0, 8)}...)`
       : e.message;
     return { saved: 0, dateRange: null, error: msg };
   }

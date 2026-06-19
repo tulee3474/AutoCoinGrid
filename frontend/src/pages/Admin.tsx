@@ -459,7 +459,17 @@ export default function Admin() {
 
       {/* BTC 도미넌스 데이터 관리 */}
       <div className="bg-card border border-border rounded-xl p-4 mb-6">
-        <h2 className="text-sm font-semibold text-gray-300 mb-3">BTC 도미넌스 데이터</h2>
+        <h2 className="text-sm font-semibold text-gray-300 mb-1">BTC 도미넌스 데이터</h2>
+
+        {/* 자동 업데이트 안내 */}
+        <div className="mb-3 p-2.5 bg-surface rounded-lg text-xs text-gray-400 space-y-0.5">
+          <p className="text-gray-300 font-semibold mb-1">🕓 자동 업데이트: 매일 새벽 4:00 (서버 시간 기준)</p>
+          <p>· 매일 최근 7일치 데이터를 자동 수집해 기존 CSV에 병합합니다</p>
+          <p>· CoinGecko <strong className="text-gray-200">Demo</strong> 플랜: 11 calls/회 × 30일 = 330 calls/월 사용 (한도 여유)</p>
+          <p>· <strong className="text-gray-200">Pro</strong> 플랜: <code className="bg-card px-1 rounded">/global/market_cap_chart</code> 직접 조회 (정확도 100%)</p>
+          <p>· Demo 플랜: 상위 10개 코인 시총 합산 + 당일 실제값 보정 → 오차 ±3~5%</p>
+        </div>
+
         <div className="flex items-center gap-3 mb-3 flex-wrap">
           <div className="text-sm text-gray-400">
             {domInfo?.hasData
@@ -468,7 +478,7 @@ export default function Admin() {
           </div>
           <button onClick={handleDomFetch} disabled={domLoading}
             className="text-xs bg-accent text-black font-semibold px-3 py-1.5 rounded-lg hover:bg-accent/90 disabled:opacity-50">
-            {domLoading ? '처리 중...' : 'CoinGecko 자동 수집 (최근 2년)'}
+            {domLoading ? '처리 중... (~4초)' : 'CoinGecko 지금 수집 (최근 2년)'}
           </button>
           {domInfo?.hasData && (
             <button onClick={handleDomDelete} disabled={domLoading}
