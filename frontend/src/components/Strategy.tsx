@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../store';
-import { createStrategy, getStrategies, deleteStrategy, toggleStrategy, validateStrategy, runBacktest } from '../utils/api';
+import { createStrategy, getStrategies, deleteStrategy, toggleStrategy, validateStrategy, runBacktest, getPresets, AdminPreset } from '../utils/api';
 import { ValidationResult, BacktestResult, StrategyConditions, TradeConfig } from '../types';
 
 // ── 공통 입력 ────────────────────────────────────────────────
@@ -289,6 +289,9 @@ function ValidationPanel({
 
 // ── 메인 컴포넌트 ─────────────────────────────────────────────
 
+// 앱 세션 내 기본 전략 자동 적용 여부 (새로고침 전까지 1회)
+let defaultApplied = false;
+
 export default function Strategy() {
   const {
     draftConditions, draftTrade, setDraftConditions, setDraftTrade,
@@ -297,6 +300,32 @@ export default function Strategy() {
   } = useStore();
   const [strategyName, setStrategyName] = useState('기본 전략');
   const [saved, setSaved] = useState(false);
+
+  const [recommended, setRecommended] = useState<AdminPreset[]>([]);
+  const [showPresets, setShowPresets] = useState(false);
+  const [applyMsg, setApplyMsg] = useState('');
+
+  useEffect(() => {
+    getPresets().then(({ default: def, recommended: rec }) => {
+      setRecommended(rec);
+      if (!defaultApplied && def) {
+        defaultApplied = true;
+        setDraftConditions(def.conditions as StrategyConditions);
+        setDraftTrade(def.trade as TradeConfig);
+        setStrategyName(def.name);
+      }
+    }).catch(() => {});
+    getStrategies().then(setStrategies).catch(() => {});
+  }, []);
+
+  function applyPreset(p: AdminPreset) {
+    setDraftConditions(p.conditions as StrategyConditions);
+    setDraftTrade(p.trade as TradeConfig);
+    setStrategyName(p.name);
+    setApplyMsg(`"${p.name}" 적용됨`);
+    setShowPresets(false);
+    setTimeout(() => setApplyMsg(''), 2000);
+  }
 
   const setRsi    = (key: 'min' | 'max', v: number) =>
     setDraftConditions({ rsi: { ...draftConditions.rsi, [key]: v } });
@@ -346,6 +375,45 @@ export default function Strategy() {
         <h1 className="page-title">전략 설정</h1>
         <p className="page-sub">숏 진입 조건과 그리드 파라미터를 설정하고 과거 성과를 검증합니다</p>
       </div>
+
+      {/* 추천 전략 패널 */}
+      {recommended.length > 0 && (
+        <div className="card">
+          <button
+            onClick={() => setShowPresets(v => !v)}
+            className="flex items-center justify-between w-full text-left"
+          >
+            <div>
+              <h2 className="section-title">추천 전략</h2>
+              <p className="text-xs text-gray-500 mt-0.5">클릭하면 해당 전략으로 설정이 바뀝니다</p>
+            </div>
+            <span className="text-gray-500 text-sm">{showPresets ? '▲' : '▼'}</span>
+          </button>
+
+          {showPresets && (
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
+              {recommended.map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => applyPreset(p)}
+                  className="text-left p-3 bg-surface rounded-lg border border-border hover:border-accent/50 hover:bg-accent/5 transition-colors"
+                >
+                  <div className="text-sm font-medium text-gray-200">{p.name}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    RSI {p.conditions.rsi.min}~{p.conditions.rsi.max} · 24h +{p.conditions.priceChange24h.min}% · 레버리지 {p.trade.leverage}x
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {applyMsg && (
+            <div className="mt-2 text-xs text-green-400 bg-green-400/10 border border-green-400/20 rounded-lg px-3 py-1.5">
+              {applyMsg}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 진입 조건 */}
       <div className="card space-y-5">

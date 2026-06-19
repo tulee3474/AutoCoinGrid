@@ -12,6 +12,7 @@ import dataRoutes from './routes/data';
 import liveRoutes, { setLiveBroadcast } from './routes/live';
 import authRoutes from './routes/auth';
 import adminRoutes from './routes/admin';
+import presetRoutes from './routes/presets';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -33,6 +34,7 @@ app.use('/api/data', dataRoutes);
 app.use('/api/live', liveRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/presets', presetRoutes);
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', time: Date.now() }));
 

@@ -187,3 +187,28 @@ export const deleteBtcDomData = () =>
 
 export const fetchBtcDomFromCoinGecko = (days = 365) =>
   adminApi.post('/data/btc-dominance/fetch', null, { params: { days }, timeout: 60_000 }).then(r => r.data);
+
+// ── 전략 프리셋 ───────────────────────────────────────────────
+
+export const getPresets = () =>
+  api.get('/presets').then(r => r.data as { default: AdminPreset | null; recommended: AdminPreset[] });
+
+export const adminCreatePreset = (data: Omit<AdminPreset, 'id' | 'createdAt' | 'updatedAt'>) =>
+  adminApi.post('/presets', data).then(r => r.data as AdminPreset);
+
+export const adminUpdatePreset = (id: string, data: Partial<Omit<AdminPreset, 'id'>>) =>
+  adminApi.put(`/presets/${id}`, data).then(r => r.data as AdminPreset);
+
+export const adminDeletePreset = (id: string) =>
+  adminApi.delete(`/presets/${id}`).then(r => r.data);
+
+export interface AdminPreset {
+  id: string;
+  type: 'default' | 'recommended';
+  name: string;
+  conditions: import('../types').StrategyConditions;
+  trade: import('../types').TradeConfig;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}

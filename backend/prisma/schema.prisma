@@ -115,6 +115,19 @@ model LivePosition {
   @@map("live_positions")
 }
 
+model AdminPreset {
+  id         String   @id @default(uuid())
+  type       String   // 'default' | 'recommended'
+  name       String
+  conditions Json
+  trade      Json
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("admin_presets")
+}
+
 model LiveTradeLog {
   id              String   @id @default(uuid())
   userId          String
