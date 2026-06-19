@@ -237,11 +237,18 @@ export async function fetchFromCoinGecko(days = 365): Promise<{
       dateRange: `${dates[0]} ~ ${dates[dates.length - 1]}`
     };
   } catch (e: any) {
-    const msg = e.response?.status === 429
-      ? 'CoinGecko 요청 한도 초과 (1분 후 재시도)'
-      : e.response?.status === 401
-      ? 'CoinGecko API 키 필요 — 수동 CSV 입력 사용'
-      : e.message;
+    const status = e.response?.status;
+    const apiKey = process.env.COINGECKO_API_KEY;
+    let msg: string;
+    if (status === 429) {
+      msg = 'CoinGecko 요청 한도 초과 (1분 후 재시도)';
+    } else if (status === 401) {
+      msg = apiKey
+        ? `CoinGecko 인증 실패 (키: ${apiKey.slice(0, 8)}...) — Demo 플랜에서 /global/market_cap_chart 미지원일 수 있음`
+        : 'COINGECKO_API_KEY 환경변수 미로드 — 컨테이너 재생성 필요 (docker compose up -d --force-recreate)';
+    } else {
+      msg = e.message;
+    }
     return { saved: 0, dateRange: null, error: msg };
   }
 }
