@@ -159,18 +159,28 @@ export async function fetchFromCoinGecko(days = 365): Promise<{
 }> {
   const axios = (await import('axios')).default;
 
+  // API 키가 있으면 헤더에 추가 (Demo: CG-xxx, Pro: 별도 키)
+  const apiKey = process.env.COINGECKO_API_KEY;
+  const isPro  = process.env.COINGECKO_PLAN === 'pro';
+  const baseUrl = isPro
+    ? 'https://pro-api.coingecko.com/api/v3'
+    : 'https://api.coingecko.com/api/v3';
+  const authHeaders: Record<string, string> = apiKey
+    ? { [isPro ? 'x-cg-pro-api-key' : 'x-cg-demo-api-key']: apiKey }
+    : {};
+
   try {
     // 두 API를 병렬 호출
     const [btcRes, globalRes] = await Promise.all([
-      axios.get('https://api.coingecko.com/api/v3/coins/bitcoin/market_chart', {
+      axios.get(`${baseUrl}/coins/bitcoin/market_chart`, {
         params: { vs_currency: 'usd', days, interval: 'daily' },
         timeout: 20_000,
-        headers: { Accept: 'application/json' }
+        headers: { Accept: 'application/json', ...authHeaders }
       }),
-      axios.get('https://api.coingecko.com/api/v3/global/market_cap_chart', {
+      axios.get(`${baseUrl}/global/market_cap_chart`, {
         params: { days },
         timeout: 20_000,
-        headers: { Accept: 'application/json' }
+        headers: { Accept: 'application/json', ...authHeaders }
       })
     ]);
 
