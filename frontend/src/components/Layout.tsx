@@ -8,6 +8,7 @@ const NAV = [
   { to: '/strategy',  label: '전략 설정', icon: '◧' },
   { to: '/backtest',  label: '백테스트',  icon: '◎' },
   { to: '/paper',     label: '가상 지갑', icon: '◷' },
+  { to: '/live',      label: '실제 거래', icon: '◉' },
 ];
 
 export default function Layout() {

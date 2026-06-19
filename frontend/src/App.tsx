@@ -5,6 +5,7 @@ import Dashboard from './components/Dashboard';
 import Strategy from './components/Strategy';
 import Backtest from './components/Backtest';
 import PaperTrading from './components/PaperTrading';
+import LiveTrading from './components/LiveTrading';
 import Guide from './components/Guide';
 import Login from './pages/Login';
 import Admin from './pages/Admin';
@@ -40,6 +41,7 @@ function AppRoutes() {
         <Route path="strategy"  element={<Strategy />} />
         <Route path="backtest"  element={<Backtest />} />
         <Route path="paper"     element={<PaperTrading />} />
+        <Route path="live"      element={<LiveTrading />} />
         <Route path="guide"     element={<Guide />} />
       </Route>
 

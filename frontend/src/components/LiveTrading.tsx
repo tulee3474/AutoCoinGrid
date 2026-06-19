@@ -1,0 +1,387 @@
+import { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
+import {
+  getLiveStatus, startLiveScanner, stopLiveScanner, forceStopLiveScanner,
+  getLivePositions, getLiveLogs, getLiveScanLog, closeLivePosition,
+  getStrategies, toggleStrategy, deleteStrategy, getMe,
+  LivePosition, LiveTradeLog, ScanLogEntry
+} from '../utils/api';
+import { StrategyConfig } from '../types';
+
+const EXIT_LABEL: Record<string, { text: string; cls: string }> = {
+  takeProfit: { text: '익절',   cls: 'bg-up/15 text-up' },
+  stopLoss:   { text: '손절',   cls: 'bg-down/15 text-down' },
+  timeout:    { text: '타임아웃', cls: 'bg-border text-gray-400' },
+  manual:     { text: '수동청산', cls: 'bg-accent/15 text-accent' },
+};
+
+function StatCard({ label, value, sub, valueClass }: { label: string; value: string; sub?: string; valueClass?: string }) {
+  return (
+    <div className="card text-center">
+      <div className="text-xs text-gray-500 mb-1">{label}</div>
+      <div className={`text-xl font-bold num ${valueClass ?? 'text-gray-100'}`}>{value}</div>
+      {sub && <div className="text-xs text-gray-500 mt-0.5">{sub}</div>}
+    </div>
+  );
+}
+
+function ScanLogLine({ entry }: { entry: ScanLogEntry }) {
+  const cls = { info: 'text-gray-400', signal: 'text-up', close: 'text-accent', error: 'text-down' }[entry.type];
+  return (
+    <div className={`text-xs font-mono ${cls} py-0.5`}>
+      <span className="text-gray-600 mr-2">{new Date(entry.time).toLocaleTimeString('ko')}</span>
+      {entry.message}
+    </div>
+  );
+}
+
+export default function LiveTrading() {
+  const [status, setStatus]         = useState<{ running: boolean; stopping: boolean; openCount: number; totalTrades: number } | null>(null);
+  const [positions, setPositions]   = useState<LivePosition[]>([]);
+  const [logs, setLogs]             = useState<LiveTradeLog[]>([]);
+  const [scanLog, setScanLog]       = useState<ScanLogEntry[]>([]);
+  const [strategies, setStrategies] = useState<StrategyConfig[]>([]);
+  const [hasApiKeys, setHasApiKeys] = useState<boolean | null>(null);
+  const [loading, setLoading]       = useState(true);
+  const [stopping, setStopping]     = useState(false);
+
+  const refresh = useCallback(async () => {
+    const [st, pos, lg, sl, me] = await Promise.allSettled([
+      getLiveStatus(),
+      getLivePositions(),
+      getLiveLogs(50),
+      getLiveScanLog(),
+      getMe(),
+    ]);
+    if (st.status  === 'fulfilled') setStatus(st.value);
+    if (pos.status === 'fulfilled') setPositions(pos.value);
+    if (lg.status  === 'fulfilled') setLogs(lg.value);
+    if (sl.status  === 'fulfilled') setScanLog(sl.value);
+    if (me.status  === 'fulfilled') setHasApiKeys(me.value.hasApiKeys);
+    setLoading(false);
+  }, []);
+
+  const refreshStrategies = useCallback(async () => {
+    try { setStrategies(await getStrategies()); } catch {}
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    refreshStrategies();
+    const id = setInterval(refresh, 10_000);
+    return () => clearInterval(id);
+  }, [refresh, refreshStrategies]);
+
+  const handleStart = async () => {
+    await startLiveScanner();
+    await refresh();
+  };
+
+  const handleStop = async () => {
+    await stopLiveScanner();
+    await refresh();
+  };
+
+  const handleForceStop = async () => {
+    if (!confirm('모든 포지션을 즉시 시장가 청산하고 스캐너를 중지합니다. 계속하시겠습니까?')) return;
+    setStopping(true);
+    try {
+      await forceStopLiveScanner();
+      await refresh();
+    } finally {
+      setStopping(false);
+    }
+  };
+
+  const handleClose = async (symbol: string) => {
+    if (!confirm(`${symbol} 포지션을 시장가로 즉시 청산합니까?`)) return;
+    await closeLivePosition(symbol);
+    await refresh();
+  };
+
+  const handleToggleStrategy = async (id: string) => {
+    const updated = await toggleStrategy(id);
+    setStrategies(prev => prev.map(s => s.id === id ? updated : s));
+  };
+
+  const handleDeleteStrategy = async (id: string, name: string) => {
+    if (!confirm(`"${name}" 전략을 삭제하시겠습니까?`)) return;
+    await deleteStrategy(id);
+    setStrategies(prev => prev.filter(s => s.id !== id));
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  const isRunning  = status?.running  ?? false;
+  const isStopping = status?.stopping ?? false;
+
+  return (
+    <div className="space-y-6 max-w-4xl">
+      {/* 헤더 */}
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="page-title">실제 거래 (Live Trading)</h1>
+          <p className="page-sub">개인 Binance API 키로 실제 자금을 사용하는 자동매매입니다</p>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {isRunning && (
+            <button
+              onClick={handleForceStop}
+              disabled={stopping}
+              className="text-sm px-3 py-2 rounded-lg font-medium border border-down/40 text-down hover:bg-down/10 transition-colors disabled:opacity-50"
+            >
+              {stopping ? '청산 중...' : '⚡ 즉시 중지'}
+            </button>
+          )}
+          <button
+            onClick={isRunning ? handleStop : handleStart}
+            disabled={!hasApiKeys}
+            className={`text-sm px-4 py-2 rounded-lg font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+              isRunning
+                ? 'bg-warn/20 text-warn border border-warn/30 hover:bg-warn/30'
+                : 'bg-up/20 text-up border border-up/30 hover:bg-up/30'
+            }`}
+          >
+            {isRunning ? (isStopping ? '⏸ 중지 예정' : '⏹ 스캐너 중지') : '▶ 스캐너 시작'}
+          </button>
+        </div>
+      </div>
+
+      {/* API 키 미등록 경고 */}
+      {hasApiKeys === false && (
+        <div className="p-4 rounded-xl border border-down/40 bg-down/5 text-sm">
+          <p className="text-down font-semibold mb-1">⚠ Binance API 키가 등록되지 않았습니다</p>
+          <p className="text-gray-400 text-xs">
+            실제 거래를 하려면 내 정보에서 Binance API 키와 시크릿을 먼저 등록해야 합니다.
+          </p>
+        </div>
+      )}
+
+      {/* 실거래 위험 안내 */}
+      <div className="p-3 rounded-xl border border-down/30 bg-down/5 text-xs text-down/80 space-y-1">
+        <p className="font-semibold text-down">⚠ 실제 자금 사용 — 주의사항</p>
+        <p>· TP/SL 주문은 Binance에 직접 등록되며 서버가 꺼져도 체결됩니다</p>
+        <p>· 즉시 중지는 모든 포지션을 시장가로 청산합니다 — 슬리피지 발생 가능</p>
+        <p>· 일반 중지는 기존 포지션 모두 정리 후 자동으로 멈춥니다</p>
+      </div>
+
+      {/* 스캐너 상태 배너 */}
+      <div className={`flex items-center gap-3 p-3 rounded-xl border text-sm ${
+        isRunning && !isStopping ? 'bg-up/5 border-up/20 text-up'
+        : isStopping             ? 'bg-warn/5 border-warn/20 text-warn'
+        :                          'bg-border/30 border-border text-gray-500'
+      }`}>
+        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+          isRunning && !isStopping ? 'bg-up animate-pulse'
+          : isStopping             ? 'bg-warn animate-pulse'
+          :                          'bg-gray-600'
+        }`} />
+        {isRunning && !isStopping
+          ? '실거래 스캐너 실행 중 — 1분마다 전체 알트코인 스캔 후 조건 충족 시 실제 숏 진입합니다'
+          : isStopping
+          ? `중지 예정 — 잔여 포지션 ${status?.openCount}개 청산 완료 후 자동 중지됩니다`
+          : '스캐너 중지됨 — 위 버튼으로 시작하세요. 전략을 먼저 활성화해야 신호가 발생합니다'}
+      </div>
+
+      {/* 전략 목록 */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="section-title">전략 목록</h2>
+            <p className="text-xs text-gray-500 mt-0.5">활성화된 전략이 자동 스캔에 사용됩니다</p>
+          </div>
+          <Link to="/strategy" className="text-xs text-accent hover:underline">+ 새 전략 추가</Link>
+        </div>
+        {strategies.length === 0 ? (
+          <div className="text-center py-6">
+            <p className="text-gray-500 text-sm">저장된 전략 없음</p>
+            <Link to="/strategy" className="text-xs text-accent hover:underline mt-1 block">
+              전략 설정 페이지에서 전략을 만들고 저장하세요 →
+            </Link>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {strategies.map(s => (
+              <div key={s.id} className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${
+                s.enabled ? 'border-up/25 bg-up/5' : 'border-border bg-surface'
+              }`}>
+                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${s.enabled ? 'bg-up animate-pulse' : 'bg-gray-600'}`} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-gray-200 truncate">{s.name}</span>
+                    {s.enabled && <span className="text-xs text-up font-semibold">● 활성</span>}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    RSI {s.conditions.rsi.min}~{s.conditions.rsi.max} ·{' '}
+                    24h +{s.conditions.priceChange24h.min}% 이상 ·{' '}
+                    볼륨 {s.conditions.volumeMultiplier.min}x 이상 ·{' '}
+                    레버리지 {s.trade.leverage}x · 진입 ${s.trade.entryAmountUsdt}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    onClick={() => handleToggleStrategy(s.id)}
+                    className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-colors ${
+                      s.enabled
+                        ? 'border-down/30 text-down hover:bg-down/10'
+                        : 'border-up/30 text-up hover:bg-up/10'
+                    }`}
+                  >
+                    {s.enabled ? '중지' : '시작'}
+                  </button>
+                  <Link
+                    to="/strategy"
+                    className="text-xs px-2 py-1.5 rounded-lg border border-border text-gray-400 hover:text-gray-200 hover:border-gray-500 transition-colors"
+                  >
+                    수정
+                  </Link>
+                  <button
+                    onClick={() => handleDeleteStrategy(s.id, s.name)}
+                    className="text-xs px-2 py-1.5 rounded-lg border border-border text-gray-500 hover:text-down hover:border-down/30 transition-colors"
+                  >
+                    삭제
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 통계 */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <StatCard label="오픈 포지션" value={`${status?.openCount ?? 0}개`} />
+        <StatCard label="총 체결 거래" value={`${status?.totalTrades ?? 0}건`} />
+        <StatCard
+          label="실현 손익 (최근 50건)"
+          value={`${logs.reduce((a, l) => a + l.pnlUsdt, 0) >= 0 ? '+' : ''}$${logs.reduce((a, l) => a + l.pnlUsdt, 0).toFixed(2)}`}
+          valueClass={logs.reduce((a, l) => a + l.pnlUsdt, 0) >= 0 ? 'text-up' : 'text-down'}
+        />
+        <StatCard
+          label="승률 (최근 50건)"
+          value={logs.length === 0 ? '-' : `${(logs.filter(l => l.pnlUsdt > 0).length / logs.length * 100).toFixed(1)}%`}
+          valueClass={logs.length > 0 && logs.filter(l => l.pnlUsdt > 0).length / logs.length >= 0.5 ? 'text-up' : 'text-gray-400'}
+        />
+      </div>
+
+      {/* 오픈 포지션 */}
+      <div className="card">
+        <h2 className="section-title mb-4">
+          오픈 포지션
+          <span className="text-gray-500 font-normal ml-2 text-xs">({positions.length}개)</span>
+        </h2>
+        {positions.length === 0 ? (
+          <p className="text-gray-500 text-sm text-center py-6">
+            오픈 포지션 없음 — 스캐너가 조건 충족 코인을 발견하면 자동 진입됩니다
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-gray-500 border-b border-border">
+                  {['코인', '진입가', 'TP', 'SL', '수량', '레버', '만료', '전략', ''].map(h => (
+                    <th key={h} className="text-left pb-2 pr-3 font-medium">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {positions.map(pos => {
+                  const expiresAt = new Date(pos.expiresAt);
+                  const remaining = expiresAt.getTime() - Date.now();
+                  const hoursLeft = Math.max(0, Math.floor(remaining / 3_600_000));
+                  return (
+                    <tr key={pos.id} className="border-b border-border/40 hover:bg-white/3">
+                      <td className="py-2 pr-3 font-bold text-gray-200">{pos.symbol.replace('USDT', '')}</td>
+                      <td className="py-2 pr-3 text-gray-400 num">${pos.entryPrice.toPrecision(5)}</td>
+                      <td className="py-2 pr-3 text-up num">${pos.takeProfitPrice.toPrecision(4)}</td>
+                      <td className="py-2 pr-3 text-down num">${pos.stopLossPrice.toPrecision(4)}</td>
+                      <td className="py-2 pr-3 text-gray-400 num">{pos.qty}</td>
+                      <td className="py-2 pr-3 text-gray-400">{pos.leverage}x</td>
+                      <td className={`py-2 pr-3 num ${hoursLeft < 2 ? 'text-warn' : 'text-gray-500'}`}>
+                        {hoursLeft}h 후
+                      </td>
+                      <td className="py-2 pr-3 text-gray-500 truncate max-w-[80px]">{pos.strategyName}</td>
+                      <td className="py-2">
+                        <button
+                          onClick={() => handleClose(pos.symbol)}
+                          className="text-xs px-2 py-1 rounded border border-border text-gray-400 hover:text-down hover:border-down transition-colors"
+                        >
+                          청산
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* 거래 로그 */}
+        <div className="card">
+          <h2 className="section-title mb-4">
+            거래 로그
+            <span className="text-gray-500 font-normal ml-2 text-xs">최근 50건</span>
+          </h2>
+          {logs.length === 0 ? (
+            <p className="text-gray-500 text-sm text-center py-6">거래 없음</p>
+          ) : (
+            <div className="space-y-1.5 max-h-80 overflow-y-auto">
+              {logs.map(log => {
+                const exit = EXIT_LABEL[log.exitReason];
+                return (
+                  <div key={log.id} className="flex items-center gap-2 text-xs p-2 bg-surface rounded-lg">
+                    <span className="text-gray-300 font-semibold w-14 flex-shrink-0">{log.symbol.replace('USDT', '')}</span>
+                    <span className="text-gray-500 num w-18 flex-shrink-0">${log.entryPrice.toPrecision(4)}</span>
+                    <span className="text-gray-400">→</span>
+                    <span className="text-gray-500 num w-18 flex-shrink-0">${log.exitPrice.toPrecision(4)}</span>
+                    <span className={`font-bold num flex-1 ${log.pnlUsdt >= 0 ? 'text-up' : 'text-down'}`}>
+                      {log.pnlUsdt >= 0 ? '+' : ''}{log.pnlPct.toFixed(2)}%
+                      <span className="text-gray-500 font-normal ml-1">(${log.pnlUsdt.toFixed(2)})</span>
+                    </span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded flex-shrink-0 ${exit.cls}`}>
+                      {exit.text}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* 스캔 로그 */}
+        <div className="card">
+          <h2 className="section-title mb-4">
+            스캔 로그
+            <span className="text-gray-500 font-normal ml-2 text-xs">실시간 이벤트</span>
+          </h2>
+          {scanLog.length === 0 ? (
+            <p className="text-gray-500 text-sm text-center py-6">스캐너를 시작하면 로그가 표시됩니다</p>
+          ) : (
+            <div className="space-y-0.5 max-h-80 overflow-y-auto bg-surface rounded-lg p-3">
+              {scanLog.map((entry, i) => <ScanLogLine key={i} entry={entry} />)}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 안내 */}
+      <div className="card border-warn/20 bg-warn/5 text-xs text-gray-400 space-y-1.5">
+        <p className="text-warn font-semibold text-sm mb-2">실제 거래 동작 방식</p>
+        <p>1. <strong className="text-gray-300">전략 활성화</strong> → 스캐너 시작 → 조건 충족 코인 자동 숏 진입</p>
+        <p>2. 진입 시 Binance에 <strong className="text-gray-300">TP·SL 주문이 직접 등록</strong>됩니다 (서버 꺼도 체결됨)</p>
+        <p>3. 스캐너는 10초~1분마다 Binance 주문 체결 여부를 확인하고 DB를 업데이트합니다</p>
+        <p>4. 서버 재시작 후에도 DB의 포지션이 유지되므로 <strong className="text-gray-300">스캐너만 다시 시작</strong>하면 됩니다</p>
+        <p>5. <strong className="text-gray-300">즉시 중지</strong>: 모든 포지션 시장가 청산 후 종료 · <strong className="text-gray-300">일반 중지</strong>: 신규 진입 중단, 기존 포지션 정리 후 종료</p>
+      </div>
+    </div>
+  );
+}

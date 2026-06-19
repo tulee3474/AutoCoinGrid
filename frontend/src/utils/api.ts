@@ -188,6 +188,69 @@ export const deleteBtcDomData = () =>
 export const fetchBtcDomFromCoinGecko = (days = 365) =>
   adminApi.post('/data/btc-dominance/fetch', null, { params: { days }, timeout: 60_000 }).then(r => r.data);
 
+// ── 실제 거래 (Live Trading) ──────────────────────────────────
+
+export const getLiveStatus = () =>
+  api.get('/live/status').then(r => r.data as { running: boolean; stopping: boolean; openCount: number; totalTrades: number });
+
+export const startLiveScanner = () =>
+  api.post('/live/start').then(r => r.data);
+
+export const stopLiveScanner = () =>
+  api.post('/live/stop').then(r => r.data);
+
+export const forceStopLiveScanner = () =>
+  api.post('/live/force-stop').then(r => r.data);
+
+export const getLivePositions = () =>
+  api.get('/live/positions').then(r => r.data as LivePosition[]);
+
+export const getLiveLogs = (limit = 50) =>
+  api.get('/live/logs', { params: { limit } }).then(r => r.data as LiveTradeLog[]);
+
+export const getLiveScanLog = () =>
+  api.get('/live/scan-log').then(r => r.data as ScanLogEntry[]);
+
+export const closeLivePosition = (symbol: string) =>
+  api.delete(`/live/position/${symbol}`).then(r => r.data);
+
+export interface LivePosition {
+  id: string;
+  symbol: string;
+  side: string;
+  qty: number;
+  entryPrice: number;
+  takeProfitPrice: number;
+  stopLossPrice: number;
+  entryAmountUsdt: number;
+  leverage: number;
+  openedAt: string;
+  expiresAt: string;
+  strategyName: string;
+}
+
+export interface LiveTradeLog {
+  id: string;
+  symbol: string;
+  side: string;
+  entryTime: string;
+  exitTime: string;
+  entryPrice: number;
+  exitPrice: number;
+  pnlPct: number;
+  pnlUsdt: number;
+  exitReason: 'takeProfit' | 'stopLoss' | 'timeout' | 'manual';
+  entryAmountUsdt: number;
+  leverage: number;
+  strategyName: string;
+}
+
+export interface ScanLogEntry {
+  time: number;
+  message: string;
+  type: 'info' | 'signal' | 'close' | 'error';
+}
+
 // ── 전략 프리셋 ───────────────────────────────────────────────
 
 export const getPresets = () =>
