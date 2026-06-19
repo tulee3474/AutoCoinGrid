@@ -176,7 +176,7 @@ export async function fetchFromCoinGecko(days = 365): Promise<{
     if (isPro) {
       // ── Pro: /global/market_cap_chart 사용 (정확) ─────────────
       const [btcRes, globalRes] = await Promise.all([
-        req(`${baseUrl}/coins/bitcoin/market_chart`, { vs_currency: 'usd', days, interval: 'daily' }),
+        req(`${baseUrl}/coins/bitcoin/market_chart`, { vs_currency: 'usd', days }),
         req(`${baseUrl}/global/market_cap_chart`, { days })
       ]);
       const btcMcaps:   [number, number][] = btcRes.data.market_caps ?? [];
@@ -200,20 +200,23 @@ export async function fetchFromCoinGecko(days = 365): Promise<{
       if (actualToday === 0) return { saved: 0, dateRange: null, error: 'CoinGecko /global 응답 오류' };
 
       // 2. 상위 10개 코인 시총 히스토리 수집 (순차 — rate limit 대응)
-      // Demo: 30 req/min → 11 calls × 350ms = ~4초, 분당 사용 11/30 = 문제없음
+      // Demo: interval 파라미터 미지원 → 생략 (days>90 시 자동 일별 반환)
+      // 30 req/min 한도: 11 calls × 350ms = ~4초 소요, 분당 11건 사용 → 여유
       const coinData = new Map<string, Map<string, number>>();
       for (const coinId of TRACKED_COINS) {
         try {
           const r = await req(`${baseUrl}/coins/${coinId}/market_chart`, {
-            vs_currency: 'usd', days, interval: 'daily'
+            vs_currency: 'usd', days
           });
           const dateMap = new Map<string, number>();
           for (const [ts, v] of (r.data.market_caps ?? []) as [number, number][]) {
             dateMap.set(new Date(ts).toISOString().slice(0, 10), v);
           }
           coinData.set(coinId, dateMap);
-        } catch { /* 개별 코인 실패 시 스킵 */ }
-        await new Promise(r => setTimeout(r, 350)); // 분당 30건 한도 내 여유 유지
+        } catch (e: any) {
+          console.warn(`[BtcDom] ${coinId} 시총 조회 실패: ${e.response?.status ?? e.message}`);
+        }
+        await new Promise(r => setTimeout(r, 350));
       }
 
       const btcData = coinData.get('bitcoin');
