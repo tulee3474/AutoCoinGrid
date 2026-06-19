@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { prisma } from '../lib/prisma';
+import prisma from '../lib/prisma';
 import { requireAdmin } from '../middleware/admin';
 
 const router = Router();

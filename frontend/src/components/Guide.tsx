@@ -1,12 +1,4 @@
-import { useState, useEffect } from 'react';
-import { getBtcDomDataInfo, getBtcDomRawCSV, uploadBtcDomCSV, deleteBtcDomData, fetchBtcDomFromCoinGecko } from '../utils/api';
-
-interface Section {
-  id: string;
-  title: string;
-  icon: string;
-  content: React.ReactNode;
-}
+import { useState } from 'react';
 
 function AccordionItem({ title, icon, children }: { title: string; icon: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -64,158 +56,6 @@ function InfoBox({ type, children }: { type: 'tip' | 'warn' | 'danger'; children
   );
 }
 
-// ── BTC 도미넌스 데이터 관리 컴포넌트 ─────────────────────────
-
-function BtcDomDataManager() {
-  const [info, setInfo]       = useState<{ count: number; dateRange: string | null; hasData: boolean } | null>(null);
-  const [csv, setCsv]         = useState('');
-  const [status, setStatus]   = useState<string | null>(null);
-  const [saving, setSaving]   = useState(false);
-  const [fetching, setFetching] = useState(false);
-
-  const refresh = async () => {
-    try { setInfo(await getBtcDomDataInfo()); } catch {}
-  };
-
-  useEffect(() => {
-    refresh();
-  }, []);
-
-  const handleLoadExisting = async () => {
-    const raw = await getBtcDomRawCSV();
-    setCsv(raw);
-  };
-
-  const handleAutoFetch = async (days: number) => {
-    setFetching(true);
-    setStatus(null);
-    try {
-      const r = await fetchBtcDomFromCoinGecko(days);
-      setStatus(`CoinGecko 수집 완료: ${r.saved}개 항목 (${r.dateRange})`);
-      await refresh();
-    } catch (e: any) {
-      const msg = e.response?.data?.error ?? e.message;
-      setStatus(`오류: ${msg}`);
-    } finally {
-      setFetching(false);
-    }
-  };
-
-  const handleSave = async () => {
-    if (!csv.trim()) { setStatus('CSV 내용을 입력하세요'); return; }
-    setSaving(true);
-    setStatus(null);
-    try {
-      const r = await uploadBtcDomCSV(csv);
-      setStatus(`저장 완료: ${r.saved}개 항목 / 오류: ${r.errors}개`);
-      await refresh();
-    } catch (e: any) {
-      setStatus(`오류: ${e.response?.data?.error ?? e.message}`);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!confirm('BTC 도미넌스 데이터를 삭제하겠습니까? 이후 백테스트에서 도미넌스 조건이 무시됩니다.')) return;
-    await deleteBtcDomData();
-    setCsv('');
-    setStatus('삭제됨');
-    await refresh();
-  };
-
-  return (
-    <div className="space-y-4">
-      {/* 현재 데이터 상태 */}
-      <div className={`p-3 rounded-lg border text-xs ${
-        info?.hasData ? 'border-up/25 bg-up/8 text-up' : 'border-border bg-surface text-gray-400'
-      }`}>
-        {info?.hasData
-          ? `데이터 있음 — ${info.count}개 항목 · ${info.dateRange}`
-          : '데이터 없음 — 백테스트에서 BTC 도미넌스 조건이 무시됩니다'}
-      </div>
-
-      {/* 방법 1: CoinGecko 자동 수집 (추천) */}
-      <div className="border border-accent/20 rounded-xl p-4 space-y-3">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-bold text-accent bg-accent/10 px-2 py-0.5 rounded-full">추천</span>
-          <p className="text-sm font-semibold text-gray-200">방법 1 — CoinGecko API 자동 수집</p>
-        </div>
-        <p className="text-xs text-gray-400">
-          버튼 하나로 CoinGecko 무료 API에서 BTC 시총 / 전체 시총을 가져와
-          도미넌스를 계산하고 자동 저장합니다. API 키 불필요.
-        </p>
-        <div className="flex items-center gap-3 flex-wrap">
-          {[365, 730].map(days => (
-            <button
-              key={days}
-              onClick={() => handleAutoFetch(days)}
-              disabled={fetching}
-              className="btn-primary text-sm disabled:opacity-50"
-            >
-              {fetching ? '수집 중...' : `${days}일치 가져오기`}
-            </button>
-          ))}
-          {fetching && (
-            <span className="text-xs text-gray-400 animate-pulse">
-              CoinGecko API 호출 중... (10~20초 소요)
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* 방법 2: 수동 CSV 입력 */}
-      <details className="border border-border rounded-xl overflow-hidden">
-        <summary className="px-4 py-3 text-sm text-gray-400 hover:text-gray-200 cursor-pointer select-none bg-surface">
-          방법 2 — CSV 직접 붙여넣기 (CoinMarketCap 등)
-        </summary>
-        <div className="p-4 space-y-3 border-t border-border">
-          <div className="text-xs text-gray-400 space-y-2">
-            <div className="bg-surface rounded-lg p-3 font-mono space-y-0.5 text-gray-500">
-              <p className="text-gray-300">date,dominance</p>
-              <p>2024-01-15,52.34</p>
-              <p>2024-01-16,51.90</p>
-              <p className="text-gray-500 mt-1"># CoinMarketCap 형식도 자동 파싱:</p>
-              <p>"Jan 15, 2024","52.34%"</p>
-            </div>
-            <p className="text-gray-500">
-              또는 <code className="text-accent bg-surface px-1 rounded">backend/data/btc_dominance.csv</code> 파일 직접 편집
-            </p>
-          </div>
-          <textarea
-            className="w-full h-36 bg-surface border border-border rounded-lg p-3 text-xs font-mono text-gray-300 resize-none focus:outline-none focus:border-accent"
-            placeholder={'date,dominance\n2024-01-15,52.34\n2024-01-16,51.90\n...'}
-            value={csv}
-            onChange={e => setCsv(e.target.value)}
-          />
-          <div className="flex items-center gap-3 flex-wrap">
-            <button onClick={handleSave} disabled={saving} className="btn-primary text-sm disabled:opacity-50">
-              {saving ? '저장 중...' : '저장'}
-            </button>
-            {info?.hasData && (
-              <button onClick={handleLoadExisting} className="btn-outline text-sm">기존 데이터 불러오기</button>
-            )}
-          </div>
-        </div>
-      </details>
-
-      {/* 데이터 삭제 */}
-      {info?.hasData && (
-        <div className="flex items-center justify-between">
-          <button onClick={handleDelete} className="text-xs text-gray-500 hover:text-down transition-colors">
-            데이터 삭제
-          </button>
-        </div>
-      )}
-
-      {/* 상태 메시지 */}
-      {status && (
-        <p className={`text-xs ${status.startsWith('오류') ? 'text-down' : 'text-up'}`}>{status}</p>
-      )}
-    </div>
-  );
-}
-
 export default function Guide() {
   return (
     <div className="max-w-2xl space-y-6">
@@ -255,15 +95,13 @@ export default function Guide() {
       <AccordionItem icon="🗺" title="사용 순서 (권장 플로우)">
         <div className="space-y-4">
           <Step num={1} title="전략 설정 (/strategy)"
-            desc="진입 조건(RSI, 24h 상승률, 볼륨 배수 등)과 그리드 파라미터를 설정합니다." />
+            desc="진입 조건(RSI, 24h 상승률, 볼륨 배수 등)과 그리드 파라미터를 설정합니다. 추천 전략을 클릭하면 바로 적용됩니다." />
           <Step num={2} title="승률 검증 → 전략 설정 화면 하단"
-            desc="'승률 검증' 버튼을 눌러 상위 20개 알트코인의 과거 데이터로 베이지안 승률을 계산합니다. 기댓값(EV)이 양수일 때만 실전에서 사용하세요." />
+            desc="'승률 검증' 버튼을 눌러 상위 알트코인의 과거 데이터로 베이지안 승률을 계산합니다. 기댓값(EV)이 양수일 때만 실전에서 사용하세요." />
           <Step num={3} title="백테스트 (/backtest)"
             desc="특정 코인으로 더 긴 기간의 상세 백테스트를 실행하고 에퀴티 커브를 확인합니다." />
-          <Step num={4} title="시장 스캐너 (/scanner)"
-            desc="현재 시장에서 설정한 조건을 충족하는 코인을 탐색합니다. 시그널 스코어가 높은 코인에 진입하세요." />
-          <Step num={5} title="포지션 모니터링 (/positions)"
-            desc="API 키 설정 후 실시간 손익과 그리드 주문 현황을 확인합니다. 필요시 즉시 청산 가능합니다." />
+          <Step num={4} title="가상 지갑 (/paper)"
+            desc="실제 돈 없이 자동매매를 시뮬레이션합니다. 전략을 켜고 수익/손실 흐름을 먼저 확인하세요." />
         </div>
       </AccordionItem>
 
@@ -357,24 +195,12 @@ export default function Guide() {
             desc="이름 입력(예: AutoCoin) → API 유형: 시스템 생성 키 선택" />
           <Step num={3} title="권한 설정"
             desc="'선물 거래 활성화' 체크 필수. IP 화이트리스트 추가를 권장합니다." />
-          <Step num={4} title="backend/.env 파일에 입력"
-            desc="BINANCE_API_KEY=... / BINANCE_API_SECRET=... 입력 후 백엔드 재시작" />
+          <Step num={4} title="내 정보 → API 키 등록"
+            desc="사이트 내 API 키 등록 화면에서 입력하면 암호화되어 서버에 저장됩니다." />
         </div>
-        <InfoBox type="warn">
-          테스트는 반드시 <code className="bg-surface px-1 rounded">USE_TESTNET=true</code>로 먼저 진행하세요.
-          실거래 전 소액으로 전략 검증을 권장합니다.
-        </InfoBox>
         <InfoBox type="danger">
           API 키와 시크릿은 절대 외부에 공유하지 마세요. 출금 권한은 부여하지 않는 것이 안전합니다.
         </InfoBox>
-      </AccordionItem>
-
-      <AccordionItem icon="📂" title="BTC 도미넌스 역사 데이터 관리">
-        <p className="text-xs text-gray-400 leading-relaxed mb-3">
-          역사적 BTC 도미넌스 데이터를 CSV로 입력하면 백테스트 시 캔들별로 정확하게 적용됩니다.
-          데이터가 없으면 BTC 도미넌스 조건을 건너뜁니다.
-        </p>
-        <BtcDomDataManager />
       </AccordionItem>
 
       <AccordionItem icon="⚠️" title="주의사항 및 리스크">
@@ -387,9 +213,6 @@ export default function Guide() {
           </InfoBox>
           <InfoBox type="warn">
             백테스트 결과는 과거 데이터 기반이며 미래 수익을 보장하지 않습니다.
-          </InfoBox>
-          <InfoBox type="warn">
-            스캐너는 현재 조건을 충족하는 코인을 보여줄 뿐, 투자 추천이 아닙니다.
           </InfoBox>
           <InfoBox type="tip">
             처음에는 레버리지 2x, 소액($10~$20)으로 시작해 전략을 충분히 검증한 후 금액을 늘리세요.
