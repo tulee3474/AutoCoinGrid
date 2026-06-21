@@ -6,6 +6,29 @@ import { isPaperRunning, startPaperScanner, stopPaperScanner, getPaperLog } from
 
 const router = Router();
 
+// 연속된 동일 심볼+전략 SL 거래를 묶어서 합산 P&L로 승률 계산
+function groupedWinRate(logs: { symbol: string; strategyName: string; exitReason: string; pnlUsdt: number; exitTime: Date }[]): number {
+  if (logs.length === 0) return 0;
+  const sorted = [...logs].sort((a, b) => a.exitTime.getTime() - b.exitTime.getTime());
+  const groups: number[] = [];
+  let i = 0;
+  while (i < sorted.length) {
+    let pnl = sorted[i].pnlUsdt;
+    let j = i + 1;
+    while (j < sorted.length &&
+           sorted[j - 1].exitReason === 'stopLoss' &&
+           sorted[j].symbol === sorted[j - 1].symbol &&
+           sorted[j].strategyName === sorted[j - 1].strategyName) {
+      pnl += sorted[j].pnlUsdt;
+      j++;
+    }
+    groups.push(pnl);
+    i = j;
+  }
+  const wins = groups.filter(p => p > 0).length;
+  return groups.length > 0 ? wins / groups.length : 0;
+}
+
 let _broadcast: (data: unknown) => void = () => {};
 export function setPaperBroadcast(fn: (data: unknown) => void) {
   _broadcast = fn;
@@ -15,8 +38,7 @@ export function setPaperBroadcast(fn: (data: unknown) => void) {
 router.get('/wallet', requireAuth, async (req: AuthRequest, res: Response) => {
   const wallet          = await getOrCreateWallet(req.userId!);
   const totalRealizedPnl = wallet.tradeLogs.reduce((s, t) => s + t.pnlUsdt, 0);
-  const wins            = wallet.tradeLogs.filter(t => t.pnlUsdt > 0).length;
-  const winRate         = wallet.tradeLogs.length > 0 ? wins / wallet.tradeLogs.length : 0;
+  const winRate          = groupedWinRate(wallet.tradeLogs);
 
   let unrealizedPnl = 0;
   if (wallet.openPositions.length > 0) {

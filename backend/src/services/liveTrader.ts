@@ -204,9 +204,11 @@ export async function openLivePosition(
     const qtyPrec    = symbolInfo?.quantityPrecision  ?? 2;
     const pricePrec  = symbolInfo?.pricePrecision     ?? 2;
 
-    const qty     = parseFloat((trade.entryAmountUsdt * trade.leverage / entryPrice).toFixed(qtyPrec));
-    const tpPrice = entryPrice * (1 - trade.takeProfitPct / 100);
-    const slPrice = entryPrice * (1 + trade.stopLossPct  / 100);
+    const qty       = parseFloat((trade.entryAmountUsdt * trade.leverage / entryPrice).toFixed(qtyPrec));
+    const tpPrice   = entryPrice * (1 - trade.takeProfitPct / 100);
+    // SL = 마지막 그리드 레벨 위 한 단계 (백테스트와 동일 로직)
+    const gridTop   = entryPrice * (1 + (trade.gridSpacing / 100) * trade.gridLevels);
+    const slPrice   = gridTop * (1 + trade.gridSpacing / 100);
 
     const entryOrder = await binanceSvc.placeOrder({ symbol, side: 'SELL', type: 'MARKET', quantity: qty.toString() });
     const actualEntry = parseFloat(entryOrder.avgPrice) || entryPrice;

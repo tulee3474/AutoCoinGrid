@@ -325,7 +325,7 @@ export default function PaperTrading() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-gray-500 border-b border-border">
-                  {['코인', '진입가', '현재가', '미실현손익', 'TP 가격', 'SL 가격', '만료', ''].map(h => (
+                  {['코인', '전략', '진입가', '현재가', '미실현손익', 'TP', 'SL', '만료', ''].map(h => (
                     <th key={h} className="text-left pb-2 pr-3 font-medium">{h}</th>
                   ))}
                 </tr>
@@ -334,13 +334,14 @@ export default function PaperTrading() {
                 {positions.map(pos => (
                   <tr key={pos.id} className="border-b border-border/40 hover:bg-white/3">
                     <td className="py-2 pr-3 font-bold text-gray-200">{pos.symbol.replace('USDT', '')}</td>
+                    <td className="py-2 pr-3 text-gray-500 truncate max-w-[80px]">{pos.strategyName}</td>
                     <td className="py-2 pr-3 text-gray-400 num">${pos.entryPrice.toPrecision(5)}</td>
                     <td className="py-2 pr-3 text-gray-300 num">${pos.currentPrice.toPrecision(5)}</td>
                     <td className="py-2 pr-3">
                       <span className={`font-bold num ${pos.pnlUsdt >= 0 ? 'text-up' : 'text-down'}`}>
                         {pos.pnlUsdt >= 0 ? '+' : ''}{pos.pnlPct.toFixed(2)}%
                       </span>
-                      <span className={`ml-1 text-gray-500 num`}>
+                      <span className="ml-1 text-gray-500 num">
                         ({pos.pnlUsdt >= 0 ? '+' : ''}${pos.pnlUsdt.toFixed(2)})
                       </span>
                     </td>
@@ -381,11 +382,13 @@ export default function PaperTrading() {
                 return (
                   <div key={log.id} className="flex items-center gap-2 text-xs p-2 bg-surface rounded-lg">
                     <span className="text-gray-300 font-semibold w-12 flex-shrink-0">{log.symbol.replace('USDT', '')}</span>
-                    <span className="text-gray-500 num w-20 flex-shrink-0">${log.entryPrice.toPrecision(4)}</span>
+                    <span className="text-gray-600 truncate w-16 flex-shrink-0" title={log.strategyName}>{log.strategyName}</span>
+                    <span className="text-gray-500 num w-16 flex-shrink-0">${log.entryPrice.toPrecision(4)}</span>
                     <span className="text-gray-400">→</span>
-                    <span className="text-gray-500 num w-20 flex-shrink-0">${log.exitPrice.toPrecision(4)}</span>
+                    <span className="text-gray-500 num w-16 flex-shrink-0">${log.exitPrice.toPrecision(4)}</span>
                     <span className={`font-bold num flex-1 ${log.pnlUsdt >= 0 ? 'text-up' : 'text-down'}`}>
                       {log.pnlUsdt >= 0 ? '+' : ''}{log.pnlPct.toFixed(2)}%
+                      <span className="text-gray-500 font-normal ml-1">(${log.pnlUsdt.toFixed(2)})</span>
                     </span>
                     <span className={`text-xs px-1.5 py-0.5 rounded flex-shrink-0 ${exit.cls}`}>
                       {exit.text}

@@ -211,6 +211,9 @@ export const getLiveLogs = (limit = 50) =>
 export const getLiveScanLog = () =>
   api.get('/live/scan-log').then(r => r.data as ScanLogEntry[]);
 
+export const getLiveStats = () =>
+  api.get('/live/stats').then(r => r.data as { totalTrades: number; totalPnlUsdt: number; winRate: number });
+
 export const closeLivePosition = (symbol: string) =>
   api.delete(`/live/position/${symbol}`).then(r => r.data);
 
@@ -220,10 +223,13 @@ export interface LivePosition {
   side: string;
   qty: number;
   entryPrice: number;
+  currentPrice: number;
   takeProfitPrice: number;
   stopLossPrice: number;
   entryAmountUsdt: number;
   leverage: number;
+  pnlPct: number;
+  pnlUsdt: number;
   openedAt: string;
   expiresAt: string;
   strategyName: string;

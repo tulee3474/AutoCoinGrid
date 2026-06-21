@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
   getLiveStatus, startLiveScanner, stopLiveScanner, forceStopLiveScanner,
-  getLivePositions, getLiveLogs, getLiveScanLog, closeLivePosition,
+  getLivePositions, getLiveLogs, getLiveScanLog, getLiveStats, closeLivePosition,
   getStrategies, toggleStrategy, deleteStrategy, getMe,
   LivePosition, LiveTradeLog, ScanLogEntry
 } from '../utils/api';
@@ -37,6 +37,7 @@ function ScanLogLine({ entry }: { entry: ScanLogEntry }) {
 
 export default function LiveTrading() {
   const [status, setStatus]         = useState<{ running: boolean; stopping: boolean; openCount: number; totalTrades: number } | null>(null);
+  const [stats, setStats]           = useState<{ totalTrades: number; totalPnlUsdt: number; winRate: number } | null>(null);
   const [positions, setPositions]   = useState<LivePosition[]>([]);
   const [logs, setLogs]             = useState<LiveTradeLog[]>([]);
   const [scanLog, setScanLog]       = useState<ScanLogEntry[]>([]);
@@ -46,18 +47,20 @@ export default function LiveTrading() {
   const [stopping, setStopping]     = useState(false);
 
   const refresh = useCallback(async () => {
-    const [st, pos, lg, sl, me] = await Promise.allSettled([
+    const [st, pos, lg, sl, me, liveStats] = await Promise.allSettled([
       getLiveStatus(),
       getLivePositions(),
       getLiveLogs(50),
       getLiveScanLog(),
       getMe(),
+      getLiveStats(),
     ]);
-    if (st.status  === 'fulfilled') setStatus(st.value);
-    if (pos.status === 'fulfilled') setPositions(pos.value);
-    if (lg.status  === 'fulfilled') setLogs(lg.value);
-    if (sl.status  === 'fulfilled') setScanLog(sl.value);
-    if (me.status  === 'fulfilled') setHasApiKeys(me.value.hasApiKeys);
+    if (st.status        === 'fulfilled') setStatus(st.value);
+    if (pos.status       === 'fulfilled') setPositions(pos.value);
+    if (lg.status        === 'fulfilled') setLogs(lg.value);
+    if (sl.status        === 'fulfilled') setScanLog(sl.value);
+    if (me.status        === 'fulfilled') setHasApiKeys(me.value.hasApiKeys);
+    if (liveStats.status === 'fulfilled') setStats(liveStats.value);
     setLoading(false);
   }, []);
 
@@ -257,16 +260,17 @@ export default function LiveTrading() {
       {/* 통계 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard label="오픈 포지션" value={`${status?.openCount ?? 0}개`} />
-        <StatCard label="총 체결 거래" value={`${status?.totalTrades ?? 0}건`} />
+        <StatCard label="총 체결 거래" value={`${stats?.totalTrades ?? 0}건`} />
         <StatCard
-          label="실현 손익 (최근 50건)"
-          value={`${logs.reduce((a, l) => a + l.pnlUsdt, 0) >= 0 ? '+' : ''}$${logs.reduce((a, l) => a + l.pnlUsdt, 0).toFixed(2)}`}
-          valueClass={logs.reduce((a, l) => a + l.pnlUsdt, 0) >= 0 ? 'text-up' : 'text-down'}
+          label="실현 손익 (전체)"
+          value={`${(stats?.totalPnlUsdt ?? 0) >= 0 ? '+' : ''}$${(stats?.totalPnlUsdt ?? 0).toFixed(2)}`}
+          valueClass={(stats?.totalPnlUsdt ?? 0) >= 0 ? 'text-up' : 'text-down'}
         />
         <StatCard
-          label="승률 (최근 50건)"
-          value={logs.length === 0 ? '-' : `${(logs.filter(l => l.pnlUsdt > 0).length / logs.length * 100).toFixed(1)}%`}
-          valueClass={logs.length > 0 && logs.filter(l => l.pnlUsdt > 0).length / logs.length >= 0.5 ? 'text-up' : 'text-gray-400'}
+          label="승률 (전체)"
+          value={stats == null || stats.totalTrades === 0 ? '-' : `${(stats.winRate * 100).toFixed(1)}%`}
+          sub="연속 SL 묶음 기준"
+          valueClass={stats && stats.winRate >= 0.5 ? 'text-up' : 'text-gray-400'}
         />
       </div>
 
@@ -285,7 +289,7 @@ export default function LiveTrading() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-gray-500 border-b border-border">
-                  {['코인', '진입가', 'TP', 'SL', '수량', '레버', '만료', '전략', ''].map(h => (
+                  {['코인', '전략', '진입가', '현재가', '미실현손익', 'TP', 'SL', '만료', ''].map(h => (
                     <th key={h} className="text-left pb-2 pr-3 font-medium">{h}</th>
                   ))}
                 </tr>
@@ -298,15 +302,22 @@ export default function LiveTrading() {
                   return (
                     <tr key={pos.id} className="border-b border-border/40 hover:bg-white/3">
                       <td className="py-2 pr-3 font-bold text-gray-200">{pos.symbol.replace('USDT', '')}</td>
+                      <td className="py-2 pr-3 text-gray-500 truncate max-w-[80px]">{pos.strategyName}</td>
                       <td className="py-2 pr-3 text-gray-400 num">${pos.entryPrice.toPrecision(5)}</td>
+                      <td className="py-2 pr-3 text-gray-300 num">${pos.currentPrice.toPrecision(5)}</td>
+                      <td className="py-2 pr-3">
+                        <span className={`font-bold num ${pos.pnlUsdt >= 0 ? 'text-up' : 'text-down'}`}>
+                          {pos.pnlUsdt >= 0 ? '+' : ''}{pos.pnlPct.toFixed(2)}%
+                        </span>
+                        <span className="ml-1 text-gray-500 num">
+                          ({pos.pnlUsdt >= 0 ? '+' : ''}${pos.pnlUsdt.toFixed(2)})
+                        </span>
+                      </td>
                       <td className="py-2 pr-3 text-up num">${pos.takeProfitPrice.toPrecision(4)}</td>
                       <td className="py-2 pr-3 text-down num">${pos.stopLossPrice.toPrecision(4)}</td>
-                      <td className="py-2 pr-3 text-gray-400 num">{pos.qty}</td>
-                      <td className="py-2 pr-3 text-gray-400">{pos.leverage}x</td>
                       <td className={`py-2 pr-3 num ${hoursLeft < 2 ? 'text-warn' : 'text-gray-500'}`}>
                         {hoursLeft}h 후
                       </td>
-                      <td className="py-2 pr-3 text-gray-500 truncate max-w-[80px]">{pos.strategyName}</td>
                       <td className="py-2">
                         <button
                           onClick={() => handleClose(pos.symbol)}
@@ -339,10 +350,11 @@ export default function LiveTrading() {
                 const exit = EXIT_LABEL[log.exitReason];
                 return (
                   <div key={log.id} className="flex items-center gap-2 text-xs p-2 bg-surface rounded-lg">
-                    <span className="text-gray-300 font-semibold w-14 flex-shrink-0">{log.symbol.replace('USDT', '')}</span>
-                    <span className="text-gray-500 num w-18 flex-shrink-0">${log.entryPrice.toPrecision(4)}</span>
+                    <span className="text-gray-300 font-semibold w-12 flex-shrink-0">{log.symbol.replace('USDT', '')}</span>
+                    <span className="text-gray-600 truncate w-16 flex-shrink-0" title={log.strategyName}>{log.strategyName}</span>
+                    <span className="text-gray-500 num w-16 flex-shrink-0">${log.entryPrice.toPrecision(4)}</span>
                     <span className="text-gray-400">→</span>
-                    <span className="text-gray-500 num w-18 flex-shrink-0">${log.exitPrice.toPrecision(4)}</span>
+                    <span className="text-gray-500 num w-16 flex-shrink-0">${log.exitPrice.toPrecision(4)}</span>
                     <span className={`font-bold num flex-1 ${log.pnlUsdt >= 0 ? 'text-up' : 'text-down'}`}>
                       {log.pnlUsdt >= 0 ? '+' : ''}{log.pnlPct.toFixed(2)}%
                       <span className="text-gray-500 font-normal ml-1">(${log.pnlUsdt.toFixed(2)})</span>

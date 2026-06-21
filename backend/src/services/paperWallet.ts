@@ -26,7 +26,9 @@ export async function openPaperPosition(
   if (wallet.balance < trade.entryAmountUsdt) return null;
 
   const takeProfitPrice = entryPrice * (1 - trade.takeProfitPct / 100);
-  const stopLossPrice   = entryPrice * (1 + trade.stopLossPct  / 100);
+  // SL = 마지막 그리드 레벨 위 한 단계 (백테스트와 동일 로직)
+  const gridTopPrice  = entryPrice * (1 + (trade.gridSpacing / 100) * trade.gridLevels);
+  const stopLossPrice = gridTopPrice * (1 + trade.gridSpacing / 100);
   const expiresAt       = new Date(Date.now() + trade.maxDurationHours * 3_600_000);
 
   const [, position] = await prisma.$transaction([
