@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
   getLiveStatus, startLiveScanner, stopLiveScanner, forceStopLiveScanner,
-  getLivePositions, getLiveLogs, getLiveScanLog, getLiveStats, closeLivePosition,
-  getStrategies, toggleStrategy, deleteStrategy, getMe,
+  getLivePositions, getLiveLogs, getLiveScanLog, getLiveStats, getLiveStrategyStats,
+  closeLivePosition, getStrategies, toggleStrategy, deleteStrategy, getMe,
   LivePosition, LiveTradeLog, ScanLogEntry
 } from '../utils/api';
 import { StrategyConfig } from '../types';
@@ -36,24 +36,26 @@ function ScanLogLine({ entry }: { entry: ScanLogEntry }) {
 }
 
 export default function LiveTrading() {
-  const [status, setStatus]         = useState<{ running: boolean; stopping: boolean; openCount: number; totalTrades: number } | null>(null);
-  const [stats, setStats]           = useState<{ totalTrades: number; totalPnlUsdt: number; winRate: number } | null>(null);
-  const [positions, setPositions]   = useState<LivePosition[]>([]);
-  const [logs, setLogs]             = useState<LiveTradeLog[]>([]);
-  const [scanLog, setScanLog]       = useState<ScanLogEntry[]>([]);
-  const [strategies, setStrategies] = useState<StrategyConfig[]>([]);
-  const [hasApiKeys, setHasApiKeys] = useState<boolean | null>(null);
-  const [loading, setLoading]       = useState(true);
-  const [stopping, setStopping]     = useState(false);
+  const [status, setStatus]               = useState<{ running: boolean; stopping: boolean; openCount: number; totalTrades: number } | null>(null);
+  const [stats, setStats]                 = useState<{ totalTrades: number; totalPnlUsdt: number; winRate: number } | null>(null);
+  const [strategyStats, setStrategyStats] = useState<Record<string, { winRate: number; trades: number }>>({});
+  const [positions, setPositions]         = useState<LivePosition[]>([]);
+  const [logs, setLogs]                   = useState<LiveTradeLog[]>([]);
+  const [scanLog, setScanLog]             = useState<ScanLogEntry[]>([]);
+  const [strategies, setStrategies]       = useState<StrategyConfig[]>([]);
+  const [hasApiKeys, setHasApiKeys]       = useState<boolean | null>(null);
+  const [loading, setLoading]             = useState(true);
+  const [stopping, setStopping]           = useState(false);
 
   const refresh = useCallback(async () => {
-    const [st, pos, lg, sl, me, liveStats] = await Promise.allSettled([
+    const [st, pos, lg, sl, me, liveStats, ss] = await Promise.allSettled([
       getLiveStatus(),
       getLivePositions(),
       getLiveLogs(50),
       getLiveScanLog(),
       getMe(),
       getLiveStats(),
+      getLiveStrategyStats(),
     ]);
     if (st.status        === 'fulfilled') setStatus(st.value);
     if (pos.status       === 'fulfilled') setPositions(pos.value);
@@ -61,6 +63,7 @@ export default function LiveTrading() {
     if (sl.status        === 'fulfilled') setScanLog(sl.value);
     if (me.status        === 'fulfilled') setHasApiKeys(me.value.hasApiKeys);
     if (liveStats.status === 'fulfilled') setStats(liveStats.value);
+    if (ss.status        === 'fulfilled') setStrategyStats(ss.value);
     setLoading(false);
   }, []);
 
@@ -219,6 +222,16 @@ export default function LiveTrading() {
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-gray-200 truncate">{s.name}</span>
                     {s.enabled && <span className="text-xs text-up font-semibold">● 활성</span>}
+                    {(() => {
+                      const st = strategyStats[s.name];
+                      if (!st || st.trades === 0) return null;
+                      const wr = st.winRate * 100;
+                      return (
+                        <span className={`text-xs font-semibold ${wr >= 50 ? 'text-up' : 'text-down'}`}>
+                          승률 {wr.toFixed(1)}% ({st.trades}건)
+                        </span>
+                      );
+                    })()}
                   </div>
                   <div className="text-xs text-gray-500 mt-0.5">
                     RSI {s.conditions.rsi.min}~{s.conditions.rsi.max} ·{' '}

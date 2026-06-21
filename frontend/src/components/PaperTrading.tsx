@@ -4,7 +4,7 @@ import {
   getPaperWallet, getPaperPositions, getPaperLogs,
   resetPaperWallet, closePaperPosition,
   getPaperScannerStatus, startPaperScanner, stopPaperScanner,
-  getStrategies, toggleStrategy, deleteStrategy
+  getStrategies, toggleStrategy, deleteStrategy, getPaperStrategyStats
 } from '../utils/api';
 import { StrategyConfig } from '../types';
 
@@ -89,33 +89,36 @@ function ScanLogLine({ entry }: { entry: ScanLog }) {
 }
 
 export default function PaperTrading() {
-  const [wallet, setWallet]           = useState<WalletSummary | null>(null);
-  const [positions, setPositions]     = useState<PaperPosition[]>([]);
-  const [logs, setLogs]               = useState<TradeLog[]>([]);
-  const [scanLog, setScanLog]         = useState<ScanLog[]>([]);
-  const [scannerOn, setScannerOn]     = useState(false);
-  const [strategies, setStrategies]   = useState<StrategyConfig[]>([]);
-  const [loading, setLoading]         = useState(true);
-  const [resetting, setResetting]     = useState(false);
+  const [wallet, setWallet]               = useState<WalletSummary | null>(null);
+  const [positions, setPositions]         = useState<PaperPosition[]>([]);
+  const [logs, setLogs]                   = useState<TradeLog[]>([]);
+  const [scanLog, setScanLog]             = useState<ScanLog[]>([]);
+  const [scannerOn, setScannerOn]         = useState(false);
+  const [strategies, setStrategies]       = useState<StrategyConfig[]>([]);
+  const [strategyStats, setStrategyStats] = useState<Record<string, { winRate: number; trades: number }>>({});
+  const [loading, setLoading]             = useState(true);
+  const [resetting, setResetting]         = useState(false);
 
   const refreshStrategies = useCallback(async () => {
     try { setStrategies(await getStrategies()); } catch {}
   }, []);
 
   const refresh = useCallback(async () => {
-    const [w, p, l, s] = await Promise.allSettled([
+    const [w, p, l, s, ss] = await Promise.allSettled([
       getPaperWallet(),
       getPaperPositions(),
       getPaperLogs(50),
-      getPaperScannerStatus()
+      getPaperScannerStatus(),
+      getPaperStrategyStats(),
     ]);
-    if (w.status === 'fulfilled') setWallet(w.value);
-    if (p.status === 'fulfilled') setPositions(p.value);
-    if (l.status === 'fulfilled') setLogs(l.value);
-    if (s.status === 'fulfilled') {
+    if (w.status  === 'fulfilled') setWallet(w.value);
+    if (p.status  === 'fulfilled') setPositions(p.value);
+    if (l.status  === 'fulfilled') setLogs(l.value);
+    if (s.status  === 'fulfilled') {
       setScannerOn(s.value.running);
       setScanLog(s.value.log ?? []);
     }
+    if (ss.status === 'fulfilled') setStrategyStats(ss.value);
     setLoading(false);
   }, []);
 
@@ -242,6 +245,16 @@ export default function PaperTrading() {
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-gray-200 truncate">{s.name}</span>
                     {s.enabled && <span className="text-xs text-up font-semibold">● 실행 중</span>}
+                    {(() => {
+                      const st = strategyStats[s.name];
+                      if (!st || st.trades === 0) return null;
+                      const wr = st.winRate * 100;
+                      return (
+                        <span className={`text-xs font-semibold ${wr >= 50 ? 'text-up' : 'text-down'}`}>
+                          승률 {wr.toFixed(1)}% ({st.trades}건)
+                        </span>
+                      );
+                    })()}
                   </div>
                   <div className="text-xs text-gray-500 mt-0.5">
                     RSI {s.conditions.rsi.min}~{s.conditions.rsi.max} ·{' '}

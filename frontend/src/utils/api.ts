@@ -214,6 +214,12 @@ export const getLiveScanLog = () =>
 export const getLiveStats = () =>
   api.get('/live/stats').then(r => r.data as { totalTrades: number; totalPnlUsdt: number; winRate: number });
 
+export const getLiveStrategyStats = () =>
+  api.get('/live/strategy-stats').then(r => r.data as Record<string, { winRate: number; trades: number }>);
+
+export const getPaperStrategyStats = () =>
+  api.get('/paper/strategy-stats').then(r => r.data as Record<string, { winRate: number; trades: number }>);
+
 export const closeLivePosition = (symbol: string) =>
   api.delete(`/live/position/${symbol}`).then(r => r.data);
 

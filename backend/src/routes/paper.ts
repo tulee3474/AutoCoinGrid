@@ -3,6 +3,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth';
 import { binance } from '../services/binance';
 import { getOrCreateWallet, resetPaperWallet, closePaperPosition } from '../services/paperWallet';
 import { isPaperRunning, startPaperScanner, stopPaperScanner, getPaperLog } from '../services/autoScanner';
+import prisma from '../lib/prisma';
 
 const router = Router();
 
@@ -115,6 +116,28 @@ router.delete('/positions/:id', requireAuth, async (req: AuthRequest, res: Respo
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ── 전략별 승률 통계 ───────────────────────────────────────────
+router.get('/strategy-stats', requireAuth, async (req: AuthRequest, res: Response) => {
+  const wallet = await getOrCreateWallet(req.userId!);
+  const allLogs = await prisma.paperTradeLog.findMany({
+    where:   { walletId: wallet.id },
+    orderBy: { exitTime: 'asc' },
+    select:  { symbol: true, strategyName: true, exitReason: true, pnlUsdt: true, exitTime: true }
+  });
+
+  const byStrategy = new Map<string, typeof allLogs>();
+  for (const log of allLogs) {
+    if (!byStrategy.has(log.strategyName)) byStrategy.set(log.strategyName, []);
+    byStrategy.get(log.strategyName)!.push(log);
+  }
+
+  const result: Record<string, { winRate: number; trades: number }> = {};
+  for (const [name, logs] of byStrategy) {
+    result[name] = { winRate: groupedWinRate(logs), trades: logs.length };
+  }
+  res.json(result);
 });
 
 // ── 스캐너 상태 + 로그 ─────────────────────────────────────────

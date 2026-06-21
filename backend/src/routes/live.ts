@@ -69,6 +69,27 @@ router.post('/force-stop', requireAuth, async (req: AuthRequest, res: Response) 
   res.json({ ok: true, message: '즉시 중지 완료' });
 });
 
+// GET /api/live/strategy-stats — 전략별 승률
+router.get('/strategy-stats', requireAuth, async (req: AuthRequest, res: Response) => {
+  const allLogs = await prisma.liveTradeLog.findMany({
+    where:   { userId: req.userId },
+    orderBy: { exitTime: 'asc' },
+    select:  { symbol: true, strategyName: true, exitReason: true, pnlUsdt: true, exitTime: true }
+  });
+
+  const byStrategy = new Map<string, typeof allLogs>();
+  for (const log of allLogs) {
+    if (!byStrategy.has(log.strategyName)) byStrategy.set(log.strategyName, []);
+    byStrategy.get(log.strategyName)!.push(log);
+  }
+
+  const result: Record<string, { winRate: number; trades: number }> = {};
+  for (const [name, logs] of byStrategy) {
+    result[name] = { winRate: groupedWinRate(logs), trades: logs.length };
+  }
+  res.json(result);
+});
+
 // GET /api/live/stats — 전체 거래 통계 (페이퍼 지갑과 동등)
 router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
   const logs = await prisma.liveTradeLog.findMany({
