@@ -13,6 +13,7 @@ export interface StrategyConditions {
   priceChange24h: { min: number; max: number };     // % 범위 (예: 20~100 = 24시간 20%~100% 상승)
   volumeMultiplier: { min: number; max: number };   // 평균 대비 볼륨 배수
   priceAboveMa200: boolean;                          // MA200 위에 있어야 진입 (펌핑 코인 조건)
+  priceAboveBB: boolean;                             // 볼린저 상단 돌파 코인만 (급등 확인)
   btcDominanceMax: number;                           // BTC 도미넌스 상한 (알트코인 장세 확인)
 }
 
@@ -44,6 +45,7 @@ export interface MarketSnapshot {
   rsi14: number;
   volumeRatio: number;
   aboveMa200: boolean;
+  aboveBB: boolean;
   signalScore: number; // 0~100, 조건 충족 점수
 }
 

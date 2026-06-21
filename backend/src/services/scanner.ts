@@ -41,15 +41,16 @@ export async function scanMarket(
         const klines = await binance.getKlines(ticker.symbol, conditions.rsi.timeframe, 250);
         if (klines.length < 50) return;
 
-        const ind = computeIndicators(klines, conditions.rsi.timeframe);
+        const ind = computeIndicators(klines, conditions.rsi.timeframe, conditions.rsi.period ?? 14);
 
         // 조건 충족 여부별 점수 (0~100)
         const scores = [
-          (ind.rsi14 >= conditions.rsi.min && ind.rsi14 <= conditions.rsi.max) ? 30 : 0,
-          (ticker.change24h >= conditions.priceChange24h.min)                   ? 25 : 0,
-          (ind.volumeRatio >= conditions.volumeMultiplier.min)                  ? 25 : 0,
+          (ind.rsi14 >= conditions.rsi.min && ind.rsi14 <= conditions.rsi.max) ? 25 : 0,
+          (ticker.change24h >= conditions.priceChange24h.min)                   ? 20 : 0,
+          (ind.volumeRatio >= conditions.volumeMultiplier.min)                  ? 20 : 0,
           (!conditions.priceAboveMa200 || ind.aboveMa200)                       ? 10 : 0,
           (btcDominance <= conditions.btcDominanceMax)                           ? 10 : 0,
+          (!conditions.priceAboveBB    || ind.aboveBB)                          ? 15 : 0,
         ];
         const signalScore = scores.reduce((a, b) => a + b, 0);
 
@@ -61,6 +62,7 @@ export async function scanMarket(
           rsi14: ind.rsi14,
           volumeRatio: ind.volumeRatio,
           aboveMa200: ind.aboveMa200,
+          aboveBB: ind.aboveBB,
           signalScore
         });
       } catch {

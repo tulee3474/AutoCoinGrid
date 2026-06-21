@@ -287,6 +287,21 @@ function ValidationPanel({
   );
 }
 
+// ── PDF 방식 자동 손절가 계산 (프론트 미리보기용) ─────────────────
+
+function calcPdfSlPct(leverage: number, gridLevels: number, gridSpacing: number): number {
+  const step = gridSpacing / 100 / leverage;
+  let sumPrices = 1.0; // entryPrice = 1 로 정규화
+  let count = 1;
+  for (let i = 0; i < gridLevels; i++) {
+    const avg  = sumPrices / count;  // 산술평균 (PDF 표 검증)
+    const next = avg * (1 + step);
+    sumPrices += next;
+    count++;
+  }
+  return (sumPrices / count) * (1 + step) * 100 - 100; // % above entry
+}
+
 // ── 메인 컴포넌트 ─────────────────────────────────────────────
 
 // 앱 세션 내 기본 전략 자동 적용 여부 (새로고침 전까지 1회)
@@ -422,7 +437,7 @@ export default function Strategy() {
           <p className="text-xs text-gray-500 mt-1">아래 조건이 동시에 충족될 때 숏 진입 신호가 발생합니다 (AND 조건)</p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <RangeInput label="RSI (14) 범위"
+          <RangeInput label={`RSI (${draftConditions.rsi.period}일) 범위`}
             minVal={draftConditions.rsi.min} maxVal={draftConditions.rsi.max}
             onMinChange={v => setRsi('min', v)} onMaxChange={v => setRsi('max', v)} />
           <RangeInput label="24시간 가격 상승률" unit="%"
@@ -436,13 +451,23 @@ export default function Strategy() {
             onChange={v => setDraftConditions({ btcDominanceMax: v })}
             min={20} max={90} unit="%" />
         </div>
-        <div>
-          <label className="label">RSI 기준 타임프레임</label>
-          <select className="input w-36"
-            value={draftConditions.rsi.timeframe}
-            onChange={e => setDraftConditions({ rsi: { ...draftConditions.rsi, timeframe: e.target.value } })}>
-            {['15m','30m','1h','4h','1d'].map(tf => <option key={tf} value={tf}>{tf}</option>)}
-          </select>
+        <div className="flex flex-wrap gap-4 items-end">
+          <div>
+            <label className="label">RSI 기간</label>
+            <select className="input w-28"
+              value={draftConditions.rsi.period}
+              onChange={e => setDraftConditions({ rsi: { ...draftConditions.rsi, period: +e.target.value } })}>
+              {[5, 7, 14].map(p => <option key={p} value={p}>{p}일</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label">RSI 기준 봉</label>
+            <select className="input w-28"
+              value={draftConditions.rsi.timeframe}
+              onChange={e => setDraftConditions({ rsi: { ...draftConditions.rsi, timeframe: e.target.value } })}>
+              {['1h', '4h', '1d'].map(tf => <option key={tf} value={tf}>{tf === '1h' ? '1시간봉' : tf === '4h' ? '4시간봉' : '일봉'}</option>)}
+            </select>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <input type="checkbox" id="ma200" className="w-4 h-4 accent-accent"
@@ -450,6 +475,14 @@ export default function Strategy() {
             onChange={e => setDraftConditions({ priceAboveMa200: e.target.checked })} />
           <label htmlFor="ma200" className="text-sm text-gray-300 cursor-pointer">
             MA200 위 코인만 <span className="text-gray-500 text-xs">(펌핑 확인)</span>
+          </label>
+        </div>
+        <div className="flex items-center gap-3">
+          <input type="checkbox" id="bb" className="w-4 h-4 accent-accent"
+            checked={draftConditions.priceAboveBB}
+            onChange={e => setDraftConditions({ priceAboveBB: e.target.checked })} />
+          <label htmlFor="bb" className="text-sm text-gray-300 cursor-pointer">
+            볼린저 상단 돌파 코인만 <span className="text-gray-500 text-xs">(BB 20 상단 돌파 확인)</span>
           </label>
         </div>
       </div>
@@ -460,16 +493,16 @@ export default function Strategy() {
           <h2 className="section-title">그리드 숏 거래 설정</h2>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-          <NumberInput label="레버리지"        value={draftTrade.leverage}          onChange={v => setDraftTrade({ leverage: v })}          min={1}  max={10}  unit="x" />
-          <NumberInput label="초기 진입 금액"  value={draftTrade.entryAmountUsdt}   onChange={v => setDraftTrade({ entryAmountUsdt: v })}   min={10}           unit="USDT" />
-          <NumberInput label="그리드 레벨 수"  value={draftTrade.gridLevels}        onChange={v => setDraftTrade({ gridLevels: v })}        min={1}  max={20} />
-          <NumberInput label="그리드 간격"     value={draftTrade.gridSpacing}       onChange={v => setDraftTrade({ gridSpacing: v })}       min={1}  max={50}  unit="%" />
-          <NumberInput label="익절 목표"       value={draftTrade.takeProfitPct}     onChange={v => setDraftTrade({ takeProfitPct: v })}     min={1}  max={100} unit="% 하락시" />
-          <NumberInput label="손절 기준"       value={draftTrade.stopLossPct}       onChange={v => setDraftTrade({ stopLossPct: v })}       min={1}  max={100} unit="% 상승시" />
-          <NumberInput label="최대 보유 시간"  value={draftTrade.maxDurationHours}  onChange={v => setDraftTrade({ maxDurationHours: v })}  min={1}  max={720} unit="시간" />
+          <NumberInput label="레버리지"           value={draftTrade.leverage}          onChange={v => setDraftTrade({ leverage: v })}          min={1}  max={10}  unit="x" />
+          <NumberInput label="초기 진입 금액"     value={draftTrade.entryAmountUsdt}   onChange={v => setDraftTrade({ entryAmountUsdt: v })}   min={10}           unit="USDT" />
+          <NumberInput label="그리드 레벨 수"     value={draftTrade.gridLevels}        onChange={v => setDraftTrade({ gridLevels: v })}        min={1}  max={20} />
+          <NumberInput label="물타기 간격 (PDF)"  value={draftTrade.gridSpacing}       onChange={v => setDraftTrade({ gridSpacing: v })}       min={1}  max={200} />
+          <NumberInput label="익절 목표"          value={draftTrade.takeProfitPct}     onChange={v => setDraftTrade({ takeProfitPct: v })}     min={1}  max={100} unit="% 하락시" />
+          <NumberInput label="최대 보유 시간"     value={draftTrade.maxDurationHours}  onChange={v => setDraftTrade({ maxDurationHours: v })}  min={1}  max={720} unit="시간" />
         </div>
         <div className="p-3 bg-surface rounded-lg text-xs text-gray-400 space-y-1">
-          <p>진입가 위로 <span className="text-gray-300 font-semibold">{draftTrade.gridSpacing}%</span> 간격마다 숏 {draftTrade.gridLevels}개 추가</p>
+          <p>PDF 방식: 평균 진입가 기준 <span className="text-gray-300 font-semibold">{(draftTrade.gridSpacing / draftTrade.leverage).toFixed(1)}%</span> 간격으로 숏 {draftTrade.gridLevels}개 추가 (레버리지 분할)</p>
+          <p>자동 손절: 진입가 대비 약 <span className="text-down font-semibold">+{calcPdfSlPct(draftTrade.leverage, draftTrade.gridLevels, draftTrade.gridSpacing).toFixed(1)}%</span> 상승시 청산</p>
           <p>총 최대 노출: <span className="text-gray-300 num">${draftTrade.entryAmountUsdt * (draftTrade.gridLevels + 1)}</span> USDT × {draftTrade.leverage}x</p>
         </div>
       </div>

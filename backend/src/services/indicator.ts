@@ -44,6 +44,19 @@ export function calcEMA(values: number[], period: number): number {
   return ema;
 }
 
+// ── 볼린저 밴드 (SMA ± mult×std) ─────────────────────────────────
+
+export function calcBollingerBand(closes: number[], period = 20, mult = 2): { upper: number; lower: number; middle: number } {
+  if (closes.length < period) {
+    const last = closes[closes.length - 1] ?? 0;
+    return { upper: last, lower: last, middle: last };
+  }
+  const slice = closes.slice(-period);
+  const mean = slice.reduce((a, b) => a + b, 0) / period;
+  const std  = Math.sqrt(slice.reduce((a, b) => a + (b - mean) ** 2, 0) / period);
+  return { upper: mean + mult * std, lower: mean - mult * std, middle: mean };
+}
+
 // ── 볼륨 배수 (현재 볼륨 / N일 평균 볼륨) ──────────────────────
 
 export function calcVolumeRatio(volumes: number[], period = 20): number {
@@ -79,21 +92,24 @@ export interface ComputedIndicators {
   ma200: number;
   ma50: number;
   aboveMa200: boolean;
+  aboveBB: boolean;
   volumeRatio: number;
   change24h: number;
   currentClose: number;
 }
 
-export function computeIndicators(klines: Kline[], interval = '1h'): ComputedIndicators {
+export function computeIndicators(klines: Kline[], interval = '1h', rsiPeriod = 14): ComputedIndicators {
   const closes = klines.map(k => k.close);
   const volumes = klines.map(k => k.volume);
   const cpd = candlesPerDay(interval);
+  const bb = calcBollingerBand(closes);
 
   return {
-    rsi14: calcRSI(closes, 14),
+    rsi14: calcRSI(closes, rsiPeriod),
     ma200: calcSMA(closes, 200),
     ma50: calcSMA(closes, 50),
     aboveMa200: closes[closes.length - 1] > calcSMA(closes, 200),
+    aboveBB: closes[closes.length - 1] > bb.upper,
     volumeRatio: calcVolumeRatio(volumes, 20),
     change24h: calc24hChange(closes, cpd),
     currentClose: closes[closes.length - 1]

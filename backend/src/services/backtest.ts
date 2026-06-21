@@ -1,5 +1,6 @@
 import { Kline, StrategyConditions, TradeConfig, BacktestResult, BacktestTrade } from '../types';
-import { calcRSI, calcSMA, calcVolumeRatio, calc24hChange, candlesPerDay } from './indicator';
+import { calcRSI, calcSMA, calcVolumeRatio, calc24hChange, candlesPerDay, calcBollingerBand } from './indicator';
+import { calcPdfGridPrices, calcPdfAvgEntry, calcPdfStopLoss } from './gridUtils';
 import { getDominanceAt } from './btcDominanceHistory';
 
 interface BacktestOptions {
@@ -22,11 +23,13 @@ function checkConditions(
 
   if (closes.length < 200) return false;
 
-  const rsi = calcRSI(closes, 14);
+  const rsi = calcRSI(closes, conditions.rsi.period ?? 14);
   const ma200 = calcSMA(closes, 200);
   const volumeRatio = calcVolumeRatio(volumes, 20);
   const change24h = calc24hChange(closes, cpd);
   const aboveMa200 = closes[closes.length - 1] > ma200;
+  const bb = calcBollingerBand(closes);
+  const aboveBB = closes[closes.length - 1] > bb.upper;
 
   // BTC 도미넌스: 역사적 데이터가 있으면 그 값 사용, 없으면 조건 skip
   const historicalDom = getDominanceAt(klines[idx].openTime);
@@ -40,6 +43,7 @@ function checkConditions(
     volumeRatio >= conditions.volumeMultiplier.min &&
     volumeRatio <= conditions.volumeMultiplier.max &&
     (!conditions.priceAboveMa200 || aboveMa200) &&
+    (!conditions.priceAboveBB    || aboveBB) &&
     btcDomPass
   );
 }
@@ -56,13 +60,10 @@ function simulateTrade(
   const entryPrice = klines[entryIdx + 1].open; // 다음 캔들 오픈에 진입
   const maxEndIdx = Math.min(entryIdx + 1 + trade.maxDurationHours, klines.length - 1);
 
-  // 그리드 숏 주문 가격들 (진입가 위로 gridSpacing% 간격)
-  const gridPrices = Array.from({ length: trade.gridLevels }, (_, i) =>
-    entryPrice * (1 + (trade.gridSpacing / 100) * (i + 1))
-  );
-
+  // PDF 방식: avgEntry 기반 컴파운딩 그리드
+  const gridPrices    = calcPdfGridPrices(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing);
   const takeProfitPrice = entryPrice * (1 - trade.takeProfitPct / 100);
-  const stopLossPrice = gridPrices[gridPrices.length - 1] * (1 + trade.gridSpacing / 100);
+  const stopLossPrice   = calcPdfStopLoss(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing);
 
   let exitPrice = 0;
   let exitTime = 0;
@@ -100,10 +101,9 @@ function simulateTrade(
 
   if (exitPrice === 0) return null;
 
-  // 평균 진입가: 초기 진입 + 채워진 그리드 평균
+  // 평균 진입가: 동일 USDT 진입 기준 조화평균 (PDF 방식)
   const filledGridPrices = gridPrices.slice(0, gridsFilled);
-  const allEntries = [entryPrice, ...filledGridPrices];
-  const avgEntryPrice = allEntries.reduce((a, b) => a + b, 0) / allEntries.length;
+  const avgEntryPrice    = calcPdfAvgEntry(entryPrice, filledGridPrices);
 
   // 숏 포지션 PnL: (평균진입가 - 청산가) / 평균진입가 * 레버리지
   const pnlPct = ((avgEntryPrice - exitPrice) / avgEntryPrice) * 100 * trade.leverage;

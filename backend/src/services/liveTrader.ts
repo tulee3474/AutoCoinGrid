@@ -3,6 +3,7 @@ import { scanMarket } from './scanner';
 import { StrategyConfig, StrategyConditions, TradeConfig } from '../types';
 import prisma from '../lib/prisma';
 import { decrypt } from '../lib/crypto';
+import { calcPdfStopLoss } from './gridUtils';
 
 const SCAN_INTERVAL_MS = 60_000;
 
@@ -206,9 +207,8 @@ export async function openLivePosition(
 
     const qty       = parseFloat((trade.entryAmountUsdt * trade.leverage / entryPrice).toFixed(qtyPrec));
     const tpPrice   = entryPrice * (1 - trade.takeProfitPct / 100);
-    // SL = 마지막 그리드 레벨 위 한 단계 (백테스트와 동일 로직)
-    const gridTop   = entryPrice * (1 + (trade.gridSpacing / 100) * trade.gridLevels);
-    const slPrice   = gridTop * (1 + trade.gridSpacing / 100);
+    // SL = PDF 방식: 전체 그리드 체결 후 조화평균 진입가에서 한 단계 더
+    const slPrice   = calcPdfStopLoss(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing);
 
     const entryOrder = await binanceSvc.placeOrder({ symbol, side: 'SELL', type: 'MARKET', quantity: qty.toString() });
     const actualEntry = parseFloat(entryOrder.avgPrice) || entryPrice;

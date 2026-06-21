@@ -82,7 +82,7 @@ function PresetForm({
       <div>
         <div className="text-xs font-semibold text-gray-400 mb-2">진입 조건</div>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-          <Range label="RSI 범위" min={c.rsi.min} max={c.rsi.max}
+          <Range label={`RSI (${c.rsi.period}일) 범위`} min={c.rsi.min} max={c.rsi.max}
             onMin={v => sc({ rsi: { ...c.rsi, min: v } })}
             onMax={v => sc({ rsi: { ...c.rsi, max: v } })} />
           <Range label="24h 상승률" unit="%" min={c.priceChange24h.min} max={c.priceChange24h.max}
@@ -93,11 +93,20 @@ function PresetForm({
             onMax={v => sc({ volumeMultiplier: { ...c.volumeMultiplier, max: v } })} />
           <Num label="BTC 도미넌스 최대" unit="%" value={c.btcDominanceMax}
             onChange={v => sc({ btcDominanceMax: v })} />
-          <F label="RSI 타임프레임">
+          <F label="RSI 기간">
+            <select value={c.rsi.period}
+              onChange={e => sc({ rsi: { ...c.rsi, period: +e.target.value } })}
+              className="w-full bg-surface border border-border rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-accent">
+              {[5, 7, 14].map(p => <option key={p} value={p}>{p}일</option>)}
+            </select>
+          </F>
+          <F label="RSI 기준 봉">
             <select value={c.rsi.timeframe}
               onChange={e => sc({ rsi: { ...c.rsi, timeframe: e.target.value } })}
               className="w-full bg-surface border border-border rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-accent">
-              {['15m','30m','1h','4h','1d'].map(tf => <option key={tf} value={tf}>{tf}</option>)}
+              <option value="1h">1시간봉</option>
+              <option value="4h">4시간봉</option>
+              <option value="1d">일봉</option>
             </select>
           </F>
           <F label="MA200 위 코인만">
@@ -106,6 +115,14 @@ function PresetForm({
                 onChange={e => sc({ priceAboveMa200: e.target.checked })}
                 className="w-4 h-4 accent-accent" />
               <label htmlFor="ma200-form" className="text-xs text-gray-300 cursor-pointer">사용</label>
+            </div>
+          </F>
+          <F label="볼린저 상단 돌파만">
+            <div className="flex items-center gap-2 mt-1">
+              <input type="checkbox" id="bb-form" checked={c.priceAboveBB}
+                onChange={e => sc({ priceAboveBB: e.target.checked })}
+                className="w-4 h-4 accent-accent" />
+              <label htmlFor="bb-form" className="text-xs text-gray-300 cursor-pointer">사용</label>
             </div>
           </F>
         </div>
@@ -117,10 +134,12 @@ function PresetForm({
           <Num label="레버리지" unit="x" value={t.leverage} onChange={v => st({ leverage: v })} />
           <Num label="진입 금액" unit="USDT" value={t.entryAmountUsdt} onChange={v => st({ entryAmountUsdt: v })} />
           <Num label="그리드 레벨" value={t.gridLevels} onChange={v => st({ gridLevels: v })} />
-          <Num label="그리드 간격" unit="%" value={t.gridSpacing} onChange={v => st({ gridSpacing: v })} />
+          <Num label="물타기 간격 (PDF)" value={t.gridSpacing} onChange={v => st({ gridSpacing: v })} />
           <Num label="익절" unit="% 하락시" value={t.takeProfitPct} onChange={v => st({ takeProfitPct: v })} />
-          <Num label="손절" unit="% 상승시" value={t.stopLossPct} onChange={v => st({ stopLossPct: v })} />
           <Num label="최대 보유" unit="시간" value={t.maxDurationHours} onChange={v => st({ maxDurationHours: v })} />
+        </div>
+        <div className="text-xs text-gray-500 p-2 bg-card rounded-lg">
+          자동 손절: 평균 진입가 기준 {(t.gridSpacing / t.leverage).toFixed(1)}% 간격 × {t.gridLevels}단계 + 1 (레버리지 반영)
         </div>
       </div>
 

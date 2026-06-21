@@ -1,5 +1,6 @@
 import { TradeConfig } from '../types';
 import prisma from '../lib/prisma';
+import { calcPdfStopLoss } from './gridUtils';
 
 export async function getOrCreateWallet(userId: string) {
   return prisma.paperWallet.upsert({
@@ -26,9 +27,8 @@ export async function openPaperPosition(
   if (wallet.balance < trade.entryAmountUsdt) return null;
 
   const takeProfitPrice = entryPrice * (1 - trade.takeProfitPct / 100);
-  // SL = 마지막 그리드 레벨 위 한 단계 (백테스트와 동일 로직)
-  const gridTopPrice  = entryPrice * (1 + (trade.gridSpacing / 100) * trade.gridLevels);
-  const stopLossPrice = gridTopPrice * (1 + trade.gridSpacing / 100);
+  // SL = PDF 방식: 전체 그리드 체결 후 조화평균 진입가에서 한 단계 더
+  const stopLossPrice = calcPdfStopLoss(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing);
   const expiresAt       = new Date(Date.now() + trade.maxDurationHours * 3_600_000);
 
   const [, position] = await prisma.$transaction([

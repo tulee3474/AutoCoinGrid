@@ -13,6 +13,7 @@ export interface StrategyConditions {
   priceChange24h: { min: number; max: number };
   volumeMultiplier: { min: number; max: number };
   priceAboveMa200: boolean;
+  priceAboveBB: boolean;
   btcDominanceMax: number;
 }
 
@@ -44,6 +45,7 @@ export interface MarketSnapshot {
   rsi14: number;
   volumeRatio: number;
   aboveMa200: boolean;
+  aboveBB: boolean;
   signalScore: number;
 }
 
@@ -115,10 +117,11 @@ export interface ValidationResult {
 }
 
 export const DEFAULT_CONDITIONS: StrategyConditions = {
-  rsi: { min: 70, max: 90, period: 14, timeframe: '1h' },
+  rsi: { min: 80, max: 90, period: 7, timeframe: '4h' },
   priceChange24h: { min: 30, max: 200 },
   volumeMultiplier: { min: 3, max: 50 },
   priceAboveMa200: true,
+  priceAboveBB: false,
   btcDominanceMax: 55
 };
 
@@ -126,7 +129,7 @@ export const DEFAULT_TRADE: TradeConfig = {
   leverage: 3,
   entryAmountUsdt: 100,
   gridLevels: 5,
-  gridSpacing: 10,
+  gridSpacing: 72,
   takeProfitPct: 20,
   stopLossPct: 60,
   maxDurationHours: 72
