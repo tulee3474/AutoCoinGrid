@@ -228,7 +228,9 @@ export async function openLivePosition(
         entryPrice: actualEntry, takeProfitPrice: tpPrice, stopLossPrice: slPrice,
         tpOrderId: BigInt(tpOrder.orderId), slOrderId: BigInt(slOrder.orderId),
         entryAmountUsdt: trade.entryAmountUsdt, leverage: trade.leverage,
-        expiresAt: new Date(Date.now() + trade.maxDurationHours * 3_600_000),
+        expiresAt: trade.maxDurationHours != null
+          ? new Date(Date.now() + trade.maxDurationHours * 3_600_000)
+          : new Date(Date.now() + 365 * 24 * 3_600_000),
         strategyName
       }
     });

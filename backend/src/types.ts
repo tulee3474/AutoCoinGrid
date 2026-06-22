@@ -10,28 +10,33 @@ export interface Kline {
 
 export interface StrategyConditions {
   rsi: { min: number; max: number; period: number; timeframe: string };
-  priceChange24h: { min: number; max: number };     // % 범위 (예: 20~100 = 24시간 20%~100% 상승)
-  volumeMultiplier: { min: number; max: number };   // 평균 대비 볼륨 배수
-  priceAboveMa200: boolean;                          // MA200 위에 있어야 진입 (펌핑 코인 조건)
-  priceAboveBB: boolean;                             // 볼린저 상단 돌파 코인만 (급등 확인)
-  btcDominanceMax: number;                           // BTC 도미넌스 상한 (알트코인 장세 확인)
+  priceChange24h: { min: number; max: number };
+  priceChangeTimeframe: '1h' | '4h' | '24h';   // 가격 변화 기준 시간
+  volumeMultiplier: { min: number; max: number };
+  priceAboveMa7: boolean;    // MA7 위 조건
+  priceAboveMa20: boolean;   // MA20 위 조건
+  priceAboveBB: boolean;     // 볼린저 상단 돌파
+  btcDominanceMax: number;   // 현재 비활성 (주석 처리)
+  // 하위 호환성 유지
+  priceAboveMa200?: boolean;
 }
 
 export interface TradeConfig {
-  leverage: number;         // 2~5배
-  entryAmountUsdt: number; // 진입 금액 (USDT)
-  gridLevels: number;       // 그리드 주문 개수 (5~10)
-  gridSpacing: number;      // 그리드 간격 (%, 예: 10)
-  takeProfitPct: number;    // 익절 % (예: 15 = 진입가 대비 15% 하락시 익절)
-  stopLossPct: number;      // 손절 % (예: 20 = 진입가 대비 20% 상승시 손절)
-  maxDurationHours: number; // 최대 보유 시간
+  leverage: number;
+  entryAmountUsdt: number;
+  gridLevels: number;
+  gridSpacing: number;
+  takeProfitPct: number;
+  stopLossPct: number;
+  maxDurationHours: number | null;  // null = 타임아웃 없음
+  rsiExitThreshold: number | null;  // null = 비활성, 숫자 = RSI가 이 값 미만이면 조기 청산
 }
 
 export interface StrategyConfig {
   id: string;
   name: string;
   enabled: boolean;
-  coins: string[];   // [] = 스캐너가 찾은 전체 코인
+  coins: string[];
   conditions: StrategyConditions;
   trade: TradeConfig;
   createdAt: number;
@@ -46,7 +51,7 @@ export interface MarketSnapshot {
   volumeRatio: number;
   aboveMa200: boolean;
   aboveBB: boolean;
-  signalScore: number; // 0~100, 조건 충족 점수
+  signalScore: number;
 }
 
 export interface BacktestTrade {
@@ -54,11 +59,11 @@ export interface BacktestTrade {
   exitTime: number;
   entryPrice: number;
   exitPrice: number;
-  avgEntryPrice: number; // 그리드 포함 평균 진입가
-  pnlPct: number;        // 레버리지 적용 손익 %
+  avgEntryPrice: number;
+  pnlPct: number;
   pnlUsdt: number;
   exitReason: 'takeProfit' | 'stopLoss' | 'timeout';
-  gridsFilled: number;   // 추가 진입된 그리드 개수
+  gridsFilled: number;
 }
 
 export interface BacktestResult {
@@ -67,10 +72,10 @@ export interface BacktestResult {
   totalTrades: number;
   winningTrades: number;
   losingTrades: number;
-  winRate: number;          // 0~1
+  winRate: number;
   avgProfitPct: number;
   avgLossPct: number;
-  expectedValuePct: number; // 기댓값 (베이지안 스타일)
+  expectedValuePct: number;
   maxDrawdownPct: number;
   totalPnlPct: number;
   trades: BacktestTrade[];

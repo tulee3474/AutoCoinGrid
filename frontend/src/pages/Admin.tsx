@@ -136,7 +136,7 @@ function PresetForm({
           <Num label="그리드 레벨" value={t.gridLevels} onChange={v => st({ gridLevels: v })} />
           <Num label="물타기 간격 (PDF)" value={t.gridSpacing} onChange={v => st({ gridSpacing: v })} />
           <Num label="익절" unit="% 하락시" value={t.takeProfitPct} onChange={v => st({ takeProfitPct: v })} />
-          <Num label="최대 보유" unit="시간" value={t.maxDurationHours} onChange={v => st({ maxDurationHours: v })} />
+          <Num label="최대 보유" unit="시간" value={t.maxDurationHours ?? 72} onChange={v => st({ maxDurationHours: v })} />
         </div>
         <div className="text-xs text-gray-500 p-2 bg-card rounded-lg">
           자동 손절: 평균 진입가 기준 {(t.gridSpacing / t.leverage).toFixed(1)}% 간격 × {t.gridLevels}단계 + 1 (레버리지 반영)

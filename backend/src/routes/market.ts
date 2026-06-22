@@ -6,14 +6,18 @@ import { StrategyConditions } from '../types';
 
 const router = Router();
 
-// GET /api/market/tickers - 24h 상승률 상위 USDT 페어
+// GET /api/market/tickers - 24h 상승률 상위 USDT 페어 (선물 거래 가능 코인만)
 router.get('/tickers', async (_req, res) => {
   try {
-    const tickers = await binance.get24hrTickers();
+    const [tickers, futuresSymbols] = await Promise.all([
+      binance.get24hrTickers(),
+      binance.getFuturesSymbols()
+    ]);
     const filtered = tickers
       .filter((t: any) =>
         t.symbol.endsWith('USDT') &&
-        !['BTCUSDT', 'ETHUSDT'].includes(t.symbol)
+        !['BTCUSDT', 'ETHUSDT'].includes(t.symbol) &&
+        futuresSymbols.has(t.symbol)
       )
       .map((t: any) => ({
         symbol: t.symbol,
@@ -24,7 +28,7 @@ router.get('/tickers', async (_req, res) => {
         low24h: parseFloat(t.lowPrice)
       }))
       .sort((a: any, b: any) => b.change24h - a.change24h)
-      .slice(0, 50);
+      .slice(0, 200);
     res.json(filtered);
   } catch (e: any) {
     res.status(500).json({ error: e.message });

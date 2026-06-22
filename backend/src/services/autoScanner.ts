@@ -1,6 +1,7 @@
 import { binance } from './binance';
 import { scanMarket } from './scanner';
 import { openPaperPosition, closePaperPosition, getOrCreateWallet } from './paperWallet';
+import { computeIndicators } from './indicator';
 import { StrategyConfig, StrategyConditions, TradeConfig } from '../types';
 import prisma from '../lib/prisma';
 
@@ -69,7 +70,16 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
   const now = new Date().toLocaleTimeString('ko');
 
   // 1. 오픈 포지션 TP/SL/타임아웃 체크
-  const wallet = await getOrCreateWallet(userId);
+  const [wallet, strategies] = await Promise.all([
+    getOrCreateWallet(userId),
+    loadStrategies(userId)
+  ]);
+
+  // 전략명 → rsiExitThreshold 맵 (포지션별 임계값 조회용)
+  const strategyThresholdMap = new Map<string, number | null>(
+    strategies.map(s => [s.name, s.trade.rsiExitThreshold ?? null])
+  );
+
   if (wallet.openPositions.length > 0) {
     try {
       const tickers  = await binance.get24hrTickers() as any[];
@@ -79,15 +89,29 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
         const price = priceMap.get(pos.symbol);
         if (!price) continue;
 
-        let exitReason: 'takeProfit' | 'stopLoss' | 'timeout' | null = null;
+        let exitReason: 'takeProfit' | 'stopLoss' | 'timeout' | 'signalReversal' | null = null;
         if      (price <= pos.takeProfitPrice)         exitReason = 'takeProfit';
         else if (price >= pos.stopLossPrice)            exitReason = 'stopLoss';
         else if (Date.now() >= pos.expiresAt.getTime()) exitReason = 'timeout';
 
+        // RSI 반전 신호: 전략의 rsiExitThreshold 미만이면 숏 조기 청산
+        const rsiThreshold = strategyThresholdMap.get(pos.strategyName) ?? null;
+        if (!exitReason && rsiThreshold !== null) {
+          try {
+            const klines = await binance.getKlines(pos.symbol, '1h', 60);
+            if (klines.length >= 20) {
+              const ind = computeIndicators(klines, '1h');
+              if (ind.rsi14 < rsiThreshold) {
+                exitReason = 'signalReversal';
+              }
+            }
+          } catch { /* 개별 실패 무시 */ }
+        }
+
         if (exitReason) {
-          const log = await closePaperPosition(userId, pos.id, price, exitReason);
+          const log = await closePaperPosition(userId, pos.id, price, exitReason as any);
           if (log) {
-            const emoji = exitReason === 'takeProfit' ? '✅' : exitReason === 'stopLoss' ? '❌' : '⏰';
+            const emoji = exitReason === 'takeProfit' ? '✅' : exitReason === 'stopLoss' ? '❌' : exitReason === 'signalReversal' ? '🔄' : '⏰';
             addLog(userId,
               `${emoji} [청산] ${pos.symbol} (${exitReason}) ${log.pnlPct >= 0 ? '+' : ''}${log.pnlPct.toFixed(2)}% | $${log.pnlUsdt.toFixed(2)}`,
               'close'
@@ -101,8 +125,7 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
     }
   }
 
-  // 2. 활성 전략으로 신호 스캔 → 신규 진입
-  const strategies = await loadStrategies(userId);
+  // 2. 활성 전략으로 신호 스캔 → 신규 진입 (위에서 이미 로드됨)
   if (strategies.length === 0) {
     addLog(userId, `[${now}] 활성 전략 없음`);
     broadcast({ type: 'paper_scan', data: { signals: [], message: '활성 전략 없음' } });

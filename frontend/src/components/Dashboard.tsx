@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { getTopTickers } from '../utils/api';
 import { useStore } from '../store';
 
@@ -23,19 +23,36 @@ export default function Dashboard() {
   const { btcDominance, setTopTickers } = useStore();
   const [tickers, setTickers] = useState<Ticker[]>([]);
   const [loading, setLoading] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [secAgo, setSecAgo] = useState(0);
+  const flashRef = useRef(false);
+  const [flash, setFlash] = useState(false);
 
   useEffect(() => {
     const fetchTickers = () =>
       getTopTickers().then(data => {
         setTickers(data);
         setTopTickers(data.map((t: Ticker) => ({ symbol: t.symbol, change24h: t.change24h, volume24h: t.volume24h })));
+        setLastUpdated(new Date());
+        setSecAgo(0);
+        // 업데이트 시 잠깐 flash
+        setFlash(true);
+        flashRef.current = true;
+        setTimeout(() => { setFlash(false); flashRef.current = false; }, 600);
       }).catch(() => {});
 
     fetchTickers().finally(() => setLoading(false));
-
-    const id = setInterval(fetchTickers, 10_000);
-    return () => clearInterval(id);
+    const pollId = setInterval(fetchTickers, 10_000);
+    return () => clearInterval(pollId);
   }, [setTopTickers]);
+
+  // 마지막 업데이트로부터 몇 초 지났는지
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (lastUpdated) setSecAgo(Math.floor((Date.now() - lastUpdated.getTime()) / 1000));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [lastUpdated]);
 
   const topGainers = tickers.filter(t => t.change24h > 0).slice(0, 10);
   const topLosers = [...tickers].sort((a, b) => a.change24h - b.change24h).slice(0, 5);
@@ -43,9 +60,18 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold text-gray-100">대시보드</h1>
-        <p className="text-sm text-gray-500 mt-0.5">실시간 시장 현황</p>
+      <div className="flex items-end justify-between">
+        <div>
+          <h1 className="text-xl font-semibold text-gray-100">대시보드</h1>
+          <p className="text-sm text-gray-500 mt-0.5">실시간 시장 현황</p>
+        </div>
+        {lastUpdated && (
+          <div className={`flex items-center gap-1.5 text-xs transition-colors duration-300 ${flash ? 'text-accent' : 'text-gray-500'}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${flash ? 'bg-accent' : 'bg-gray-600'}`} />
+            {secAgo < 5 ? '방금 업데이트' : `${secAgo}초 전`}
+            <span className="text-gray-600">· 10초마다 갱신</span>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
@@ -67,11 +93,16 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* 24h 급등 코인 (숏 후보) */}
+        {/* 24h 급등 코인 */}
         <div className="card">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-semibold text-gray-200">24h 급등 코인 — 숏 후보</h2>
-            {loading && <span className="text-xs text-gray-500 animate-pulse">로딩 중...</span>}
+            {loading
+              ? <span className="text-xs text-gray-500 animate-pulse">로딩 중...</span>
+              : <span className={`text-xs transition-colors duration-300 ${flash ? 'text-accent font-medium' : 'text-gray-600'}`}>
+                  TOP {topGainers.length}
+                </span>
+            }
           </div>
           <table className="w-full text-xs">
             <thead>
@@ -85,9 +116,7 @@ export default function Dashboard() {
             <tbody>
               {topGainers.map(t => (
                 <tr key={t.symbol} className="border-b border-border/40 hover:bg-border/20">
-                  <td className="py-2 font-medium text-gray-200">
-                    {t.symbol.replace('USDT', '')}
-                  </td>
+                  <td className="py-2 font-medium text-gray-200">{t.symbol.replace('USDT', '')}</td>
                   <td className="py-2 text-right text-gray-300">
                     ${t.price < 1 ? t.price.toFixed(6) : t.price.toFixed(2)}
                   </td>
@@ -105,7 +134,7 @@ export default function Dashboard() {
           </table>
         </div>
 
-        {/* 숏 시그널 현황 */}
+        {/* 시장 현황 */}
         <div className="card">
           <h2 className="text-sm font-semibold text-gray-200 mb-4">진입 조건 요약</h2>
           <div className="space-y-3">

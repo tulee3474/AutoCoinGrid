@@ -11,10 +11,14 @@ export interface Kline {
 export interface StrategyConditions {
   rsi: { min: number; max: number; period: number; timeframe: string };
   priceChange24h: { min: number; max: number };
+  priceChangeTimeframe: '1h' | '4h' | '24h';   // 가격 변화 기준 시간
   volumeMultiplier: { min: number; max: number };
-  priceAboveMa200: boolean;
-  priceAboveBB: boolean;
-  btcDominanceMax: number;
+  priceAboveMa7: boolean;    // MA7 위 조건
+  priceAboveMa20: boolean;   // MA20 위 조건
+  priceAboveBB: boolean;     // 볼린저 상단 돌파
+  btcDominanceMax: number;   // 현재 비활성 (주석 처리)
+  // 하위 호환성
+  priceAboveMa200?: boolean;
 }
 
 export interface TradeConfig {
@@ -24,7 +28,8 @@ export interface TradeConfig {
   gridSpacing: number;
   takeProfitPct: number;
   stopLossPct: number;
-  maxDurationHours: number;
+  maxDurationHours: number | null;  // null = 타임아웃 없음
+  rsiExitThreshold: number | null;  // null = 비활성, 숫자 = RSI 반전 청산 임계값
 }
 
 export interface StrategyConfig {
@@ -96,16 +101,15 @@ export interface AccountInfo {
   totalMarginBalance: number;
 }
 
-// 전략 성과 검증 결과 (멀티코인 백테스트 집계)
 export interface ValidationResult {
-  totalSignals: number;      // 조건 충족 총 횟수
-  wins: number;              // 수익 횟수
-  winRate: number;           // 승률 (0~1)
-  expectedValuePct: number;  // 기댓값 %
-  avgProfitPct: number;      // 평균 수익 %
-  avgLossPct: number;        // 평균 손실 %
-  coinsAnalyzed: number;     // 분석한 코인 수
-  coinsWithSignal: number;   // 신호 발생 코인 수
+  totalSignals: number;
+  wins: number;
+  winRate: number;
+  expectedValuePct: number;
+  avgProfitPct: number;
+  avgLossPct: number;
+  coinsAnalyzed: number;
+  coinsWithSignal: number;
   interval: string;
   perCoin: {
     symbol: string;
@@ -117,20 +121,23 @@ export interface ValidationResult {
 }
 
 export const DEFAULT_CONDITIONS: StrategyConditions = {
-  rsi: { min: 80, max: 90, period: 7, timeframe: '4h' },
-  priceChange24h: { min: 30, max: 200 },
-  volumeMultiplier: { min: 3, max: 50 },
-  priceAboveMa200: true,
-  priceAboveBB: false,
+  rsi: { min: 70, max: 100, period: 14, timeframe: '4h' },
+  priceChange24h: { min: 20, max: 100 },
+  priceChangeTimeframe: '24h',
+  volumeMultiplier: { min: 1, max: 50 },
+  priceAboveMa7: true,
+  priceAboveMa20: true,
+  priceAboveBB: true,
   btcDominanceMax: 55
 };
 
 export const DEFAULT_TRADE: TradeConfig = {
-  leverage: 3,
+  leverage: 2,
   entryAmountUsdt: 100,
-  gridLevels: 5,
+  gridLevels: 3,
   gridSpacing: 72,
   takeProfitPct: 20,
   stopLossPct: 60,
-  maxDurationHours: 72
+  maxDurationHours: null,
+  rsiExitThreshold: 40
 };

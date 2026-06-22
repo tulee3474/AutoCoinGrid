@@ -12,6 +12,8 @@ export class BinanceService {
   private futuresBase: string;
   private spotClient: AxiosInstance;
   private futuresClient: AxiosInstance;
+  private futuresSymbolsCache: Set<string> | null = null;
+  private futuresSymbolsCachedAt = 0;
 
   constructor(apiKey?: string, apiSecret?: string) {
     this.apiKey    = apiKey    ?? '';
@@ -67,6 +69,20 @@ export class BinanceService {
   async getFuturesExchangeInfo(): Promise<any> {
     const { data } = await this.futuresClient.get('/fapi/v1/exchangeInfo');
     return data;
+  }
+
+  async getFuturesSymbols(): Promise<Set<string>> {
+    if (this.futuresSymbolsCache && Date.now() - this.futuresSymbolsCachedAt < 3_600_000) {
+      return this.futuresSymbolsCache;
+    }
+    const info = await this.getFuturesExchangeInfo();
+    this.futuresSymbolsCache = new Set(
+      (info.symbols as any[])
+        .filter((s: any) => s.status === 'TRADING' && s.contractType === 'PERPETUAL')
+        .map((s: any) => s.symbol)
+    );
+    this.futuresSymbolsCachedAt = Date.now();
+    return this.futuresSymbolsCache;
   }
 
   async getFuturesPremiumIndex(): Promise<any[]> {

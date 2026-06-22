@@ -29,7 +29,10 @@ export async function openPaperPosition(
   const takeProfitPrice = entryPrice * (1 - trade.takeProfitPct / 100);
   // SL = PDF 방식: 전체 그리드 체결 후 조화평균 진입가에서 한 단계 더
   const stopLossPrice = calcPdfStopLoss(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing);
-  const expiresAt       = new Date(Date.now() + trade.maxDurationHours * 3_600_000);
+  // maxDurationHours: null = 타임아웃 없음 → 1년 후로 설정
+  const expiresAt = trade.maxDurationHours != null
+    ? new Date(Date.now() + trade.maxDurationHours * 3_600_000)
+    : new Date(Date.now() + 365 * 24 * 3_600_000);
 
   const [, position] = await prisma.$transaction([
     prisma.paperWallet.update({
@@ -58,7 +61,7 @@ export async function closePaperPosition(
   userId: string,
   positionId: string,
   exitPrice: number,
-  exitReason: 'takeProfit' | 'stopLoss' | 'timeout' | 'manual'
+  exitReason: 'takeProfit' | 'stopLoss' | 'timeout' | 'manual' | 'signalReversal'
 ) {
   const wallet = await getOrCreateWallet(userId);
   const pos    = wallet.openPositions.find(p => p.id === positionId);

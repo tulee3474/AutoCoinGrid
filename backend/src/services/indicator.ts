@@ -91,7 +91,11 @@ export interface ComputedIndicators {
   rsi14: number;
   ma200: number;
   ma50: number;
+  ma20: number;
+  ma7: number;
   aboveMa200: boolean;
+  aboveMa7: boolean;
+  aboveMa20: boolean;
   aboveBB: boolean;
   volumeRatio: number;
   change24h: number;
@@ -103,15 +107,23 @@ export function computeIndicators(klines: Kline[], interval = '1h', rsiPeriod = 
   const volumes = klines.map(k => k.volume);
   const cpd = candlesPerDay(interval);
   const bb = calcBollingerBand(closes);
+  const last = closes[closes.length - 1];
+  const ma7  = calcSMA(closes, 7);
+  const ma20 = calcSMA(closes, 20);
+  const ma200 = calcSMA(closes, 200);
 
   return {
     rsi14: calcRSI(closes, rsiPeriod),
-    ma200: calcSMA(closes, 200),
-    ma50: calcSMA(closes, 50),
-    aboveMa200: closes[closes.length - 1] > calcSMA(closes, 200),
-    aboveBB: closes[closes.length - 1] > bb.upper,
+    ma200,
+    ma50:  calcSMA(closes, 50),
+    ma20,
+    ma7,
+    aboveMa200: last > ma200,
+    aboveMa7:   last > ma7,
+    aboveMa20:  last > ma20,
+    aboveBB: last > bb.upper,
     volumeRatio: calcVolumeRatio(volumes, 20),
     change24h: calc24hChange(closes, cpd),
-    currentClose: closes[closes.length - 1]
+    currentClose: last
   };
 }

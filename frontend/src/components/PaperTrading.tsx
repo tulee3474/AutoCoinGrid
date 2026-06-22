@@ -44,7 +44,7 @@ interface TradeLog {
   exitPrice: number;
   pnlPct: number;
   pnlUsdt: number;
-  exitReason: 'takeProfit' | 'stopLoss' | 'timeout' | 'manual';
+  exitReason: 'takeProfit' | 'stopLoss' | 'timeout' | 'manual' | 'signalReversal';
   entryAmountUsdt: number;
   leverage: number;
   strategyName: string;
@@ -57,10 +57,11 @@ interface ScanLog {
 }
 
 const EXIT_LABEL: Record<string, { text: string; cls: string }> = {
-  takeProfit: { text: '익절', cls: 'bg-up/15 text-up' },
-  stopLoss:   { text: '손절', cls: 'bg-down/15 text-down' },
-  timeout:    { text: '타임아웃', cls: 'bg-border text-gray-400' },
-  manual:     { text: '수동청산', cls: 'bg-accent/15 text-accent' },
+  takeProfit:      { text: '익절',    cls: 'bg-up/15 text-up' },
+  stopLoss:        { text: '손절',    cls: 'bg-down/15 text-down' },
+  timeout:         { text: '타임아웃', cls: 'bg-border text-gray-400' },
+  manual:          { text: '수동청산', cls: 'bg-accent/15 text-accent' },
+  signalReversal:  { text: 'RSI반전', cls: 'bg-yellow-500/15 text-yellow-400' },
 };
 
 function StatCard({ label, value, sub, valueClass }: { label: string; value: string; sub?: string; valueClass?: string }) {

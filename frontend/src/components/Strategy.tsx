@@ -1,9 +1,25 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useStore } from '../store';
 import { createStrategy, getStrategies, deleteStrategy, toggleStrategy, validateStrategy, runBacktest, getPresets, AdminPreset } from '../utils/api';
 import { ValidationResult, BacktestResult, StrategyConditions, TradeConfig } from '../types';
 
 // ── 공통 입력 ────────────────────────────────────────────────
+
+function NumberInput({ label, value, onChange, min, max, step = 1, unit = '' }: {
+  label: string; value: number; onChange: (v: number) => void;
+  min?: number; max?: number; step?: number; unit?: string;
+}) {
+  return (
+    <div>
+      <label className="label">{label}</label>
+      <div className="flex items-center gap-2">
+        <input type="number" className="input" step={step} min={min} max={max} value={value}
+          onChange={e => onChange(+e.target.value)} />
+        {unit && <span className="text-xs text-gray-400 flex-shrink-0">{unit}</span>}
+      </div>
+    </div>
+  );
+}
 
 function RangeInput({ label, minVal, maxVal, step = 1, unit = '', onMinChange, onMaxChange }: {
   label: string; minVal: number; maxVal: number;
@@ -17,22 +33,6 @@ function RangeInput({ label, minVal, maxVal, step = 1, unit = '', onMinChange, o
         <input type="number" className="input" step={step} value={minVal} onChange={e => onMinChange(+e.target.value)} />
         <span className="text-gray-500 text-sm flex-shrink-0">~</span>
         <input type="number" className="input" step={step} value={maxVal} onChange={e => onMaxChange(+e.target.value)} />
-        {unit && <span className="text-xs text-gray-400 flex-shrink-0">{unit}</span>}
-      </div>
-    </div>
-  );
-}
-
-function NumberInput({ label, value, onChange, min, max, step = 1, unit = '' }: {
-  label: string; value: number; onChange: (v: number) => void;
-  min?: number; max?: number; step?: number; unit?: string;
-}) {
-  return (
-    <div>
-      <label className="label">{label}</label>
-      <div className="flex items-center gap-2">
-        <input type="number" className="input" step={step} min={min} max={max} value={value}
-          onChange={e => onChange(+e.target.value)} />
         {unit && <span className="text-xs text-gray-400 flex-shrink-0">{unit}</span>}
       </div>
     </div>
@@ -53,7 +53,6 @@ function CoinDetailModal({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // 모달 열리면 즉시 백테스트 실행
   useEffect(() => {
     runBacktest({
       symbol: symbol.endsWith('USDT') ? symbol : symbol + 'USDT',
@@ -74,7 +73,6 @@ function CoinDetailModal({
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-card border border-border rounded-2xl w-full max-w-lg max-h-[80vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}>
-        {/* 헤더 */}
         <div className="flex items-center justify-between p-5 border-b border-border">
           <div>
             <h3 className="font-bold text-gray-100 text-base">{symbol.replace('USDT', '')} 상세 백테스트</h3>
@@ -90,9 +88,7 @@ function CoinDetailModal({
               <p className="text-sm text-gray-400">백테스트 실행 중...</p>
             </div>
           )}
-
           {error && <p className="text-down text-sm">{error}</p>}
-
           {result && !loading && (
             <>
               {result.totalTrades === 0 ? (
@@ -102,15 +98,12 @@ function CoinDetailModal({
                 </p>
               ) : (
                 <>
-                  {/* 요약 통계 */}
                   <div className="grid grid-cols-2 gap-3 mb-4">
                     {[
                       { label: '총 신호', value: `${result.totalTrades}회` },
-                      { label: '승률', value: `${(result.winRate * 100).toFixed(1)}%`,
-                        color: result.winRate >= 0.5 ? 'text-up' : 'text-down' },
+                      { label: '승률', value: `${(result.winRate * 100).toFixed(1)}%`, color: result.winRate >= 0.5 ? 'text-up' : 'text-down' },
                       { label: '평균 수익', value: `+${result.avgProfitPct.toFixed(1)}%`, color: 'text-up' },
-                      { label: '기댓값 EV', value: `${result.expectedValuePct >= 0 ? '+' : ''}${result.expectedValuePct.toFixed(2)}%`,
-                        color: isPositiveEV ? 'text-up' : 'text-down' },
+                      { label: '기댓값 EV', value: `${result.expectedValuePct >= 0 ? '+' : ''}${result.expectedValuePct.toFixed(2)}%`, color: isPositiveEV ? 'text-up' : 'text-down' },
                     ].map(({ label, value, color }) => (
                       <div key={label} className="bg-surface rounded-lg p-3 text-center">
                         <div className={`text-lg font-bold num ${color ?? 'text-gray-100'}`}>{value}</div>
@@ -118,8 +111,6 @@ function CoinDetailModal({
                       </div>
                     ))}
                   </div>
-
-                  {/* 거래 내역 */}
                   <div className="space-y-1.5 max-h-60 overflow-y-auto">
                     <p className="text-xs text-gray-500 mb-2">개별 거래 내역</p>
                     {result.trades.map((t, i) => (
@@ -130,8 +121,8 @@ function CoinDetailModal({
                           {t.pnlPct > 0 ? '+' : ''}{t.pnlPct.toFixed(2)}%
                         </span>
                         <span className={`text-xs px-1.5 py-0.5 rounded ${
-                          t.exitReason === 'takeProfit' ? 'bg-up/15 text-up' :
-                          t.exitReason === 'stopLoss'   ? 'bg-down/15 text-down' :
+                          t.exitReason === 'takeProfit'     ? 'bg-up/15 text-up' :
+                          t.exitReason === 'stopLoss'       ? 'bg-down/15 text-down' :
                           'bg-border text-gray-400'
                         }`}>
                           {t.exitReason === 'takeProfit' ? '익절' : t.exitReason === 'stopLoss' ? '손절' : '타임아웃'}
@@ -151,9 +142,7 @@ function CoinDetailModal({
 
 // ── 검증 결과 패널 ────────────────────────────────────────────
 
-function ValidationPanel({
-  result, loading, conditions, trade
-}: {
+function ValidationPanel({ result, loading, conditions, trade }: {
   result: ValidationResult | null;
   loading: boolean;
   conditions: StrategyConditions;
@@ -192,44 +181,31 @@ function ValidationPanel({
   return (
     <>
       {selectedCoin && (
-        <CoinDetailModal
-          symbol={selectedCoin}
-          conditions={conditions}
-          trade={trade}
-          onClose={() => setSelectedCoin(null)}
-        />
+        <CoinDetailModal symbol={selectedCoin} conditions={conditions} trade={trade} onClose={() => setSelectedCoin(null)} />
       )}
-
       <div className={`card border ${isPositiveEV ? 'border-up/30 bg-up/5' : 'border-down/30 bg-down/5'}`}>
-        {/* 헤더 */}
         <div className="flex items-start justify-between mb-4">
           <div>
             <p className="section-title">전략 성과 검증 결과</p>
             <p className="text-xs text-gray-500 mt-0.5">
-              Binance USDT 전체 페어 중 일 거래량 $200K 이상 · {result.coinsAnalyzed}개 코인 · {result.interval}봉 최근 62일 데이터
+              Binance USDT 전체 페어 · {result.coinsAnalyzed}개 코인 · {result.interval}봉 최근 62일
             </p>
           </div>
           <span className={`text-xs font-bold px-2 py-1 rounded-full flex-shrink-0 ${isPositiveEV ? 'bg-up/20 text-up' : 'bg-down/20 text-down'}`}>
             {isPositiveEV ? '전략 유효' : '재검토 필요'}
           </span>
         </div>
-
-        {/* 핵심 요약 */}
         <div className={`text-sm font-medium mb-4 p-3 rounded-lg ${isPositiveEV ? 'bg-up/10 text-up' : 'bg-down/10 text-down'}`}>
           조건이 과거에 <strong>{result.totalSignals}번</strong> 발생 →{' '}
           <strong>{result.wins}번</strong> 수익 · <strong>{result.totalSignals - result.wins}번</strong> 손실
           <span className="text-gray-400 font-normal"> (승률 {winPct}%)</span>
         </div>
-
-        {/* 통계 4개 */}
         <div className="grid grid-cols-4 gap-3 mb-4">
           {[
-            { label: '승률',      value: `${winPct}%`,
-              color: result.winRate >= 0.5 ? 'text-up' : 'text-down' },
+            { label: '승률',      value: `${winPct}%`, color: result.winRate >= 0.5 ? 'text-up' : 'text-down' },
             { label: '평균 수익', value: `+${result.avgProfitPct.toFixed(1)}%`, color: 'text-up' },
             { label: '평균 손실', value: `-${result.avgLossPct.toFixed(1)}%`,   color: 'text-down' },
-            { label: '기댓값 EV', value: `${result.expectedValuePct >= 0 ? '+' : ''}${result.expectedValuePct.toFixed(2)}%`,
-              color: isPositiveEV ? 'text-up' : 'text-down' },
+            { label: '기댓값 EV', value: `${result.expectedValuePct >= 0 ? '+' : ''}${result.expectedValuePct.toFixed(2)}%`, color: isPositiveEV ? 'text-up' : 'text-down' },
           ].map(({ label, value, color }) => (
             <div key={label} className="bg-surface rounded-lg p-3 text-center">
               <div className={`text-lg font-bold num ${color}`}>{value}</div>
@@ -237,8 +213,6 @@ function ValidationPanel({
             </div>
           ))}
         </div>
-
-        {/* 베이지안 해석 */}
         <div className="text-xs text-gray-400 bg-surface rounded-lg p-3 mb-3">
           <span className="text-gray-300 font-semibold">베이지안 해석: </span>
           P(수익 | 조건 충족) = {result.wins}/{result.totalSignals} = {winPct}% &nbsp;|&nbsp;
@@ -247,33 +221,19 @@ function ValidationPanel({
             {result.expectedValuePct >= 0 ? '+' : ''}{result.expectedValuePct.toFixed(2)}% / 거래
           </span>
         </div>
-
-        {/* 코인별 상세 */}
-        <button
-          onClick={() => setShowPerCoin(v => !v)}
-          className="text-xs text-accent hover:underline flex items-center gap-1"
-        >
+        <button onClick={() => setShowPerCoin(v => !v)} className="text-xs text-accent hover:underline flex items-center gap-1">
           {showPerCoin ? '▲' : '▼'} 코인별 신호 상세 ({result.coinsWithSignal}개 코인)
           <span className="text-gray-500">· 클릭하면 상세 백테스트</span>
         </button>
-
         {showPerCoin && (
           <div className="mt-3 space-y-1.5">
             {result.perCoin.map(coin => (
-              <button
-                key={coin.symbol}
-                onClick={() => setSelectedCoin(coin.symbol)}
-                className="w-full flex items-center gap-3 hover:bg-white/5 rounded-lg p-1.5 transition-colors text-left"
-              >
-                <span className="text-xs text-accent hover:underline w-24 flex-shrink-0 font-medium">
-                  {coin.symbol.replace('USDT', '')} →
-                </span>
+              <button key={coin.symbol} onClick={() => setSelectedCoin(coin.symbol)}
+                className="w-full flex items-center gap-3 hover:bg-white/5 rounded-lg p-1.5 transition-colors text-left">
+                <span className="text-xs text-accent hover:underline w-24 flex-shrink-0 font-medium">{coin.symbol.replace('USDT', '')} →</span>
                 <span className="text-xs text-gray-500 w-12 flex-shrink-0 num">{coin.signals}회</span>
                 <div className="flex-1 h-1.5 bg-border rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full ${coin.winRate >= 0.5 ? 'bg-up' : 'bg-down'}`}
-                    style={{ width: `${coin.winRate * 100}%` }}
-                  />
+                  <div className={`h-full rounded-full ${coin.winRate >= 0.5 ? 'bg-up' : 'bg-down'}`} style={{ width: `${coin.winRate * 100}%` }} />
                 </div>
                 <span className={`text-xs font-bold num w-10 text-right flex-shrink-0 ${coin.winRate >= 0.5 ? 'text-up' : 'text-down'}`}>
                   {(coin.winRate * 100).toFixed(0)}%
@@ -291,20 +251,19 @@ function ValidationPanel({
 
 function calcPdfSlPct(leverage: number, gridLevels: number, gridSpacing: number): number {
   const step = gridSpacing / 100 / leverage;
-  let sumPrices = 1.0; // entryPrice = 1 로 정규화
+  let sumPrices = 1.0;
   let count = 1;
   for (let i = 0; i < gridLevels; i++) {
-    const avg  = sumPrices / count;  // 산술평균 (PDF 표 검증)
+    const avg  = sumPrices / count;
     const next = avg * (1 + step);
     sumPrices += next;
     count++;
   }
-  return (sumPrices / count) * (1 + step) * 100 - 100; // % above entry
+  return (sumPrices / count) * (1 + step) * 100 - 100;
 }
 
 // ── 메인 컴포넌트 ─────────────────────────────────────────────
 
-// 앱 세션 내 기본 전략 자동 적용 여부 (새로고침 전까지 1회)
 let defaultApplied = false;
 
 export default function Strategy() {
@@ -315,7 +274,6 @@ export default function Strategy() {
   } = useStore();
   const [strategyName, setStrategyName] = useState('기본 전략');
   const [saved, setSaved] = useState(false);
-
   const [recommended, setRecommended] = useState<AdminPreset[]>([]);
   const [showPresets, setShowPresets] = useState(false);
   const [applyMsg, setApplyMsg] = useState('');
@@ -342,11 +300,9 @@ export default function Strategy() {
     setTimeout(() => setApplyMsg(''), 2000);
   }
 
-  const setRsi    = (key: 'min' | 'max', v: number) =>
-    setDraftConditions({ rsi: { ...draftConditions.rsi, [key]: v } });
   const setChange = (key: 'min' | 'max', v: number) =>
     setDraftConditions({ priceChange24h: { ...draftConditions.priceChange24h, [key]: v } });
-  const setVol    = (key: 'min' | 'max', v: number) =>
+  const setVol = (key: 'min' | 'max', v: number) =>
     setDraftConditions({ volumeMultiplier: { ...draftConditions.volumeMultiplier, [key]: v } });
 
   const handleValidate = async () => {
@@ -384,6 +340,9 @@ export default function Strategy() {
     setStrategies(strategies.map(s => s.id === id ? updated : s));
   };
 
+  const TF_LABEL: Record<string, string> = { '1h': '1시간봉', '4h': '4시간봉', '1d': '일봉' };
+  const CHANGE_TF_LABEL: Record<string, string> = { '1h': '1시간', '4h': '4시간', '24h': '24시간' };
+
   return (
     <div className="space-y-6 max-w-3xl">
       <div>
@@ -394,38 +353,28 @@ export default function Strategy() {
       {/* 추천 전략 패널 */}
       {recommended.length > 0 && (
         <div className="card">
-          <button
-            onClick={() => setShowPresets(v => !v)}
-            className="flex items-center justify-between w-full text-left"
-          >
+          <button onClick={() => setShowPresets(v => !v)} className="flex items-center justify-between w-full text-left">
             <div>
               <h2 className="section-title">추천 전략</h2>
               <p className="text-xs text-gray-500 mt-0.5">클릭하면 해당 전략으로 설정이 바뀝니다</p>
             </div>
             <span className="text-gray-500 text-sm">{showPresets ? '▲' : '▼'}</span>
           </button>
-
           {showPresets && (
             <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
               {recommended.map(p => (
-                <button
-                  key={p.id}
-                  onClick={() => applyPreset(p)}
-                  className="text-left p-3 bg-surface rounded-lg border border-border hover:border-accent/50 hover:bg-accent/5 transition-colors"
-                >
+                <button key={p.id} onClick={() => applyPreset(p)}
+                  className="text-left p-3 bg-surface rounded-lg border border-border hover:border-accent/50 hover:bg-accent/5 transition-colors">
                   <div className="text-sm font-medium text-gray-200">{p.name}</div>
                   <div className="text-xs text-gray-500 mt-0.5">
-                    RSI {p.conditions.rsi.min}~{p.conditions.rsi.max} · 24h +{p.conditions.priceChange24h.min}% · 레버리지 {p.trade.leverage}x
+                    RSI ≥ {p.conditions.rsi.min} · {CHANGE_TF_LABEL[p.conditions.priceChangeTimeframe ?? '24h']} +{p.conditions.priceChange24h.min}% · {p.trade.leverage}x
                   </div>
                 </button>
               ))}
             </div>
           )}
-
           {applyMsg && (
-            <div className="mt-2 text-xs text-green-400 bg-green-400/10 border border-green-400/20 rounded-lg px-3 py-1.5">
-              {applyMsg}
-            </div>
+            <div className="mt-2 text-xs text-green-400 bg-green-400/10 border border-green-400/20 rounded-lg px-3 py-1.5">{applyMsg}</div>
           )}
         </div>
       )}
@@ -436,25 +385,21 @@ export default function Strategy() {
           <h2 className="section-title">진입 조건</h2>
           <p className="text-xs text-gray-500 mt-1">아래 조건이 동시에 충족될 때 숏 진입 신호가 발생합니다 (AND 조건)</p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <RangeInput label={`RSI (${draftConditions.rsi.period}일) 범위`}
-            minVal={draftConditions.rsi.min} maxVal={draftConditions.rsi.max}
-            onMinChange={v => setRsi('min', v)} onMaxChange={v => setRsi('max', v)} />
-          <RangeInput label="24시간 가격 상승률" unit="%"
-            minVal={draftConditions.priceChange24h.min} maxVal={draftConditions.priceChange24h.max}
-            onMinChange={v => setChange('min', v)} onMaxChange={v => setChange('max', v)} />
-          <RangeInput label="볼륨 배수 (평균 대비)" step={0.5} unit="x"
-            minVal={draftConditions.volumeMultiplier.min} maxVal={draftConditions.volumeMultiplier.max}
-            onMinChange={v => setVol('min', v)} onMaxChange={v => setVol('max', v)} />
-          <NumberInput label="BTC 도미넌스 최대"
-            value={draftConditions.btcDominanceMax}
-            onChange={v => setDraftConditions({ btcDominanceMax: v })}
-            min={20} max={90} unit="%" />
-        </div>
+
+        {/* RSI + 봉 설정 */}
         <div className="flex flex-wrap gap-4 items-end">
           <div>
+            <label className="label">RSI ({draftConditions.rsi.period}일) 최솟값</label>
+            <div className="flex items-center gap-2">
+              <input type="number" className="input w-24" min={0} max={100}
+                value={draftConditions.rsi.min}
+                onChange={e => setDraftConditions({ rsi: { ...draftConditions.rsi, min: +e.target.value } })} />
+              <span className="text-xs text-gray-500">이상</span>
+            </div>
+          </div>
+          <div>
             <label className="label">RSI 기간</label>
-            <select className="input w-28"
+            <select className="input w-24"
               value={draftConditions.rsi.period}
               onChange={e => setDraftConditions({ rsi: { ...draftConditions.rsi, period: +e.target.value } })}>
               {[5, 7, 14].map(p => <option key={p} value={p}>{p}일</option>)}
@@ -465,44 +410,131 @@ export default function Strategy() {
             <select className="input w-28"
               value={draftConditions.rsi.timeframe}
               onChange={e => setDraftConditions({ rsi: { ...draftConditions.rsi, timeframe: e.target.value } })}>
-              {['1h', '4h', '1d'].map(tf => <option key={tf} value={tf}>{tf === '1h' ? '1시간봉' : tf === '4h' ? '4시간봉' : '일봉'}</option>)}
+              {['1h', '4h', '1d'].map(tf => <option key={tf} value={tf}>{TF_LABEL[tf]}</option>)}
             </select>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <input type="checkbox" id="ma200" className="w-4 h-4 accent-accent"
-            checked={draftConditions.priceAboveMa200}
-            onChange={e => setDraftConditions({ priceAboveMa200: e.target.checked })} />
-          <label htmlFor="ma200" className="text-sm text-gray-300 cursor-pointer">
-            MA200 위 코인만 <span className="text-gray-500 text-xs">(펌핑 확인)</span>
-          </label>
+
+        {/* 가격 변화 */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 items-end">
+          <RangeInput label="가격 상승률" unit="%"
+            minVal={draftConditions.priceChange24h.min} maxVal={draftConditions.priceChange24h.max}
+            onMinChange={v => setChange('min', v)} onMaxChange={v => setChange('max', v)} />
+          <div>
+            <label className="label">기준 시간</label>
+            <div className="flex gap-1">
+              {(['1h', '4h', '24h'] as const).map(tf => (
+                <button key={tf}
+                  onClick={() => setDraftConditions({ priceChangeTimeframe: tf })}
+                  className={`flex-1 py-1.5 text-xs rounded-lg border transition-colors ${
+                    (draftConditions.priceChangeTimeframe ?? '24h') === tf
+                      ? 'border-accent bg-accent/10 text-accent'
+                      : 'border-border text-gray-400 hover:border-gray-500'
+                  }`}>
+                  {CHANGE_TF_LABEL[tf]}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          <input type="checkbox" id="bb" className="w-4 h-4 accent-accent"
-            checked={draftConditions.priceAboveBB}
-            onChange={e => setDraftConditions({ priceAboveBB: e.target.checked })} />
-          <label htmlFor="bb" className="text-sm text-gray-300 cursor-pointer">
-            볼린저 상단 돌파 코인만 <span className="text-gray-500 text-xs">(BB 20 상단 돌파 확인)</span>
-          </label>
+
+        {/* 볼륨 배수 */}
+        <RangeInput label="볼륨 배수 (20일 평균 대비)" step={0.5} unit="x"
+          minVal={draftConditions.volumeMultiplier.min} maxVal={draftConditions.volumeMultiplier.max}
+          onMinChange={v => setVol('min', v)} onMaxChange={v => setVol('max', v)} />
+
+        {/* 체크박스 조건들 */}
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <input type="checkbox" id="ma7" className="w-4 h-4 accent-accent"
+              checked={draftConditions.priceAboveMa7 ?? false}
+              onChange={e => setDraftConditions({ priceAboveMa7: e.target.checked })} />
+            <label htmlFor="ma7" className="text-sm text-gray-300 cursor-pointer">
+              MA7 위 코인만 <span className="text-gray-500 text-xs">(7일 단순이동평균 위)</span>
+            </label>
+          </div>
+          <div className="flex items-center gap-3">
+            <input type="checkbox" id="ma20" className="w-4 h-4 accent-accent"
+              checked={draftConditions.priceAboveMa20 ?? false}
+              onChange={e => setDraftConditions({ priceAboveMa20: e.target.checked })} />
+            <label htmlFor="ma20" className="text-sm text-gray-300 cursor-pointer">
+              MA20 위 코인만 <span className="text-gray-500 text-xs">(20일 단순이동평균 위)</span>
+            </label>
+          </div>
+          <div className="flex items-center gap-3">
+            <input type="checkbox" id="bb" className="w-4 h-4 accent-accent"
+              checked={draftConditions.priceAboveBB}
+              onChange={e => setDraftConditions({ priceAboveBB: e.target.checked })} />
+            <label htmlFor="bb" className="text-sm text-gray-300 cursor-pointer">
+              볼린저 상단 돌파 코인만 <span className="text-gray-500 text-xs">(BB 20 상단 돌파 확인)</span>
+            </label>
+          </div>
+          {/* BTC 도미넌스 조건 — 비활성 (나중에 추가 예정)
+          <div className="flex items-center gap-3 opacity-40 pointer-events-none">
+            <input type="checkbox" className="w-4 h-4" disabled />
+            <label className="text-sm text-gray-500">
+              BTC 도미넌스 ≤ {draftConditions.btcDominanceMax}% (비활성)
+            </label>
+          </div>
+          */}
+        </div>
+
+        {/* 스코어 안내 */}
+        <div className="text-xs text-gray-500 bg-surface rounded-lg p-3">
+          스코어 배점: RSI 30 · 가격변화 25 · 볼륨 20 · MA7 5 · MA20 5 · BB 15 = 100점 → 100점 충족 시 신호
         </div>
       </div>
 
       {/* 그리드 거래 설정 */}
       <div className="card space-y-5">
-        <div>
-          <h2 className="section-title">그리드 숏 거래 설정</h2>
-        </div>
+        <h2 className="section-title">그리드 숏 거래 설정</h2>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-          <NumberInput label="레버리지"           value={draftTrade.leverage}          onChange={v => setDraftTrade({ leverage: v })}          min={1}  max={10}  unit="x" />
-          <NumberInput label="초기 진입 금액"     value={draftTrade.entryAmountUsdt}   onChange={v => setDraftTrade({ entryAmountUsdt: v })}   min={10}           unit="USDT" />
-          <NumberInput label="그리드 레벨 수"     value={draftTrade.gridLevels}        onChange={v => setDraftTrade({ gridLevels: v })}        min={1}  max={20} />
-          <NumberInput label="물타기 간격 (PDF)"  value={draftTrade.gridSpacing}       onChange={v => setDraftTrade({ gridSpacing: v })}       min={1}  max={200} />
-          <NumberInput label="익절 목표"          value={draftTrade.takeProfitPct}     onChange={v => setDraftTrade({ takeProfitPct: v })}     min={1}  max={100} unit="% 하락시" />
-          <NumberInput label="최대 보유 시간"     value={draftTrade.maxDurationHours}  onChange={v => setDraftTrade({ maxDurationHours: v })}  min={1}  max={720} unit="시간" />
+          <NumberInput label="레버리지"         value={draftTrade.leverage}        onChange={v => setDraftTrade({ leverage: v })}        min={1} max={10} unit="x" />
+          <NumberInput label="초기 진입 금액"   value={draftTrade.entryAmountUsdt} onChange={v => setDraftTrade({ entryAmountUsdt: v })} min={10} unit="USDT" />
+          <NumberInput label="그리드 레벨 수"   value={draftTrade.gridLevels}      onChange={v => setDraftTrade({ gridLevels: v })}      min={1} max={20} />
+          <NumberInput label="물타기 간격 (PDF)" value={draftTrade.gridSpacing}    onChange={v => setDraftTrade({ gridSpacing: v })}    min={1} max={200} />
+          <NumberInput label="익절 목표"        value={draftTrade.takeProfitPct}   onChange={v => setDraftTrade({ takeProfitPct: v })}  min={1} max={100} unit="% 하락시" />
         </div>
+
+        {/* 최대 보유 시간 (선택) */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-3">
+            <input type="checkbox" id="useTimeout" className="w-4 h-4 accent-accent"
+              checked={draftTrade.maxDurationHours !== null}
+              onChange={e => setDraftTrade({ maxDurationHours: e.target.checked ? 72 : null })} />
+            <label htmlFor="useTimeout" className="text-sm text-gray-300 cursor-pointer">
+              최대 보유 시간 설정 <span className="text-gray-500 text-xs">(체크 해제 시 타임아웃 없음)</span>
+            </label>
+          </div>
+          {draftTrade.maxDurationHours !== null && (
+            <div className="ml-7">
+              <NumberInput label="" value={draftTrade.maxDurationHours}
+                onChange={v => setDraftTrade({ maxDurationHours: v })} min={1} max={720} unit="시간" />
+            </div>
+          )}
+        </div>
+
+        {/* RSI 반전 청산 (선택) */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-3">
+            <input type="checkbox" id="useRsiExit" className="w-4 h-4 accent-accent"
+              checked={draftTrade.rsiExitThreshold !== null}
+              onChange={e => setDraftTrade({ rsiExitThreshold: e.target.checked ? 40 : null })} />
+            <label htmlFor="useRsiExit" className="text-sm text-gray-300 cursor-pointer">
+              RSI 반전 시 조기 청산 <span className="text-gray-500 text-xs">(과매수 → 정상화 감지)</span>
+            </label>
+          </div>
+          {draftTrade.rsiExitThreshold !== null && (
+            <div className="ml-7">
+              <NumberInput label="" value={draftTrade.rsiExitThreshold}
+                onChange={v => setDraftTrade({ rsiExitThreshold: v })} min={10} max={60} unit="RSI 미만 시 청산" />
+            </div>
+          )}
+        </div>
+
         <div className="p-3 bg-surface rounded-lg text-xs text-gray-400 space-y-1">
           <p>PDF 방식: 평균 진입가 기준 <span className="text-gray-300 font-semibold">{(draftTrade.gridSpacing / draftTrade.leverage).toFixed(1)}%</span> 간격으로 숏 {draftTrade.gridLevels}개 추가 (레버리지 분할)</p>
-          <p>자동 손절: 진입가 대비 약 <span className="text-down font-semibold">+{calcPdfSlPct(draftTrade.leverage, draftTrade.gridLevels, draftTrade.gridSpacing).toFixed(1)}%</span> 상승시 청산</p>
+          <p>자동 손절: 진입가 대비 약 <span className="text-down font-semibold">+{calcPdfSlPct(draftTrade.leverage, draftTrade.gridLevels, draftTrade.gridSpacing).toFixed(1)}%</span> 상승시 청산 (ISOLATED)</p>
           <p>총 최대 노출: <span className="text-gray-300 num">${draftTrade.entryAmountUsdt * (draftTrade.gridLevels + 1)}</span> USDT × {draftTrade.leverage}x</p>
         </div>
       </div>
@@ -513,20 +545,14 @@ export default function Strategy() {
           <div>
             <h2 className="section-title">전략 성과 검증</h2>
             <p className="text-xs text-gray-500 mt-1">
-              Binance 전체 알트코인 (일 거래량 $200K 이상, 메이저 코인 제외)의 과거 데이터로 이 조건의 승률을 계산합니다
+              Binance 전체 알트코인 (일 거래량 $200K 이상)의 과거 데이터로 이 조건의 승률을 계산합니다
             </p>
           </div>
-          <button onClick={handleValidate} disabled={validating}
-            className="btn-outline flex-shrink-0 disabled:opacity-50">
+          <button onClick={handleValidate} disabled={validating} className="btn-outline flex-shrink-0 disabled:opacity-50">
             {validating ? '분석 중...' : '승률 검증'}
           </button>
         </div>
-        <ValidationPanel
-          result={validationResult}
-          loading={validating}
-          conditions={draftConditions}
-          trade={draftTrade}
-        />
+        <ValidationPanel result={validationResult} loading={validating} conditions={draftConditions} trade={draftTrade} />
       </div>
 
       {/* 저장 */}
@@ -544,7 +570,7 @@ export default function Strategy() {
                 <div>
                   <span className="text-sm text-gray-200">{s.name}</span>
                   <span className="text-xs text-gray-500 ml-2">
-                    RSI {s.conditions.rsi.min}~{s.conditions.rsi.max} / +{s.conditions.priceChange24h.min}% 이상
+                    RSI ≥ {s.conditions.rsi.min} / {CHANGE_TF_LABEL[s.conditions.priceChangeTimeframe ?? '24h']} +{s.conditions.priceChange24h.min}% 이상
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
