@@ -1,38 +1,130 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../store';
 import { createStrategy, getStrategies, deleteStrategy, toggleStrategy, validateStrategy, runBacktest, getPresets, AdminPreset } from '../utils/api';
 import { ValidationResult, BacktestResult, StrategyConditions, TradeConfig } from '../types';
 
 // ── 공통 입력 ────────────────────────────────────────────────
 
-function NumberInput({ label, value, onChange, min, max, step = 1, unit = '' }: {
+type EmptyTracker = React.MutableRefObject<Set<string>>;
+
+function NumberInput({ label, value, onChange, fieldId, emptyTracker, min, max, unit = '' }: {
   label: string; value: number; onChange: (v: number) => void;
-  min?: number; max?: number; step?: number; unit?: string;
+  fieldId?: string; emptyTracker?: EmptyTracker;
+  min?: number; max?: number; unit?: string;
 }) {
+  const [raw, setRaw] = useState(() => isNaN(value) ? '' : String(value));
+
+  useEffect(() => {
+    const str = isNaN(value) ? '' : String(value);
+    setRaw(str);
+    if (fieldId && emptyTracker && !isNaN(value)) emptyTracker.current.delete(fieldId);
+  }, [value]);
+
+  useEffect(() => {
+    return () => { if (fieldId && emptyTracker) emptyTracker.current.delete(fieldId); };
+  }, []);
+
+  const mark = (empty: boolean) => {
+    if (!fieldId || !emptyTracker) return;
+    if (empty) emptyTracker.current.add(fieldId);
+    else emptyTracker.current.delete(fieldId);
+  };
+
   return (
     <div>
-      <label className="label">{label}</label>
+      {label && <label className="label">{label}</label>}
       <div className="flex items-center gap-2">
-        <input type="number" className="input" step={step} min={min} max={max} value={value}
-          onChange={e => onChange(+e.target.value)} />
+        <input
+          type="text" inputMode="decimal"
+          className={`input ${raw === '' ? 'border-down/50 focus:border-down/70' : ''}`}
+          value={raw} placeholder="숫자 입력"
+          onChange={e => {
+            const v = e.target.value;
+            if (v === '' || /^-?\d*\.?\d*$/.test(v)) {
+              setRaw(v);
+              mark(v === '');
+              if (v !== '') { const n = parseFloat(v); if (!isNaN(n)) onChange(n); }
+            }
+          }}
+          onBlur={() => {
+            if (raw === '') return;
+            const n = parseFloat(raw);
+            if (isNaN(n)) { setRaw(isNaN(value) ? '' : String(value)); mark(false); }
+            else {
+              let c = n;
+              if (min !== undefined) c = Math.max(min, c);
+              if (max !== undefined) c = Math.min(max, c);
+              setRaw(String(c)); onChange(c); mark(false);
+            }
+          }}
+        />
         {unit && <span className="text-xs text-gray-400 flex-shrink-0">{unit}</span>}
       </div>
     </div>
   );
 }
 
-function RangeInput({ label, minVal, maxVal, step = 1, unit = '', onMinChange, onMaxChange }: {
+function RangeInput({ label, minVal, maxVal, step = 1, unit = '', onMinChange, onMaxChange, fieldIdMin, fieldIdMax, emptyTracker }: {
   label: string; minVal: number; maxVal: number;
   step?: number; unit?: string;
   onMinChange: (v: number) => void; onMaxChange: (v: number) => void;
+  fieldIdMin?: string; fieldIdMax?: string; emptyTracker?: EmptyTracker;
 }) {
+  const [rawMin, setRawMin] = useState(() => isNaN(minVal) ? '' : String(minVal));
+  const [rawMax, setRawMax] = useState(() => isNaN(maxVal) ? '' : String(maxVal));
+
+  useEffect(() => { setRawMin(isNaN(minVal) ? '' : String(minVal)); if (fieldIdMin && emptyTracker && !isNaN(minVal)) emptyTracker.current.delete(fieldIdMin); }, [minVal]);
+  useEffect(() => { setRawMax(isNaN(maxVal) ? '' : String(maxVal)); if (fieldIdMax && emptyTracker && !isNaN(maxVal)) emptyTracker.current.delete(fieldIdMax); }, [maxVal]);
+
+  useEffect(() => {
+    return () => {
+      if (emptyTracker) {
+        if (fieldIdMin) emptyTracker.current.delete(fieldIdMin);
+        if (fieldIdMax) emptyTracker.current.delete(fieldIdMax);
+      }
+    };
+  }, []);
+
+  const mark = (id: string | undefined, empty: boolean) => {
+    if (!id || !emptyTracker) return;
+    if (empty) emptyTracker.current.add(id); else emptyTracker.current.delete(id);
+  };
+
+  const makeHandlers = (
+    raw: string, setRaw: (v: string) => void,
+    fid: string | undefined, parentVal: number, onChg: (v: number) => void
+  ) => ({
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+      const v = e.target.value;
+      if (v === '' || /^-?\d*\.?\d*$/.test(v)) {
+        setRaw(v); mark(fid, v === '');
+        if (v !== '') { const n = parseFloat(v); if (!isNaN(n)) onChg(n); }
+      }
+    },
+    onBlur: () => {
+      if (raw === '') return;
+      const n = parseFloat(raw);
+      if (isNaN(n)) { setRaw(isNaN(parentVal) ? '' : String(parentVal)); mark(fid, false); }
+      else { setRaw(String(n)); onChg(n); mark(fid, false); }
+    }
+  });
+
+  const minHandlers = makeHandlers(rawMin, setRawMin, fieldIdMin, minVal, onMinChange);
+  const maxHandlers = makeHandlers(rawMax, setRawMax, fieldIdMax, maxVal, onMaxChange);
+
   return (
     <div>
       <label className="label">{label}</label>
       <div className="flex items-center gap-2">
-        <input type="number" className="input" step={step} value={minVal} onChange={e => onMinChange(+e.target.value)} />
+        <input type="text" inputMode="decimal"
+          className={`input ${rawMin === '' ? 'border-down/50 focus:border-down/70' : ''}`}
+          value={rawMin} placeholder="숫자 입력"
+          onChange={minHandlers.onChange} onBlur={minHandlers.onBlur} />
         <span className="text-gray-500 text-sm flex-shrink-0">~</span>
-        <input type="number" className="input" step={step} value={maxVal} onChange={e => onMaxChange(+e.target.value)} />
+        <input type="text" inputMode="decimal"
+          className={`input ${rawMax === '' ? 'border-down/50 focus:border-down/70' : ''}`}
+          value={rawMax} placeholder="숫자 입력"
+          onChange={maxHandlers.onChange} onBlur={maxHandlers.onBlur} />
         {unit && <span className="text-xs text-gray-400 flex-shrink-0">{unit}</span>}
       </div>
     </div>
@@ -272,6 +364,7 @@ export default function Strategy() {
     strategies, setStrategies,
     validationResult, setValidationResult, validating, setValidating
   } = useStore();
+  const emptyFields = useRef(new Set<string>());
   const [strategyName, setStrategyName] = useState('기본 전략');
   const [saved, setSaved] = useState(false);
   const [recommended, setRecommended] = useState<AdminPreset[]>([]);
@@ -305,7 +398,16 @@ export default function Strategy() {
   const setVol = (key: 'min' | 'max', v: number) =>
     setDraftConditions({ volumeMultiplier: { ...draftConditions.volumeMultiplier, [key]: v } });
 
+  const checkEmpty = () => {
+    if (emptyFields.current.size > 0) {
+      alert('입력값이 비어있는 항목이 있습니다. 모든 값을 입력해주세요.');
+      return true;
+    }
+    return false;
+  };
+
   const handleValidate = async () => {
+    if (checkEmpty()) return;
     setValidating(true);
     setValidationResult(null);
     try {
@@ -319,6 +421,7 @@ export default function Strategy() {
   };
 
   const handleSave = async () => {
+    if (checkEmpty()) return;
     try {
       await createStrategy({ name: strategyName, enabled: false, coins: [], conditions: draftConditions, trade: draftTrade });
       setStrategies(await getStrategies());
@@ -389,13 +492,13 @@ export default function Strategy() {
         {/* RSI + 봉 설정 */}
         <div className="flex flex-wrap gap-4 items-end">
           <div>
-            <label className="label">RSI ({draftConditions.rsi.period}일) 최솟값</label>
-            <div className="flex items-center gap-2">
-              <input type="number" className="input w-24" min={0} max={100}
-                value={draftConditions.rsi.min}
-                onChange={e => setDraftConditions({ rsi: { ...draftConditions.rsi, min: +e.target.value } })} />
-              <span className="text-xs text-gray-500">이상</span>
-            </div>
+            <NumberInput
+              label={`RSI (${draftConditions.rsi.period}일) 최솟값`}
+              value={draftConditions.rsi.min}
+              onChange={v => setDraftConditions({ rsi: { ...draftConditions.rsi, min: v } })}
+              min={0} max={100} unit="이상"
+              fieldId="rsi-min" emptyTracker={emptyFields}
+            />
           </div>
           <div>
             <label className="label">RSI 기간</label>
@@ -419,7 +522,8 @@ export default function Strategy() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5 items-end">
           <RangeInput label="가격 상승률" unit="%"
             minVal={draftConditions.priceChange24h.min} maxVal={draftConditions.priceChange24h.max}
-            onMinChange={v => setChange('min', v)} onMaxChange={v => setChange('max', v)} />
+            onMinChange={v => setChange('min', v)} onMaxChange={v => setChange('max', v)}
+            fieldIdMin="change-min" fieldIdMax="change-max" emptyTracker={emptyFields} />
           <div>
             <label className="label">기준 시간</label>
             <div className="flex gap-1">
@@ -441,7 +545,8 @@ export default function Strategy() {
         {/* 볼륨 배수 */}
         <RangeInput label="볼륨 배수 (20일 평균 대비)" step={0.5} unit="x"
           minVal={draftConditions.volumeMultiplier.min} maxVal={draftConditions.volumeMultiplier.max}
-          onMinChange={v => setVol('min', v)} onMaxChange={v => setVol('max', v)} />
+          onMinChange={v => setVol('min', v)} onMaxChange={v => setVol('max', v)}
+          fieldIdMin="vol-min" fieldIdMax="vol-max" emptyTracker={emptyFields} />
 
         {/* 체크박스 조건들 */}
         <div className="space-y-3">
@@ -489,11 +594,11 @@ export default function Strategy() {
       <div className="card space-y-5">
         <h2 className="section-title">그리드 숏 거래 설정</h2>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-          <NumberInput label="레버리지"         value={draftTrade.leverage}        onChange={v => setDraftTrade({ leverage: v })}        min={1} max={10} unit="x" />
-          <NumberInput label="초기 진입 금액"   value={draftTrade.entryAmountUsdt} onChange={v => setDraftTrade({ entryAmountUsdt: v })} min={10} unit="USDT" />
-          <NumberInput label="그리드 레벨 수"   value={draftTrade.gridLevels}      onChange={v => setDraftTrade({ gridLevels: v })}      min={1} max={20} />
-          <NumberInput label="물타기 간격 (PDF)" value={draftTrade.gridSpacing}    onChange={v => setDraftTrade({ gridSpacing: v })}    min={1} max={200} />
-          <NumberInput label="익절 목표"        value={draftTrade.takeProfitPct}   onChange={v => setDraftTrade({ takeProfitPct: v })}  min={1} max={100} unit="% 하락시" />
+          <NumberInput label="레버리지"          value={draftTrade.leverage}        onChange={v => setDraftTrade({ leverage: v })}        min={1} max={10}  unit="x"       fieldId="leverage"     emptyTracker={emptyFields} />
+          <NumberInput label="초기 진입 금액"    value={draftTrade.entryAmountUsdt} onChange={v => setDraftTrade({ entryAmountUsdt: v })} min={10}          unit="USDT"    fieldId="entry-amt"    emptyTracker={emptyFields} />
+          <NumberInput label="그리드 레벨 수"    value={draftTrade.gridLevels}      onChange={v => setDraftTrade({ gridLevels: v })}      min={1} max={20}               fieldId="grid-levels"  emptyTracker={emptyFields} />
+          <NumberInput label="물타기 간격 (PDF)" value={draftTrade.gridSpacing}     onChange={v => setDraftTrade({ gridSpacing: v })}     min={1} max={200}              fieldId="grid-spacing" emptyTracker={emptyFields} />
+          <NumberInput label="익절 목표"         value={draftTrade.takeProfitPct}   onChange={v => setDraftTrade({ takeProfitPct: v })}  min={1} max={100} unit="% 하락시" fieldId="take-profit"  emptyTracker={emptyFields} />
         </div>
 
         {/* 최대 보유 시간 (선택) */}
@@ -509,7 +614,8 @@ export default function Strategy() {
           {draftTrade.maxDurationHours !== null && (
             <div className="ml-7">
               <NumberInput label="" value={draftTrade.maxDurationHours}
-                onChange={v => setDraftTrade({ maxDurationHours: v })} min={1} max={720} unit="시간" />
+                onChange={v => setDraftTrade({ maxDurationHours: v })} min={1} max={720} unit="시간"
+                fieldId="max-duration" emptyTracker={emptyFields} />
             </div>
           )}
         </div>
@@ -527,7 +633,8 @@ export default function Strategy() {
           {draftTrade.rsiExitThreshold !== null && (
             <div className="ml-7">
               <NumberInput label="" value={draftTrade.rsiExitThreshold}
-                onChange={v => setDraftTrade({ rsiExitThreshold: v })} min={10} max={60} unit="RSI 미만 시 청산" />
+                onChange={v => setDraftTrade({ rsiExitThreshold: v })} min={10} max={60} unit="RSI 미만 시 청산"
+                fieldId="rsi-exit" emptyTracker={emptyFields} />
             </div>
           )}
         </div>
