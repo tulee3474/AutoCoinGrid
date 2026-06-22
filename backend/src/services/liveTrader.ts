@@ -344,6 +344,7 @@ function _clearUserInterval(userId: string) {
   const state = traders.get(userId);
   if (state?.interval) { clearInterval(state.interval); state.interval = null; }
   state && (state.isStopping = false);
+  prisma.user.update({ where: { id: userId }, data: { liveActive: false } }).catch(() => {});
 }
 
 // ── 공개 API ─────────────────────────────────────────────────
@@ -352,16 +353,37 @@ export function isLiveRunning(userId: string)  { return !!(traders.get(userId)?.
 export function isLiveStopping(userId: string) { return !!(traders.get(userId)?.isStopping); }
 export function getLiveLog(userId: string)     { return traders.get(userId)?.log ?? []; }
 
+export function getRunningLiveUserIds(): string[] {
+  return Array.from(traders.entries())
+    .filter(([, s]) => !!s.interval)
+    .map(([id]) => id);
+}
+
 export function startLiveScanner(userId: string, broadcast: (data: unknown) => void) {
   const state = ensureState(userId);
   if (state.interval) return;
   state.isStopping = false;
+  prisma.user.update({ where: { id: userId }, data: { liveActive: true } }).catch(() => {});
   addLog(userId, '🚀 실거래 스캐너 시작 (1분 간격)', 'info');
   runLiveScanCycle(userId, broadcast).catch(e => addLog(userId, `초기 스캔 오류: ${e.message}`, 'error'));
   state.interval = setInterval(
     () => runLiveScanCycle(userId, broadcast).catch(e => addLog(userId, `스캔 오류: ${e.message}`, 'error')),
     SCAN_INTERVAL_MS
   );
+}
+
+export async function restoreLiveScanners(broadcast: (data: unknown) => void) {
+  try {
+    const activeUsers = await prisma.user.findMany({ where: { liveActive: true }, select: { id: true } });
+    if (activeUsers.length === 0) return;
+    console.log(`[LiveTrader] 서버 재시작 후 ${activeUsers.length}개 스캐너 복원 중...`);
+    for (const { id } of activeUsers) {
+      startLiveScanner(id, broadcast);
+      console.log(`[LiveTrader] 복원: ${id.slice(0, 6)}`);
+    }
+  } catch (e: any) {
+    console.error(`[LiveTrader] 복원 실패: ${e.message}`);
+  }
 }
 
 export function stopLiveScanner(userId: string, broadcast: (data: unknown) => void) {

@@ -67,13 +67,17 @@ export const deleteAdminUser = (userId: string) =>
   adminApi.delete(`/admin/users/${userId}`).then(r => r.data);
 
 export const getAdminScanners = () =>
-  adminApi.get('/admin/scanners').then(r => r.data as { runningUserIds: string[] });
+  adminApi.get('/admin/scanners').then(r => r.data as { paperUserIds: string[]; liveUserIds: string[] });
 
-export const adminStartScanner = (userId: string) =>
-  adminApi.post(`/admin/scanners/${userId}/start`).then(r => r.data);
+export const adminStartPaperScanner = (userId: string) =>
+  adminApi.post(`/admin/scanners/paper/${userId}/start`).then(r => r.data);
+export const adminStopPaperScanner = (userId: string) =>
+  adminApi.post(`/admin/scanners/paper/${userId}/stop`).then(r => r.data);
 
-export const adminStopScanner = (userId: string) =>
-  adminApi.post(`/admin/scanners/${userId}/stop`).then(r => r.data);
+export const adminStartLiveScanner = (userId: string) =>
+  adminApi.post(`/admin/scanners/live/${userId}/start`).then(r => r.data);
+export const adminStopLiveScanner = (userId: string) =>
+  adminApi.post(`/admin/scanners/live/${userId}/stop`).then(r => r.data);
 
 // ── 타입 ──────────────────────────────────────────────────────
 

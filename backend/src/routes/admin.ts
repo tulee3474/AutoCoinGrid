@@ -3,6 +3,9 @@ import jwt from 'jsonwebtoken';
 import prisma from '../lib/prisma';
 import { requireAdmin } from '../middleware/admin';
 import { isPaperRunning, startPaperScanner, stopPaperScanner, getRunningUserIds } from '../services/autoScanner';
+import { isLiveRunning, startLiveScanner, stopLiveScanner, getRunningLiveUserIds } from '../services/liveTrader';
+
+const noop = () => {};
 
 const router = Router();
 
@@ -98,24 +101,36 @@ router.delete('/users/:userId', requireAdmin, async (req: Request, res: Response
   }
 });
 
-// GET /api/admin/scanners  — 실행 중인 스캐너 userId 목록
+// GET /api/admin/scanners  — 가상/실거래 스캐너 실행 중 userId 목록
 router.get('/scanners', requireAdmin, (_req: Request, res: Response) => {
-  res.json({ runningUserIds: getRunningUserIds() });
+  res.json({
+    paperUserIds: getRunningUserIds(),
+    liveUserIds:  getRunningLiveUserIds(),
+  });
 });
 
-// POST /api/admin/scanners/:userId/start  — 어드민이 특정 계정 스캐너 시작
-router.post('/scanners/:userId/start', requireAdmin, (req: Request, res: Response) => {
+// 가상 스캐너 시작/중지
+router.post('/scanners/paper/:userId/start', requireAdmin, (req: Request, res: Response) => {
   const { userId } = req.params;
   if (isPaperRunning(userId)) return res.json({ ok: true, message: '이미 실행 중' });
-  startPaperScanner(userId, () => {}); // SSE 없이 시작 (어드민 강제 시작용)
-  res.json({ ok: true, message: '스캐너 시작됨' });
+  startPaperScanner(userId, noop);
+  res.json({ ok: true, message: '가상 스캐너 시작됨' });
+});
+router.post('/scanners/paper/:userId/stop', requireAdmin, (req: Request, res: Response) => {
+  stopPaperScanner(req.params.userId);
+  res.json({ ok: true, message: '가상 스캐너 중지됨' });
 });
 
-// POST /api/admin/scanners/:userId/stop  — 어드민이 특정 계정 스캐너 중지
-router.post('/scanners/:userId/stop', requireAdmin, (req: Request, res: Response) => {
+// 실거래 스캐너 시작/중지
+router.post('/scanners/live/:userId/start', requireAdmin, (req: Request, res: Response) => {
   const { userId } = req.params;
-  stopPaperScanner(userId);
-  res.json({ ok: true, message: '스캐너 중지됨' });
+  if (isLiveRunning(userId)) return res.json({ ok: true, message: '이미 실행 중' });
+  startLiveScanner(userId, noop);
+  res.json({ ok: true, message: '실거래 스캐너 시작됨' });
+});
+router.post('/scanners/live/:userId/stop', requireAdmin, (req: Request, res: Response) => {
+  stopLiveScanner(req.params.userId, noop);
+  res.json({ ok: true, message: '실거래 스캐너 중지됨' });
 });
 
 export default router;

@@ -1,7 +1,9 @@
 import { useState, useEffect, FormEvent } from 'react';
 import {
   adminLogin, getAdminStats, getAdminUsers, deleteAdminUser,
-  getAdminScanners, adminStartScanner, adminStopScanner,
+  getAdminScanners,
+  adminStartPaperScanner, adminStopPaperScanner,
+  adminStartLiveScanner, adminStopLiveScanner,
   getBtcDomDataInfo, fetchBtcDomFromCoinGecko, uploadBtcDomCSV, deleteBtcDomData,
   getPresets, adminCreatePreset, adminUpdatePreset, adminDeletePreset,
   AdminUser, AdminPreset
@@ -173,7 +175,8 @@ export default function Admin() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [search, setSearch] = useState('');
-  const [scannerIds, setScannerIds] = useState(new Set<string>());
+  const [paperIds, setPaperIds] = useState(new Set<string>());
+  const [liveIds, setLiveIds]   = useState(new Set<string>());
   const [scannerLoading, setScannerLoading] = useState<string | null>(null);
 
   const [domInfo, setDomInfo]       = useState<{ hasData: boolean; count?: number; dateRange?: string } | null>(null);
@@ -221,7 +224,8 @@ export default function Admin() {
     Promise.all([getAdminStats(), getAdminUsers(), getBtcDomDataInfo(), getAdminScanners()])
       .then(([s, u, d, sc]) => {
         setStats(s); setUsers(u); setDomInfo(d);
-        setScannerIds(new Set(sc.runningUserIds));
+        setPaperIds(new Set(sc.paperUserIds));
+        setLiveIds(new Set(sc.liveUserIds));
       })
       .catch(() => handleLogout());
     loadPresets();
@@ -305,15 +309,32 @@ export default function Admin() {
     }
   }
 
-  async function handleScannerToggle(userId: string) {
-    setScannerLoading(userId);
+  async function handlePaperToggle(userId: string) {
+    setScannerLoading(`paper-${userId}`);
     try {
-      if (scannerIds.has(userId)) {
-        await adminStopScanner(userId);
-        setScannerIds(prev => { const s = new Set(prev); s.delete(userId); return s; });
+      if (paperIds.has(userId)) {
+        await adminStopPaperScanner(userId);
+        setPaperIds(prev => { const s = new Set(prev); s.delete(userId); return s; });
       } else {
-        await adminStartScanner(userId);
-        setScannerIds(prev => new Set([...prev, userId]));
+        await adminStartPaperScanner(userId);
+        setPaperIds(prev => new Set([...prev, userId]));
+      }
+    } catch (e: any) {
+      alert(e.response?.data?.error ?? '스캐너 오류');
+    } finally {
+      setScannerLoading(null);
+    }
+  }
+
+  async function handleLiveToggle(userId: string) {
+    setScannerLoading(`live-${userId}`);
+    try {
+      if (liveIds.has(userId)) {
+        await adminStopLiveScanner(userId);
+        setLiveIds(prev => { const s = new Set(prev); s.delete(userId); return s; });
+      } else {
+        await adminStartLiveScanner(userId);
+        setLiveIds(prev => new Set([...prev, userId]));
       }
     } catch (e: any) {
       alert(e.response?.data?.error ?? '스캐너 오류');
@@ -553,9 +574,14 @@ export default function Admin() {
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <h2 className="text-sm font-semibold text-gray-300">사용자 목록</h2>
-            {scannerIds.size > 0 && (
+            {paperIds.size > 0 && (
               <span className="text-xs bg-green-500/15 text-green-400 border border-green-500/20 px-2 py-0.5 rounded-full">
-                스캐너 {scannerIds.size}개 실행 중
+                가상 {paperIds.size}개 실행 중
+              </span>
+            )}
+            {liveIds.size > 0 && (
+              <span className="text-xs bg-yellow-500/15 text-yellow-400 border border-yellow-500/20 px-2 py-0.5 rounded-full">
+                실거래 {liveIds.size}개 실행 중
               </span>
             )}
           </div>
@@ -573,17 +599,20 @@ export default function Admin() {
                 <th className="text-center py-2 pr-4">전략</th>
                 <th className="text-center py-2 pr-4">실거래</th>
                 <th className="text-right py-2 pr-4">가상잔고</th>
-                <th className="text-center py-2 pr-4">스캐너</th>
+                <th className="text-center py-2 pr-4">가상 스캐너</th>
+                <th className="text-center py-2 pr-4">실거래 스캐너</th>
                 <th className="text-right py-2">액션</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 && (
-                <tr><td colSpan={8} className="text-center py-8 text-gray-500">사용자 없음</td></tr>
+                <tr><td colSpan={9} className="text-center py-8 text-gray-500">사용자 없음</td></tr>
               )}
               {filtered.map(u => {
-                const running = scannerIds.has(u.id);
-                const toggling = scannerLoading === u.id;
+                const paperRunning  = paperIds.has(u.id);
+                const liveRunning   = liveIds.has(u.id);
+                const paperToggling = scannerLoading === `paper-${u.id}`;
+                const liveToggling  = scannerLoading === `live-${u.id}`;
                 return (
                   <tr key={u.id} className="border-b border-border/50 hover:bg-white/3">
                     <td className="py-3 pr-4 text-gray-200">{u.email}</td>
@@ -602,15 +631,28 @@ export default function Admin() {
                     </td>
                     <td className="py-3 pr-4 text-center">
                       <button
-                        onClick={() => handleScannerToggle(u.id)}
-                        disabled={toggling}
+                        onClick={() => handlePaperToggle(u.id)}
+                        disabled={paperToggling || liveToggling}
                         className={`text-xs px-2 py-0.5 rounded border transition-colors disabled:opacity-50 ${
-                          running
+                          paperRunning
                             ? 'bg-green-500/15 text-green-400 border-green-500/30 hover:bg-red-500/15 hover:text-red-400 hover:border-red-500/30'
                             : 'bg-gray-500/10 text-gray-500 border-gray-500/20 hover:bg-green-500/15 hover:text-green-400 hover:border-green-500/30'
                         }`}
                       >
-                        {toggling ? '...' : running ? '● 실행 중' : '○ 중지'}
+                        {paperToggling ? '...' : paperRunning ? '● 실행 중' : '○ 중지'}
+                      </button>
+                    </td>
+                    <td className="py-3 pr-4 text-center">
+                      <button
+                        onClick={() => handleLiveToggle(u.id)}
+                        disabled={paperToggling || liveToggling}
+                        className={`text-xs px-2 py-0.5 rounded border transition-colors disabled:opacity-50 ${
+                          liveRunning
+                            ? 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30 hover:bg-red-500/15 hover:text-red-400 hover:border-red-500/30'
+                            : 'bg-gray-500/10 text-gray-500 border-gray-500/20 hover:bg-yellow-500/15 hover:text-yellow-400 hover:border-yellow-500/30'
+                        }`}
+                      >
+                        {liveToggling ? '...' : liveRunning ? '● 실행 중' : '○ 중지'}
                       </button>
                     </td>
                     <td className="py-3 text-right">

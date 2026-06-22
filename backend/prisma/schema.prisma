@@ -15,6 +15,7 @@ model User {
   apiKey        String?
   apiSecret     String?
   scannerActive Boolean  @default(false)
+  liveActive    Boolean  @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
