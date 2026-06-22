@@ -253,7 +253,7 @@ export default function LiveTrading() {
                     {s.enabled ? '중지' : '시작'}
                   </button>
                   <Link
-                    to="/strategy"
+                    to={`/strategy?edit=${s.id}`}
                     className="text-xs px-2 py-1.5 rounded-lg border border-border text-gray-400 hover:text-gray-200 hover:border-gray-500 transition-colors"
                   >
                     수정

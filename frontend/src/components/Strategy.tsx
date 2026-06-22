@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
-import { createStrategy, getStrategies, deleteStrategy, toggleStrategy, validateStrategy, runBacktest, getPresets, AdminPreset } from '../utils/api';
+import { createStrategy, updateStrategy, getStrategies, deleteStrategy, toggleStrategy, validateStrategy, runBacktest, getPresets, AdminPreset } from '../utils/api';
 import { ValidationResult, BacktestResult, StrategyConditions, TradeConfig } from '../types';
 
 // ── 공통 입력 ────────────────────────────────────────────────
@@ -64,9 +65,9 @@ function NumberInput({ label, value, onChange, fieldId, emptyTracker, min, max, 
   );
 }
 
-function RangeInput({ label, minVal, maxVal, step = 1, unit = '', onMinChange, onMaxChange, fieldIdMin, fieldIdMax, emptyTracker }: {
+function RangeInput({ label, minVal, maxVal, unit = '', onMinChange, onMaxChange, fieldIdMin, fieldIdMax, emptyTracker }: {
   label: string; minVal: number; maxVal: number;
-  step?: number; unit?: string;
+  unit?: string;
   onMinChange: (v: number) => void; onMaxChange: (v: number) => void;
   fieldIdMin?: string; fieldIdMax?: string; emptyTracker?: EmptyTracker;
 }) {
@@ -364,7 +365,10 @@ export default function Strategy() {
     strategies, setStrategies,
     validationResult, setValidationResult, validating, setValidating
   } = useStore();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const emptyFields = useRef(new Set<string>());
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [strategyName, setStrategyName] = useState('기본 전략');
   const [saved, setSaved] = useState(false);
   const [recommended, setRecommended] = useState<AdminPreset[]>([]);
@@ -372,6 +376,22 @@ export default function Strategy() {
   const [applyMsg, setApplyMsg] = useState('');
 
   useEffect(() => {
+    getStrategies().then(strats => {
+      setStrategies(strats);
+      // ?edit=id 파라미터로 편집 모드 진입
+      const editId = searchParams.get('edit');
+      if (editId) {
+        const target = strats.find(s => s.id === editId);
+        if (target) {
+          setEditingId(editId);
+          setStrategyName(target.name);
+          setDraftConditions(target.conditions);
+          setDraftTrade(target.trade);
+          defaultApplied = true; // 기본값 덮어쓰기 방지
+        }
+      }
+    }).catch(() => {});
+
     getPresets().then(({ default: def, recommended: rec }) => {
       setRecommended(rec);
       if (!defaultApplied && def) {
@@ -381,7 +401,6 @@ export default function Strategy() {
         setStrategyName(def.name);
       }
     }).catch(() => {});
-    getStrategies().then(setStrategies).catch(() => {});
   }, []);
 
   function applyPreset(p: AdminPreset) {
@@ -423,13 +442,41 @@ export default function Strategy() {
   const handleSave = async () => {
     if (checkEmpty()) return;
     try {
-      await createStrategy({ name: strategyName, enabled: false, coins: [], conditions: draftConditions, trade: draftTrade });
+      if (editingId) {
+        await updateStrategy(editingId, { name: strategyName, conditions: draftConditions, trade: draftTrade });
+      } else {
+        await createStrategy({ name: strategyName, enabled: false, coins: [], conditions: draftConditions, trade: draftTrade });
+      }
       setStrategies(await getStrategies());
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (e: any) {
       alert(`저장 오류: ${e.response?.data?.error ?? e.message}`);
     }
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    setSearchParams({});
+    defaultApplied = false;
+    // 기본 프리셋으로 복원
+    getPresets().then(({ default: def }) => {
+      if (def) {
+        setDraftConditions(def.conditions as StrategyConditions);
+        setDraftTrade(def.trade as TradeConfig);
+        setStrategyName(def.name);
+        defaultApplied = true;
+      }
+    }).catch(() => {});
+  };
+
+  const handleStartEdit = (s: (typeof strategies)[0]) => {
+    setEditingId(s.id);
+    setStrategyName(s.name);
+    setDraftConditions(s.conditions);
+    setDraftTrade(s.trade);
+    setSearchParams({ edit: s.id });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleDelete = async (id: string) => {
@@ -543,7 +590,7 @@ export default function Strategy() {
         </div>
 
         {/* 볼륨 배수 */}
-        <RangeInput label="볼륨 배수 (20일 평균 대비)" step={0.5} unit="x"
+        <RangeInput label="볼륨 배수 (20일 평균 대비)" unit="x"
           minVal={draftConditions.volumeMultiplier.min} maxVal={draftConditions.volumeMultiplier.max}
           onMinChange={v => setVol('min', v)} onMaxChange={v => setVol('max', v)}
           fieldIdMin="vol-min" fieldIdMax="vol-max" emptyTracker={emptyFields} />
@@ -663,17 +710,31 @@ export default function Strategy() {
       </div>
 
       {/* 저장 */}
-      <div className="card space-y-4">
-        <h2 className="section-title">전략 저장</h2>
-        <div className="flex items-center gap-3">
+      <div className={`card space-y-4 ${editingId ? 'border-accent/30 bg-accent/3' : ''}`}>
+        <div className="flex items-center gap-2">
+          <h2 className="section-title">{editingId ? '전략 수정' : '전략 저장'}</h2>
+          {editingId && (
+            <span className="text-xs bg-accent/15 text-accent border border-accent/25 px-2 py-0.5 rounded-full">편집 중</span>
+          )}
+        </div>
+        <div className="flex items-center gap-3 flex-wrap">
           <input type="text" className="input w-64" placeholder="전략 이름"
             value={strategyName} onChange={e => setStrategyName(e.target.value)} />
-          <button onClick={handleSave} className="btn-primary">{saved ? '✓ 저장됨' : '저장'}</button>
+          <button onClick={handleSave} className="btn-primary">
+            {saved ? '✓ 완료' : editingId ? '수정 저장' : '저장'}
+          </button>
+          {editingId && (
+            <button onClick={handleCancelEdit} className="btn-ghost text-xs">
+              취소 (새 전략 모드로)
+            </button>
+          )}
         </div>
         {strategies.length > 0 && (
           <div className="space-y-2 pt-2 border-t border-border">
             {strategies.map(s => (
-              <div key={s.id} className="flex items-center justify-between p-3 bg-surface rounded-lg">
+              <div key={s.id} className={`flex items-center justify-between p-3 rounded-lg transition-colors ${
+                editingId === s.id ? 'bg-accent/8 border border-accent/25' : 'bg-surface'
+              }`}>
                 <div>
                   <span className="text-sm text-gray-200">{s.name}</span>
                   <span className="text-xs text-gray-500 ml-2">
@@ -686,6 +747,12 @@ export default function Strategy() {
                   </span>
                   <button onClick={() => handleToggle(s.id)} className="btn-ghost text-xs py-1">
                     {s.enabled ? '중지' : '시작'}
+                  </button>
+                  <button
+                    onClick={() => handleStartEdit(s)}
+                    className={`btn-ghost text-xs py-1 ${editingId === s.id ? 'text-accent' : ''}`}
+                  >
+                    {editingId === s.id ? '편집 중' : '수정'}
                   </button>
                   <button onClick={() => handleDelete(s.id)} className="btn-ghost text-xs py-1 text-down">삭제</button>
                 </div>
