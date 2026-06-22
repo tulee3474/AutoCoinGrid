@@ -66,6 +66,15 @@ export const getAdminUser = (userId: string) =>
 export const deleteAdminUser = (userId: string) =>
   adminApi.delete(`/admin/users/${userId}`).then(r => r.data);
 
+export const getAdminScanners = () =>
+  adminApi.get('/admin/scanners').then(r => r.data as { runningUserIds: string[] });
+
+export const adminStartScanner = (userId: string) =>
+  adminApi.post(`/admin/scanners/${userId}/start`).then(r => r.data);
+
+export const adminStopScanner = (userId: string) =>
+  adminApi.post(`/admin/scanners/${userId}/stop`).then(r => r.data);
+
 // ── 타입 ──────────────────────────────────────────────────────
 
 export interface AuthUser {

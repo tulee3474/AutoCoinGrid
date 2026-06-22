@@ -165,6 +165,10 @@ export function isPaperRunning(userId: string) {
   return scanners.has(userId);
 }
 
+export function getRunningUserIds(): string[] {
+  return Array.from(scanners.keys());
+}
+
 export function getPaperLog(userId: string) {
   return getLog(userId);
 }

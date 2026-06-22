@@ -1,6 +1,7 @@
 import { useState, useEffect, FormEvent } from 'react';
 import {
   adminLogin, getAdminStats, getAdminUsers, deleteAdminUser,
+  getAdminScanners, adminStartScanner, adminStopScanner,
   getBtcDomDataInfo, fetchBtcDomFromCoinGecko, uploadBtcDomCSV, deleteBtcDomData,
   getPresets, adminCreatePreset, adminUpdatePreset, adminDeletePreset,
   AdminUser, AdminPreset
@@ -172,6 +173,8 @@ export default function Admin() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [search, setSearch] = useState('');
+  const [scannerIds, setScannerIds] = useState(new Set<string>());
+  const [scannerLoading, setScannerLoading] = useState<string | null>(null);
 
   const [domInfo, setDomInfo]       = useState<{ hasData: boolean; count?: number; dateRange?: string } | null>(null);
   const [domLoading, setDomLoading] = useState(false);
@@ -215,8 +218,11 @@ export default function Admin() {
 
   useEffect(() => {
     if (!authed) return;
-    Promise.all([getAdminStats(), getAdminUsers(), getBtcDomDataInfo()])
-      .then(([s, u, d]) => { setStats(s); setUsers(u); setDomInfo(d); })
+    Promise.all([getAdminStats(), getAdminUsers(), getBtcDomDataInfo(), getAdminScanners()])
+      .then(([s, u, d, sc]) => {
+        setStats(s); setUsers(u); setDomInfo(d);
+        setScannerIds(new Set(sc.runningUserIds));
+      })
       .catch(() => handleLogout());
     loadPresets();
   }, [authed]);
@@ -296,6 +302,23 @@ export default function Admin() {
       await loadPresets();
     } catch (e: any) {
       setPresetMsg(`오류: ${e.response?.data?.error ?? e.message}`);
+    }
+  }
+
+  async function handleScannerToggle(userId: string) {
+    setScannerLoading(userId);
+    try {
+      if (scannerIds.has(userId)) {
+        await adminStopScanner(userId);
+        setScannerIds(prev => { const s = new Set(prev); s.delete(userId); return s; });
+      } else {
+        await adminStartScanner(userId);
+        setScannerIds(prev => new Set([...prev, userId]));
+      }
+    } catch (e: any) {
+      alert(e.response?.data?.error ?? '스캐너 오류');
+    } finally {
+      setScannerLoading(null);
     }
   }
 
@@ -528,7 +551,14 @@ export default function Admin() {
       {/* 사용자 목록 */}
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-semibold text-gray-300">사용자 목록</h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-sm font-semibold text-gray-300">사용자 목록</h2>
+            {scannerIds.size > 0 && (
+              <span className="text-xs bg-green-500/15 text-green-400 border border-green-500/20 px-2 py-0.5 rounded-full">
+                스캐너 {scannerIds.size}개 실행 중
+              </span>
+            )}
+          </div>
           <input type="text" value={search} onChange={e => setSearch(e.target.value)}
             placeholder="이메일 검색"
             className="bg-surface border border-border rounded-lg px-3 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-accent w-48" />
@@ -543,37 +573,55 @@ export default function Admin() {
                 <th className="text-center py-2 pr-4">전략</th>
                 <th className="text-center py-2 pr-4">실거래</th>
                 <th className="text-right py-2 pr-4">가상잔고</th>
+                <th className="text-center py-2 pr-4">스캐너</th>
                 <th className="text-right py-2">액션</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 && (
-                <tr><td colSpan={7} className="text-center py-8 text-gray-500">사용자 없음</td></tr>
+                <tr><td colSpan={8} className="text-center py-8 text-gray-500">사용자 없음</td></tr>
               )}
-              {filtered.map(u => (
-                <tr key={u.id} className="border-b border-border/50 hover:bg-white/3">
-                  <td className="py-3 pr-4 text-gray-200">{u.email}</td>
-                  <td className="py-3 pr-4 text-gray-400 whitespace-nowrap">
-                    {new Date(u.createdAt).toLocaleDateString('ko')}
-                  </td>
-                  <td className="py-3 pr-4 text-center">
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${
-                      u.hasApiKeys ? 'bg-green-500/15 text-green-400' : 'bg-gray-500/15 text-gray-500'
-                    }`}>{u.hasApiKeys ? '등록' : '없음'}</span>
-                  </td>
-                  <td className="py-3 pr-4 text-center text-gray-300">{u.strategies}</td>
-                  <td className="py-3 pr-4 text-center text-gray-300">{u.liveTrades}</td>
-                  <td className="py-3 pr-4 text-right text-gray-300">
-                    {u.paperBalance != null ? `$${u.paperBalance.toFixed(0)}` : '-'}
-                  </td>
-                  <td className="py-3 text-right">
-                    <button onClick={() => handleDelete(u.id, u.email)}
-                      className="text-xs text-red-400 hover:text-red-300 border border-red-400/30 rounded px-2 py-0.5">
-                      삭제
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {filtered.map(u => {
+                const running = scannerIds.has(u.id);
+                const toggling = scannerLoading === u.id;
+                return (
+                  <tr key={u.id} className="border-b border-border/50 hover:bg-white/3">
+                    <td className="py-3 pr-4 text-gray-200">{u.email}</td>
+                    <td className="py-3 pr-4 text-gray-400 whitespace-nowrap">
+                      {new Date(u.createdAt).toLocaleDateString('ko')}
+                    </td>
+                    <td className="py-3 pr-4 text-center">
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                        u.hasApiKeys ? 'bg-green-500/15 text-green-400' : 'bg-gray-500/15 text-gray-500'
+                      }`}>{u.hasApiKeys ? '등록' : '없음'}</span>
+                    </td>
+                    <td className="py-3 pr-4 text-center text-gray-300">{u.strategies}</td>
+                    <td className="py-3 pr-4 text-center text-gray-300">{u.liveTrades}</td>
+                    <td className="py-3 pr-4 text-right text-gray-300">
+                      {u.paperBalance != null ? `$${u.paperBalance.toFixed(0)}` : '-'}
+                    </td>
+                    <td className="py-3 pr-4 text-center">
+                      <button
+                        onClick={() => handleScannerToggle(u.id)}
+                        disabled={toggling}
+                        className={`text-xs px-2 py-0.5 rounded border transition-colors disabled:opacity-50 ${
+                          running
+                            ? 'bg-green-500/15 text-green-400 border-green-500/30 hover:bg-red-500/15 hover:text-red-400 hover:border-red-500/30'
+                            : 'bg-gray-500/10 text-gray-500 border-gray-500/20 hover:bg-green-500/15 hover:text-green-400 hover:border-green-500/30'
+                        }`}
+                      >
+                        {toggling ? '...' : running ? '● 실행 중' : '○ 중지'}
+                      </button>
+                    </td>
+                    <td className="py-3 text-right">
+                      <button onClick={() => handleDelete(u.id, u.email)}
+                        className="text-xs text-red-400 hover:text-red-300 border border-red-400/30 rounded px-2 py-0.5">
+                        삭제
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

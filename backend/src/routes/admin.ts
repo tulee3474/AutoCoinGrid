@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import prisma from '../lib/prisma';
 import { requireAdmin } from '../middleware/admin';
+import { isPaperRunning, startPaperScanner, stopPaperScanner, getRunningUserIds } from '../services/autoScanner';
 
 const router = Router();
 
@@ -95,6 +96,26 @@ router.delete('/users/:userId', requireAdmin, async (req: Request, res: Response
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// GET /api/admin/scanners  — 실행 중인 스캐너 userId 목록
+router.get('/scanners', requireAdmin, (_req: Request, res: Response) => {
+  res.json({ runningUserIds: getRunningUserIds() });
+});
+
+// POST /api/admin/scanners/:userId/start  — 어드민이 특정 계정 스캐너 시작
+router.post('/scanners/:userId/start', requireAdmin, (req: Request, res: Response) => {
+  const { userId } = req.params;
+  if (isPaperRunning(userId)) return res.json({ ok: true, message: '이미 실행 중' });
+  startPaperScanner(userId, () => {}); // SSE 없이 시작 (어드민 강제 시작용)
+  res.json({ ok: true, message: '스캐너 시작됨' });
+});
+
+// POST /api/admin/scanners/:userId/stop  — 어드민이 특정 계정 스캐너 중지
+router.post('/scanners/:userId/stop', requireAdmin, (req: Request, res: Response) => {
+  const { userId } = req.params;
+  stopPaperScanner(userId);
+  res.json({ ok: true, message: '스캐너 중지됨' });
 });
 
 export default router;
