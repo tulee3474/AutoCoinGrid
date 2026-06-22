@@ -30,8 +30,9 @@ function TradeRow({ trade, idx }: { trade: BacktestResult['trades'][0]; idx: num
       <td className="py-2 text-gray-500 num">{idx + 1}</td>
       <td className="py-2 text-gray-400">{new Date(trade.entryTime).toLocaleDateString('ko')}</td>
       <td className="py-2 text-gray-400">{new Date(trade.exitTime).toLocaleDateString('ko')}</td>
-      <td className="py-2 text-gray-300 num">${trade.entryPrice.toFixed(4)}</td>
-      <td className="py-2 text-gray-300 num">${trade.exitPrice.toFixed(4)}</td>
+      <td className="py-2 text-gray-300 num">${trade.entryPrice.toFixed(5)}</td>
+      <td className="py-2 text-yellow-400 num">${trade.avgEntryPrice.toFixed(5)}</td>
+      <td className="py-2 text-gray-300 num">${trade.exitPrice.toFixed(5)}</td>
       <td className={`py-2 font-bold num ${isWin ? 'text-up' : 'text-down'}`}>
         {isWin ? '+' : ''}{trade.pnlPct.toFixed(2)}%
       </td>
@@ -271,7 +272,7 @@ export default function Backtest() {
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 bg-card z-10">
                     <tr className="text-gray-500 border-b border-border">
-                      {['#','진입일','청산일','진입가','청산가','손익','그리드 추가','종료'].map(h => (
+                      {['#','진입일','청산일','진입가','평균진입가','청산가','손익','그리드 추가','종료'].map(h => (
                         <th key={h} className="text-left pb-2 pr-3 font-medium">{h}</th>
                       ))}
                     </tr>

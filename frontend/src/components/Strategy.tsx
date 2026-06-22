@@ -207,19 +207,26 @@ function CoinDetailModal({
                   <div className="space-y-1.5 max-h-60 overflow-y-auto">
                     <p className="text-xs text-gray-500 mb-2">개별 거래 내역</p>
                     {result.trades.map((t, i) => (
-                      <div key={i} className="flex items-center justify-between text-xs p-2 bg-surface rounded-lg">
-                        <span className="text-gray-400">{new Date(t.entryTime).toLocaleDateString('ko')}</span>
-                        <span className="text-gray-400 num">${t.entryPrice.toFixed(4)} → ${t.exitPrice.toFixed(4)}</span>
-                        <span className={`font-semibold num ${t.pnlPct > 0 ? 'text-up' : 'text-down'}`}>
-                          {t.pnlPct > 0 ? '+' : ''}{t.pnlPct.toFixed(2)}%
-                        </span>
-                        <span className={`text-xs px-1.5 py-0.5 rounded ${
-                          t.exitReason === 'takeProfit'     ? 'bg-up/15 text-up' :
-                          t.exitReason === 'stopLoss'       ? 'bg-down/15 text-down' :
-                          'bg-border text-gray-400'
-                        }`}>
-                          {t.exitReason === 'takeProfit' ? '익절' : t.exitReason === 'stopLoss' ? '손절' : '타임아웃'}
-                        </span>
+                      <div key={i} className="text-xs p-2 bg-surface rounded-lg space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-400">{new Date(t.entryTime).toLocaleDateString('ko')}</span>
+                          <span className={`font-semibold num ${t.pnlPct > 0 ? 'text-up' : 'text-down'}`}>
+                            {t.pnlPct > 0 ? '+' : ''}{t.pnlPct.toFixed(2)}%
+                          </span>
+                          <span className={`px-1.5 py-0.5 rounded ${
+                            t.exitReason === 'takeProfit' ? 'bg-up/15 text-up' :
+                            t.exitReason === 'stopLoss'   ? 'bg-down/15 text-down' :
+                            'bg-border text-gray-400'
+                          }`}>
+                            {t.exitReason === 'takeProfit' ? '익절' : t.exitReason === 'stopLoss' ? '손절' : '타임아웃'}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-gray-500">
+                          <span>진입 <span className="text-gray-300 num">${t.entryPrice.toFixed(5)}</span></span>
+                          <span>평균진입 <span className="text-yellow-400 num">${t.avgEntryPrice.toFixed(5)}</span></span>
+                          <span>청산 <span className="text-gray-300 num">${t.exitPrice.toFixed(5)}</span></span>
+                          <span>그리드 <span className="text-accent num">{t.gridsFilled}개</span></span>
+                        </div>
                       </div>
                     ))}
                   </div>
