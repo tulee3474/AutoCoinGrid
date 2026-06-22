@@ -156,6 +156,15 @@ export function runBacktest(
       const tradeSim = simulateTrade(klines, i, trade, interval);
       if (tradeSim) {
         trades.push(tradeSim);
+        console.log(
+          `[BT] ${symbol} | 진입: ${tradeSim.entryPrice.toFixed(6)}` +
+          ` | 평균진입: ${tradeSim.avgEntryPrice.toFixed(6)}` +
+          ` | 청산: ${tradeSim.exitPrice.toFixed(6)}` +
+          ` | 그리드체결: ${tradeSim.gridsFilled}개` +
+          ` | 수익률: ${tradeSim.pnlPct.toFixed(2)}%` +
+          ` | 사유: ${tradeSim.exitReason}` +
+          ` | 진입시각: ${new Date(tradeSim.entryTime).toISOString()}`
+        );
         const exitKlineIdx = klines.findIndex(k => k.openTime >= tradeSim.exitTime);
         // exitKlineIdx가 -1이면 거래가 데이터 끝까지 갔다는 뜻 → 루프 종료
         i = exitKlineIdx > 0 ? exitKlineIdx : klines.length;
