@@ -157,7 +157,8 @@ export function runBacktest(
       if (tradeSim) {
         trades.push(tradeSim);
         const exitKlineIdx = klines.findIndex(k => k.openTime >= tradeSim.exitTime);
-        i = exitKlineIdx > 0 ? exitKlineIdx : i + 1;
+        // exitKlineIdx가 -1이면 거래가 데이터 끝까지 갔다는 뜻 → 루프 종료
+        i = exitKlineIdx > 0 ? exitKlineIdx : klines.length;
         continue;
       }
     }
