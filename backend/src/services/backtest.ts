@@ -163,7 +163,7 @@ export function runBacktest(
           ` | 그리드체결: ${tradeSim.gridsFilled}개` +
           ` | 수익률: ${tradeSim.pnlPct.toFixed(2)}%` +
           ` | 사유: ${tradeSim.exitReason}` +
-          ` | 진입시각: ${new Date(tradeSim.entryTime).toISOString()}`
+          ` | 진입시각: ${new Date(tradeSim.entryTime).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`
         );
         const exitKlineIdx = klines.findIndex(k => k.openTime >= tradeSim.exitTime);
         // exitKlineIdx가 -1이면 거래가 데이터 끝까지 갔다는 뜻 → 루프 종료

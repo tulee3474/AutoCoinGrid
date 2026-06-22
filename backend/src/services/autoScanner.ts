@@ -184,6 +184,7 @@ export function startPaperScanner(userId: string, broadcast: (data: unknown) => 
     )
   };
   scanners.set(userId, state);
+  prisma.user.update({ where: { id: userId }, data: { scannerActive: true } }).catch(() => {});
 
   addLog(userId, '🚀 가상 스캐너 시작 (1분 간격)', 'info');
   runScanCycle(userId, broadcast).catch(e => addLog(userId, `초기 스캔 오류: ${e.message}`, 'error'));
@@ -194,5 +195,20 @@ export function stopPaperScanner(userId: string) {
   if (!state) return;
   clearInterval(state.interval);
   scanners.delete(userId);
+  prisma.user.update({ where: { id: userId }, data: { scannerActive: false } }).catch(() => {});
   console.log(`[Scanner:${userId.slice(0, 6)}] 중지됨`);
+}
+
+export async function restoreScanners() {
+  try {
+    const activeUsers = await prisma.user.findMany({ where: { scannerActive: true }, select: { id: true } });
+    if (activeUsers.length === 0) return;
+    console.log(`[Scanner] 서버 재시작 후 ${activeUsers.length}개 스캐너 복원 중...`);
+    for (const { id } of activeUsers) {
+      startPaperScanner(id, () => {});
+      console.log(`[Scanner] 복원: ${id.slice(0, 6)}`);
+    }
+  } catch (e: any) {
+    console.error(`[Scanner] 복원 실패: ${e.message}`);
+  }
 }

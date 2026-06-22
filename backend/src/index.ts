@@ -14,6 +14,7 @@ import authRoutes from './routes/auth';
 import adminRoutes from './routes/admin';
 import presetRoutes from './routes/presets';
 import { fetchFromCoinGecko } from './services/btcDominanceHistory';
+import { restoreScanners } from './services/autoScanner';
 
 const app = express();
 app.set('trust proxy', 1); // Docker/nginx 뒤에서 X-Forwarded-For 신뢰
@@ -81,4 +82,5 @@ server.listen(PORT, () => {
   setPaperBroadcast(broadcast);
   setLiveBroadcast(broadcast);
   scheduleDailyDomUpdate();
+  restoreScanners();
 });
