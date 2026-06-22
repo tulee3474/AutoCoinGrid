@@ -24,19 +24,18 @@ services:
     build: ./backend
     restart: unless-stopped
     environment:
-      DATABASE_URL: mysql://autocoin:password@mysql:3306/autocoin
-      JWT_SECRET: local-dev-jwt-secret-change-in-prod
-      ENCRYPTION_KEY: local-dev-32char-enckey-change!!
-      ADMIN_PASSWORD: danim0504!
+      DATABASE_URL: ${DATABASE_URL:-mysql://autocoin:password@mysql:3306/autocoin}
+      JWT_SECRET: ${JWT_SECRET:-local-dev-jwt-secret-change-in-prod}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-local-dev-32char-enckey-change!!}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-danim0504!}
       PORT: "3001"
-      NODE_ENV: development
+      NODE_ENV: ${NODE_ENV:-development}
     depends_on:
       mysql:
         condition: service_healthy
     ports:
       - "3001:3001"
-    # 첫 실행 시 마이그레이션 자동 실행
-    command: sh -c "npx prisma migrate deploy && node dist/index.js"
+    command: sh -c "npx prisma db push && node dist/index.js"
 
   frontend:
     build: ./frontend
