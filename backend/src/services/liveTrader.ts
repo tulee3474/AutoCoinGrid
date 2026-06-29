@@ -269,9 +269,6 @@ export async function openLivePosition(
     const qtyPrec    = symbolInfo?.quantityPrecision  ?? 2;
     const pricePrec  = symbolInfo?.pricePrecision     ?? 2;
 
-    const orderTypes: string[] = symbolInfo?.orderTypes ?? [];
-    const supportsTpSl = orderTypes.includes('TAKE_PROFIT_MARKET') && orderTypes.includes('STOP_MARKET');
-
     const qty = parseFloat((trade.entryAmountUsdt * trade.leverage / entryPrice).toFixed(qtyPrec));
     if (qty <= 0) {
       addLog(userId, `수량 계산 오류 ${symbol}: qty=${qty} (진입금 $${trade.entryAmountUsdt}, 레버리지 ${trade.leverage}x, 가격 $${entryPrice})`, 'error');
@@ -296,7 +293,7 @@ export async function openLivePosition(
     let tpOrderId: bigint | null = null;
     let slOrderId: bigint | null = null;
 
-    if (supportsTpSl) {
+    try {
       const tpOrder = await binanceSvc.placeOrder({
         symbol, side: 'BUY', type: 'TAKE_PROFIT_MARKET',
         quantity: filledQty.toString(), stopPrice: tpPrice.toFixed(pricePrec),
@@ -309,8 +306,9 @@ export async function openLivePosition(
       });
       tpOrderId = BigInt(tpOrder.orderId);
       slOrderId = BigInt(slOrder.orderId);
-    } else {
-      addLog(userId, `${symbol} TP/SL 주문 미지원 — 스캐너 가격 모니터링으로 관리`, 'info');
+    } catch (e: any) {
+      // TP/SL 주문 실패(미지원 코인 등) → 스캐너 가격 모니터링으로 전환
+      addLog(userId, `${symbol} TP/SL 등록 실패 (${e.response?.data?.msg ?? e.message}) — 스캐너 모니터링 전환`, 'info');
     }
 
     const pos = await prisma.livePosition.create({
