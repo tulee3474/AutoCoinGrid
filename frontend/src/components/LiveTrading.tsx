@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
+import { useWebSocket } from '../hooks/useWebSocket';
 import {
   getLiveStatus, startLiveScanner, stopLiveScanner, forceStopLiveScanner,
   getLivePositions, getLiveLogs, getLiveScanLog, getLiveStats, getLiveStrategyStats,
@@ -85,6 +86,12 @@ export default function LiveTrading() {
     const id = setInterval(refresh, 10_000);
     return () => clearInterval(id);
   }, [refresh, refreshStrategies]);
+
+  useWebSocket((data) => {
+    if (['live_signal', 'live_close', 'live_stopped', 'live_status'].includes(data.type)) {
+      refresh();
+    }
+  });
 
   const handleStart = async () => {
     await startLiveScanner();

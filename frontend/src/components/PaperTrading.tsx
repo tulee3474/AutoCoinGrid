@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
+import { useWebSocket } from '../hooks/useWebSocket';
 import {
   getPaperWallet, getPaperPositions, getPaperLogs,
   resetPaperWallet, closePaperPosition,
@@ -133,9 +134,15 @@ export default function PaperTrading() {
   useEffect(() => {
     refresh();
     refreshStrategies();
-    const id = setInterval(refresh, 15_000);
+    const id = setInterval(refresh, 10_000);
     return () => clearInterval(id);
   }, [refresh, refreshStrategies]);
+
+  useWebSocket((data) => {
+    if (['paper_signal', 'paper_close', 'paper_grid_fill'].includes(data.type)) {
+      refresh();
+    }
+  });
 
   const handleReset = async () => {
     if (!confirm('가상 지갑을 $10,000 USDT로 초기화하겠습니까? 모든 기록이 삭제됩니다.')) return;

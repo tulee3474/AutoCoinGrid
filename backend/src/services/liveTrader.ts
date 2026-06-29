@@ -196,6 +196,22 @@ export async function openLivePosition(
 
   const binanceSvc = await getUserBinance(userId);
 
+  // 잔액 사전 확인 (부족 시 주문 없이 조기 종료)
+  try {
+    const accountInfo      = await binanceSvc.getAccountInfo();
+    const availableBalance = parseFloat(accountInfo.availableBalance ?? '0');
+    if (availableBalance < trade.entryAmountUsdt) {
+      addLog(userId,
+        `💰 잔액 부족 ${symbol}: 가용 $${availableBalance.toFixed(2)} < 필요 $${trade.entryAmountUsdt}`,
+        'error'
+      );
+      return null;
+    }
+  } catch (e: any) {
+    addLog(userId, `잔액 조회 실패 ${symbol}: ${e.response?.data?.msg ?? e.message}`, 'error');
+    return null;
+  }
+
   try {
     await binanceSvc.setMarginType(symbol, 'ISOLATED');
     await binanceSvc.setLeverage(symbol, trade.leverage);
@@ -205,26 +221,35 @@ export async function openLivePosition(
     const qtyPrec    = symbolInfo?.quantityPrecision  ?? 2;
     const pricePrec  = symbolInfo?.pricePrecision     ?? 2;
 
-    const qty       = parseFloat((trade.entryAmountUsdt * trade.leverage / entryPrice).toFixed(qtyPrec));
-    const tpPrice   = entryPrice * (1 - trade.takeProfitPct / 100);
-    // SL = PDF 방식: 전체 그리드 체결 후 조화평균 진입가에서 한 단계 더
-    const slPrice   = calcPdfStopLoss(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing);
+    const qty = parseFloat((trade.entryAmountUsdt * trade.leverage / entryPrice).toFixed(qtyPrec));
+    if (qty <= 0) {
+      addLog(userId, `수량 계산 오류 ${symbol}: qty=${qty} (진입금 $${trade.entryAmountUsdt}, 레버리지 ${trade.leverage}x, 가격 $${entryPrice})`, 'error');
+      return null;
+    }
 
-    const entryOrder = await binanceSvc.placeOrder({ symbol, side: 'SELL', type: 'MARKET', quantity: qty.toString() });
-    const actualEntry = parseFloat(entryOrder.avgPrice) || entryPrice;
+    const tpPrice = entryPrice * (1 - trade.takeProfitPct / 100);
+    // gridEnabled=false이면 stopLossPct 직접 사용
+    const gridEnabled = trade.gridEnabled !== false;
+    const slPrice     = gridEnabled
+      ? calcPdfStopLoss(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing)
+      : entryPrice * (1 + trade.stopLossPct / 100);
+
+    const entryOrder  = await binanceSvc.placeOrder({ symbol, side: 'SELL', type: 'MARKET', quantity: qty.toString() });
+    const actualEntry = parseFloat(entryOrder.avgPrice)    || entryPrice;
+    const filledQty   = parseFloat(entryOrder.executedQty  || '0') || qty;  // 실제 체결 수량
 
     const tpOrder = await binanceSvc.placeOrder({
       symbol, side: 'BUY', type: 'TAKE_PROFIT_MARKET',
-      quantity: qty.toString(), stopPrice: tpPrice.toFixed(pricePrec), reduceOnly: true
+      quantity: filledQty.toString(), stopPrice: tpPrice.toFixed(pricePrec), reduceOnly: true
     });
     const slOrder = await binanceSvc.placeOrder({
       symbol, side: 'BUY', type: 'STOP_MARKET',
-      quantity: qty.toString(), stopPrice: slPrice.toFixed(pricePrec), reduceOnly: true
+      quantity: filledQty.toString(), stopPrice: slPrice.toFixed(pricePrec), reduceOnly: true
     });
 
     const pos = await prisma.livePosition.create({
       data: {
-        userId, symbol, side: 'SHORT', qty,
+        userId, symbol, side: 'SHORT', qty: filledQty,
         entryPrice: actualEntry, takeProfitPrice: tpPrice, stopLossPrice: slPrice,
         tpOrderId: BigInt(tpOrder.orderId), slOrderId: BigInt(slOrder.orderId),
         entryAmountUsdt: trade.entryAmountUsdt, leverage: trade.leverage,
@@ -236,14 +261,15 @@ export async function openLivePosition(
     });
 
     addLog(userId,
-      `📈 [진입] ${symbol} @ $${actualEntry.toPrecision(5)} | TP $${tpPrice.toPrecision(4)} | SL $${slPrice.toPrecision(4)}`,
+      `📈 [진입] ${symbol} @ $${actualEntry.toPrecision(5)} | qty ${filledQty} | TP $${tpPrice.toPrecision(4)} | SL $${slPrice.toPrecision(4)}`,
       'signal'
     );
     broadcast({ type: 'live_signal', data: { ...pos, tpOrderId: pos.tpOrderId.toString(), slOrderId: pos.slOrderId.toString() } });
     return pos;
   } catch (e: any) {
-    addLog(userId, `진입 실패 ${symbol}: ${e.message}`, 'error');
-    // 진입은 됐으나 TP/SL 등록 실패 시 긴급 청산
+    const errMsg = e.response?.data?.msg ?? e.message;
+    addLog(userId, `진입 실패 ${symbol}: ${errMsg}`, 'error');
+    // 진입 주문 성공 후 TP/SL 등록 실패 시 긴급 청산
     try {
       await binanceSvc.cancelAllOrders(symbol);
       const binancePositions = await binanceSvc.getPositions();
@@ -255,7 +281,12 @@ export async function openLivePosition(
         });
         addLog(userId, `⚠️ 긴급 청산 완료 ${symbol}`, 'error');
       }
-    } catch { /* 긴급 청산 실패 시 로그만 */ }
+    } catch (e2: any) {
+      addLog(userId,
+        `⛔ 긴급 청산 실패 ${symbol}: ${e2.response?.data?.msg ?? e2.message} — Binance에서 수동 확인 필요`,
+        'error'
+      );
+    }
     return null;
   }
 }
