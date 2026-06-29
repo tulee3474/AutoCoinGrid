@@ -109,6 +109,53 @@ router.delete('/api-keys', requireAuth, async (req: AuthRequest, res: Response) 
   }
 });
 
+// GET /api/auth/crypto-check — 암호화 키 진단 (로그인 필요)
+router.get('/crypto-check', requireAuth, async (req: AuthRequest, res: Response) => {
+  const key = process.env.ENCRYPTION_KEY ?? '';
+  const keyLen = key.length;
+  const keyPrefix = key.slice(0, 4).replace(/./g, '*') + '...'; // 절대 노출 안 함
+
+  // 1. 기본 암/복호화 사이클 테스트
+  let cycleOk = false;
+  let cycleError = '';
+  try {
+    const enc = encrypt('__test__');
+    const dec = decrypt(enc);
+    cycleOk = dec === '__test__';
+  } catch (e: any) {
+    cycleError = e.message;
+  }
+
+  // 2. DB에 저장된 암호화 키 포맷 확인 (값 자체는 노출 안 함)
+  const user = await prisma.user.findUnique({ where: { id: req.userId } });
+  const storedKey = user?.apiKey ?? null;
+  let storedFormat = 'none';
+  let decryptOk = false;
+  let decryptError = '';
+  if (storedKey) {
+    const parts = storedKey.split(':');
+    storedFormat = parts.length === 3
+      ? `ok (iv=${parts[0].length}chars tag=${parts[1].length}chars enc=${parts[2].length}chars)`
+      : `bad format (${parts.length} parts)`;
+    try {
+      decrypt(storedKey);
+      decryptOk = true;
+    } catch (e: any) {
+      decryptError = e.message;
+    }
+  }
+
+  res.json({
+    encryptionKeyLength: keyLen,
+    encryptionKeyValid: keyLen >= 32,
+    cycleOk,
+    cycleError: cycleError || null,
+    storedFormat,
+    decryptOk,
+    decryptError: decryptError || null,
+  });
+});
+
 // 내부 헬퍼: userId로 복호화된 API 키 반환 (다른 서비스에서 사용)
 export async function getUserApiKeys(userId: string): Promise<{ apiKey: string; apiSecret: string } | null> {
   const user = await prisma.user.findUnique({ where: { id: userId } });
