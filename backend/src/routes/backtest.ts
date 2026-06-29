@@ -109,9 +109,15 @@ router.post('/validate', async (req, res) => {
     const avgLossPct    = lossTrades.length > 0 ? Math.abs(lossTrades.reduce((s, t) => s + t.pnlPct, 0) / lossTrades.length) : 0;
     const expectedValuePct = winRate * avgProfitPct - (1 - winRate) * avgLossPct;
 
-    const recentAllTrades = allTrades.filter(t => t.entryTime >= recentCutoff);
-    const recentTotalSignals = recentAllTrades.length;
-    const recentWins = recentAllTrades.filter(t => t.pnlPct > 0).length;
+    const recentAllTrades  = allTrades.filter(t => t.entryTime >= recentCutoff);
+    const recentWinTrades  = recentAllTrades.filter(t => t.pnlPct > 0);
+    const recentLossTrades = recentAllTrades.filter(t => t.pnlPct <= 0);
+    const recentTotalSignals   = recentAllTrades.length;
+    const recentWins           = recentWinTrades.length;
+    const recentWinRate        = recentTotalSignals > 0 ? recentWins / recentTotalSignals : 0;
+    const recentAvgProfitPct   = recentWinTrades.length  > 0 ? recentWinTrades.reduce((s, t)  => s + t.pnlPct, 0) / recentWinTrades.length  : 0;
+    const recentAvgLossPct     = recentLossTrades.length > 0 ? Math.abs(recentLossTrades.reduce((s, t) => s + t.pnlPct, 0) / recentLossTrades.length) : 0;
+    const recentExpectedValuePct = recentWinRate * recentAvgProfitPct - (1 - recentWinRate) * recentAvgLossPct;
 
     res.json({
       totalSignals, wins, winRate,
@@ -121,6 +127,10 @@ router.post('/validate', async (req, res) => {
       interval,
       recentTotalSignals,
       recentWins,
+      recentWinRate,
+      recentAvgProfitPct,
+      recentAvgLossPct,
+      recentExpectedValuePct,
       perCoin: validResults
         .map(r => {
           const recentTrades = r.trades.filter(t => t.entryTime >= recentCutoff);

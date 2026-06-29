@@ -112,8 +112,12 @@ export interface ValidationResult {
   coinsAnalyzed: number;
   coinsWithSignal: number;
   interval: string;
-  recentTotalSignals: number;  // 최근 62일 신호 수
-  recentWins: number;          // 최근 62일 수익 수
+  recentTotalSignals: number;      // 최근 62일 신호 수
+  recentWins: number;              // 최근 62일 수익 수
+  recentWinRate: number;
+  recentAvgProfitPct: number;
+  recentAvgLossPct: number;
+  recentExpectedValuePct: number;
   perCoin: {
     symbol: string;
     signals: number;

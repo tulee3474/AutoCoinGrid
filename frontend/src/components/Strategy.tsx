@@ -310,36 +310,66 @@ function ValidationPanel({ result, loading, conditions, trade }: {
           <strong>{result.wins}번</strong> 수익 · <strong>{result.totalSignals - result.wins}번</strong> 손실
           <span className="text-gray-400 font-normal"> (승률 {winPct}%)</span>
         </div>
-        <div className="grid grid-cols-4 gap-3 mb-4">
-          {[
-            { label: '승률',      value: `${winPct}%`, color: result.winRate >= 0.5 ? 'text-up' : 'text-down' },
-            { label: '평균 수익', value: `+${result.avgProfitPct.toFixed(1)}%`, color: 'text-up' },
-            { label: '평균 손실', value: `-${result.avgLossPct.toFixed(1)}%`,   color: 'text-down' },
-            { label: '기댓값 EV', value: `${result.expectedValuePct >= 0 ? '+' : ''}${result.expectedValuePct.toFixed(2)}%`, color: isPositiveEV ? 'text-up' : 'text-down' },
-          ].map(({ label, value, color }) => (
-            <div key={label} className="bg-surface rounded-lg p-3 text-center">
-              <div className={`text-lg font-bold num ${color}`}>{value}</div>
-              <div className="text-xs text-gray-500 mt-0.5">{label}</div>
+        {/* 전체 기간 통계 */}
+        <div className="mb-1">
+          <div className="text-xs text-gray-500 mb-2">전체 기간 ({intervalToPeriodLabel(result.interval)} · {result.totalSignals}건)</div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-surface rounded-lg p-3 text-center">
+              <div className={`text-lg font-bold num ${result.winRate >= 0.5 ? 'text-up' : 'text-down'}`}>{winPct}%</div>
+              <div className="text-xs text-gray-500 mt-0.5">승률</div>
             </div>
-          ))}
-        </div>
-        <div className="text-xs text-gray-400 bg-surface rounded-lg p-3 mb-3">
-          <span className="text-gray-300 font-semibold">베이지안 해석: </span>
-          P(수익 | 조건 충족) = {result.wins}/{result.totalSignals} = {winPct}% &nbsp;|&nbsp;
-          기댓값 = {winPct}% × {result.avgProfitPct.toFixed(1)}% − {(100 - +winPct).toFixed(1)}% × {result.avgLossPct.toFixed(1)}%
-          {' '}= <span className={isPositiveEV ? 'text-up font-semibold' : 'text-down font-semibold'}>
-            {result.expectedValuePct >= 0 ? '+' : ''}{result.expectedValuePct.toFixed(2)}% / 거래
-          </span>
-        </div>
-        {result.recentTotalSignals !== undefined && (
-          <div className="text-xs text-gray-400 bg-surface rounded-lg p-3 mb-3">
-            <span className="text-gray-300 font-semibold">최근 62일 기준: </span>
-            {result.recentTotalSignals}건 발생 · 수익 {result.recentWins}건 ·{' '}
-            {result.recentTotalSignals > 0
-              ? `약 ${(62 / result.recentTotalSignals).toFixed(1)}일당 한 번`
-              : '신호 없음'}
+            <div className="bg-surface rounded-lg p-3 text-center">
+              <div className={`text-lg font-bold num ${isPositiveEV ? 'text-up' : 'text-down'}`}>
+                {result.expectedValuePct >= 0 ? '+' : ''}{result.expectedValuePct.toFixed(2)}%
+              </div>
+              <div className="text-xs text-gray-500 mt-0.5">기댓값 EV</div>
+            </div>
           </div>
-        )}
+        </div>
+
+        {/* 최근 62일 통계 */}
+        {result.recentTotalSignals !== undefined && (() => {
+          const rWinPct = (result.recentWinRate * 100).toFixed(1);
+          const rIsPositiveEV = result.recentExpectedValuePct > 0;
+          return (
+            <div className="mb-4">
+              <div className="text-xs text-gray-500 mb-2">
+                최근 62일
+                {result.recentTotalSignals > 0
+                  ? ` · ${result.recentTotalSignals}건 · 약 ${(62 / result.recentTotalSignals).toFixed(1)}일당 한 번`
+                  : ' · 신호 없음'}
+              </div>
+              {result.recentTotalSignals > 0 ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="bg-surface rounded-lg p-3 text-center">
+                    <div className={`text-lg font-bold num ${result.recentWinRate >= 0.5 ? 'text-up' : 'text-down'}`}>{rWinPct}%</div>
+                    <div className="text-xs text-gray-500 mt-0.5">승률</div>
+                  </div>
+                  <div className="bg-surface rounded-lg p-3 text-center">
+                    <div className={`text-lg font-bold num ${rIsPositiveEV ? 'text-up' : 'text-down'}`}>
+                      {result.recentExpectedValuePct >= 0 ? '+' : ''}{result.recentExpectedValuePct.toFixed(2)}%
+                    </div>
+                    <div className="text-xs text-gray-500 mt-0.5">기댓값 EV</div>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-xs text-gray-600 bg-surface rounded-lg p-3">최근 62일 내 신호 없음 (상장폐지 또는 조건 미충족)</div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* 평균 수익/손실 */}
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          <div className="bg-surface rounded-lg p-3 text-center">
+            <div className="text-lg font-bold num text-up">+{result.avgProfitPct.toFixed(1)}%</div>
+            <div className="text-xs text-gray-500 mt-0.5">평균 수익 (전체)</div>
+          </div>
+          <div className="bg-surface rounded-lg p-3 text-center">
+            <div className="text-lg font-bold num text-down">-{result.avgLossPct.toFixed(1)}%</div>
+            <div className="text-xs text-gray-500 mt-0.5">평균 손실 (전체)</div>
+          </div>
+        </div>
         <button onClick={() => setShowPerCoin(v => !v)} className="text-xs text-accent hover:underline flex items-center gap-1">
           {showPerCoin ? '▲' : '▼'} 코인별 신호 상세 ({result.coinsWithSignal}개 코인)
           <span className="text-gray-500">· 클릭하면 상세 백테스트</span>
