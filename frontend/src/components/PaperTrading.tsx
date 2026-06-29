@@ -89,6 +89,12 @@ function ScanLogLine({ entry }: { entry: ScanLog }) {
   );
 }
 
+const DT_OPTS: Intl.DateTimeFormatOptions = {
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit'
+};
+const fmtDt = (ts: number) => new Date(ts).toLocaleString('ko-KR', DT_OPTS);
+
 export default function PaperTrading() {
   const [wallet, setWallet]               = useState<WalletSummary | null>(null);
   const [positions, setPositions]         = useState<PaperPosition[]>([]);
@@ -99,6 +105,7 @@ export default function PaperTrading() {
   const [strategyStats, setStrategyStats] = useState<Record<string, { winRate: number; trades: number }>>({});
   const [loading, setLoading]             = useState(true);
   const [resetting, setResetting]         = useState(false);
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
 
   const refreshStrategies = useCallback(async () => {
     try { setStrategies(await getStrategies()); } catch {}
@@ -297,7 +304,7 @@ export default function PaperTrading() {
 
       {/* 자산 요약 */}
       {wallet && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
           <StatCard
             label="총 자산 (Equity)"
             value={`$${wallet.totalEquity.toFixed(2)}`}
@@ -307,7 +314,13 @@ export default function PaperTrading() {
           <StatCard
             label="가용 잔고"
             value={`$${wallet.balance.toFixed(2)}`}
-            sub={`포지션 담보 차감 후`}
+            sub="포지션 담보 차감 후"
+          />
+          <StatCard
+            label="미실현 손익"
+            value={`${wallet.unrealizedPnlUsdt >= 0 ? '+' : ''}$${wallet.unrealizedPnlUsdt.toFixed(2)}`}
+            sub={`포지션 ${wallet.openPositionsCount}개`}
+            valueClass={wallet.unrealizedPnlUsdt >= 0 ? 'text-up' : 'text-down'}
           />
           <StatCard
             label="실현 손익"
@@ -353,7 +366,8 @@ export default function PaperTrading() {
                     <td className="py-2 pr-3 text-gray-300 num">${pos.currentPrice.toPrecision(5)}</td>
                     <td className="py-2 pr-3">
                       <span className={`font-bold num ${pos.pnlUsdt >= 0 ? 'text-up' : 'text-down'}`}>
-                        {pos.pnlUsdt >= 0 ? '+' : ''}{pos.pnlPct.toFixed(2)}%
+                        {pos.pnlUsdt >= 0 ? '+' : ''}{(pos.pnlPct / pos.leverage).toFixed(2)}%
+                        <span className="font-normal opacity-70">({pos.pnlUsdt >= 0 ? '+' : ''}{pos.pnlPct.toFixed(2)}%)</span>
                       </span>
                       <span className="ml-1 text-gray-500 num">
                         ({pos.pnlUsdt >= 0 ? '+' : ''}${pos.pnlUsdt.toFixed(2)})
@@ -393,20 +407,34 @@ export default function PaperTrading() {
             <div className="space-y-1.5 max-h-80 overflow-y-auto">
               {logs.map(log => {
                 const exit = EXIT_LABEL[log.exitReason];
+                const expanded = expandedLogId === log.id;
                 return (
-                  <div key={log.id} className="flex items-center gap-2 text-xs p-2 bg-surface rounded-lg">
-                    <span className="text-gray-300 font-semibold w-12 flex-shrink-0">{log.symbol.replace('USDT', '')}</span>
-                    <span className="text-gray-600 truncate w-16 flex-shrink-0" title={log.strategyName}>{log.strategyName}</span>
-                    <span className="text-gray-500 num w-16 flex-shrink-0">${log.entryPrice.toPrecision(4)}</span>
-                    <span className="text-gray-400">→</span>
-                    <span className="text-gray-500 num w-16 flex-shrink-0">${log.exitPrice.toPrecision(4)}</span>
-                    <span className={`font-bold num flex-1 ${log.pnlUsdt >= 0 ? 'text-up' : 'text-down'}`}>
-                      {log.pnlUsdt >= 0 ? '+' : ''}{log.pnlPct.toFixed(2)}%
-                      <span className="text-gray-500 font-normal ml-1">(${log.pnlUsdt.toFixed(2)})</span>
-                    </span>
-                    <span className={`text-xs px-1.5 py-0.5 rounded flex-shrink-0 ${exit.cls}`}>
-                      {exit.text}
-                    </span>
+                  <div
+                    key={log.id}
+                    className="text-xs bg-surface rounded-lg overflow-hidden cursor-pointer hover:bg-white/5 transition-colors"
+                    onClick={() => setExpandedLogId(expanded ? null : log.id)}
+                  >
+                    <div className="flex items-center gap-2 p-2">
+                      <span className="text-gray-300 font-semibold w-12 flex-shrink-0">{log.symbol.replace('USDT', '')}</span>
+                      <span className="text-gray-600 truncate w-16 flex-shrink-0" title={log.strategyName}>{log.strategyName}</span>
+                      <span className="text-gray-500 num w-16 flex-shrink-0">${log.entryPrice.toPrecision(4)}</span>
+                      <span className="text-gray-400">→</span>
+                      <span className="text-gray-500 num w-16 flex-shrink-0">${log.exitPrice.toPrecision(4)}</span>
+                      <span className={`font-bold num flex-1 ${log.pnlUsdt >= 0 ? 'text-up' : 'text-down'}`}>
+                        {log.pnlUsdt >= 0 ? '+' : ''}{(log.pnlPct / log.leverage).toFixed(2)}%
+                        <span className="font-normal opacity-70">({log.pnlUsdt >= 0 ? '+' : ''}{log.pnlPct.toFixed(2)}%)</span>
+                        <span className="text-gray-500 font-normal ml-1">(${log.pnlUsdt.toFixed(2)})</span>
+                      </span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded flex-shrink-0 ${exit.cls}`}>
+                        {exit.text}
+                      </span>
+                    </div>
+                    {expanded && (
+                      <div className="px-2 pb-2 pt-0 text-gray-500 border-t border-border/40 mt-0 space-y-0.5">
+                        <div>진입: <span className="text-gray-300">{fmtDt(log.entryTime)}</span></div>
+                        <div>청산: <span className="text-gray-300">{fmtDt(log.exitTime)}</span></div>
+                      </div>
+                    )}
                   </div>
                 );
               })}

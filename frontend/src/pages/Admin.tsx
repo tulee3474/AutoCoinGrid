@@ -69,8 +69,19 @@ function PresetForm({
   loading: boolean;
 }) {
   const [name, setName] = useState(initial.name);
-  const [c, setC] = useState<StrategyConditions>(initial.conditions);
-  const [t, setT] = useState<TradeConfig>(initial.trade);
+  const [c, setC] = useState<StrategyConditions>({
+    ...DEFAULT_CONDITIONS,
+    ...initial.conditions,
+    priceChangeTimeframe: (initial.conditions as any).priceChangeTimeframe ?? DEFAULT_CONDITIONS.priceChangeTimeframe,
+    priceAboveMa7:        (initial.conditions as any).priceAboveMa7        ?? DEFAULT_CONDITIONS.priceAboveMa7,
+    priceAboveMa20:       (initial.conditions as any).priceAboveMa20       ?? DEFAULT_CONDITIONS.priceAboveMa20,
+  });
+  const [t, setT] = useState<TradeConfig>({
+    ...DEFAULT_TRADE,
+    ...initial.trade,
+    rsiExitThreshold: initial.trade.rsiExitThreshold !== undefined ? initial.trade.rsiExitThreshold : null,
+    maxDurationHours:  initial.trade.maxDurationHours  !== undefined ? initial.trade.maxDurationHours  : null,
+  });
 
   const sc = (patch: Partial<StrategyConditions>) => setC(prev => ({ ...prev, ...patch }));
   const st = (patch: Partial<TradeConfig>) => setT(prev => ({ ...prev, ...patch }));
@@ -112,12 +123,33 @@ function PresetForm({
               <option value="1d">일봉</option>
             </select>
           </F>
-          <F label="MA200 위 코인만">
+          <F label="가격변화 기준 시간">
+            <div className="flex gap-1 mt-0.5">
+              {(['1h', '4h', '24h'] as const).map(tf => (
+                <button key={tf} type="button"
+                  onClick={() => sc({ priceChangeTimeframe: tf })}
+                  className={`flex-1 py-1 text-xs rounded border transition-colors ${
+                    c.priceChangeTimeframe === tf
+                      ? 'border-accent bg-accent/20 text-accent'
+                      : 'border-border text-gray-400 hover:border-gray-500'
+                  }`}>{tf}</button>
+              ))}
+            </div>
+          </F>
+          <F label="MA7 위 코인만">
             <div className="flex items-center gap-2 mt-1">
-              <input type="checkbox" id="ma200-form" checked={c.priceAboveMa200}
-                onChange={e => sc({ priceAboveMa200: e.target.checked })}
+              <input type="checkbox" checked={c.priceAboveMa7 ?? false}
+                onChange={e => sc({ priceAboveMa7: e.target.checked })}
                 className="w-4 h-4 accent-accent" />
-              <label htmlFor="ma200-form" className="text-xs text-gray-300 cursor-pointer">사용</label>
+              <span className="text-xs text-gray-300">사용</span>
+            </div>
+          </F>
+          <F label="MA20 위 코인만">
+            <div className="flex items-center gap-2 mt-1">
+              <input type="checkbox" checked={c.priceAboveMa20 ?? false}
+                onChange={e => sc({ priceAboveMa20: e.target.checked })}
+                className="w-4 h-4 accent-accent" />
+              <span className="text-xs text-gray-300">사용</span>
             </div>
           </F>
           <F label="볼린저 상단 돌파만">
@@ -139,10 +171,37 @@ function PresetForm({
           <Num label="그리드 레벨" value={t.gridLevels} onChange={v => st({ gridLevels: v })} />
           <Num label="물타기 간격 (PDF)" value={t.gridSpacing} onChange={v => st({ gridSpacing: v })} />
           <Num label="익절" unit="% 하락시" value={t.takeProfitPct} onChange={v => st({ takeProfitPct: v })} />
-          <Num label="최대 보유" unit="시간" value={t.maxDurationHours ?? 72} onChange={v => st({ maxDurationHours: v })} />
+          <F label="최대 보유">
+            <div className="flex items-center gap-1">
+              <input type="checkbox" checked={t.maxDurationHours !== null}
+                onChange={e => st({ maxDurationHours: e.target.checked ? 72 : null })}
+                className="w-4 h-4 accent-accent flex-shrink-0" />
+              {t.maxDurationHours !== null && (
+                <input type="number" value={t.maxDurationHours}
+                  onChange={e => st({ maxDurationHours: +e.target.value })}
+                  className="w-full bg-surface border border-border rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-accent" />
+              )}
+              {t.maxDurationHours !== null && <span className="text-xs text-gray-500 flex-shrink-0">시간</span>}
+              {t.maxDurationHours === null && <span className="text-xs text-gray-500">타임아웃 없음</span>}
+            </div>
+          </F>
+          <F label="RSI 반전 청산">
+            <div className="flex items-center gap-1">
+              <input type="checkbox" checked={t.rsiExitThreshold != null}
+                onChange={e => st({ rsiExitThreshold: e.target.checked ? 40 : null })}
+                className="w-4 h-4 accent-accent flex-shrink-0" />
+              {t.rsiExitThreshold != null && (
+                <input type="number" value={t.rsiExitThreshold}
+                  onChange={e => st({ rsiExitThreshold: +e.target.value })}
+                  className="w-full bg-surface border border-border rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-accent" />
+              )}
+              {t.rsiExitThreshold != null && <span className="text-xs text-gray-500 flex-shrink-0">미만시</span>}
+              {t.rsiExitThreshold == null && <span className="text-xs text-gray-500">비활성</span>}
+            </div>
+          </F>
         </div>
         <div className="text-xs text-gray-500 p-2 bg-card rounded-lg">
-          자동 손절: 평균 진입가 기준 {(t.gridSpacing / t.leverage).toFixed(1)}% 간격 × {t.gridLevels}단계 + 1 (레버리지 반영)
+          자동 손절(ISOLATED): 진입가 대비 {Math.min(t.gridSpacing / t.leverage, 99 / t.leverage).toFixed(1)}% 상승시 (레버리지 반영)
         </div>
       </div>
 

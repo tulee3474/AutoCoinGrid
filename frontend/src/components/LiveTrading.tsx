@@ -26,6 +26,12 @@ function StatCard({ label, value, sub, valueClass }: { label: string; value: str
   );
 }
 
+const DT_OPTS: Intl.DateTimeFormatOptions = {
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit'
+};
+const fmtDt = (ts: string) => new Date(ts).toLocaleString('ko-KR', DT_OPTS);
+
 function ScanLogLine({ entry }: { entry: ScanLogEntry }) {
   const cls = { info: 'text-gray-400', signal: 'text-up', close: 'text-accent', error: 'text-down' }[entry.type];
   return (
@@ -47,6 +53,7 @@ export default function LiveTrading() {
   const [hasApiKeys, setHasApiKeys]       = useState<boolean | null>(null);
   const [loading, setLoading]             = useState(true);
   const [stopping, setStopping]           = useState(false);
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const [st, pos, lg, sl, me, liveStats, ss] = await Promise.allSettled([
@@ -272,21 +279,32 @@ export default function LiveTrading() {
       </div>
 
       {/* 통계 */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label="오픈 포지션" value={`${status?.openCount ?? 0}개`} />
-        <StatCard label="총 체결 거래" value={`${stats?.totalTrades ?? 0}건`} />
-        <StatCard
-          label="실현 손익 (전체)"
-          value={`${(stats?.totalPnlUsdt ?? 0) >= 0 ? '+' : ''}$${(stats?.totalPnlUsdt ?? 0).toFixed(2)}`}
-          valueClass={(stats?.totalPnlUsdt ?? 0) >= 0 ? 'text-up' : 'text-down'}
-        />
-        <StatCard
-          label="승률 (전체)"
-          value={stats == null || stats.totalTrades === 0 ? '-' : `${(stats.winRate * 100).toFixed(1)}%`}
-          sub="연속 SL 묶음 기준"
-          valueClass={stats && stats.winRate >= 0.5 ? 'text-up' : 'text-gray-400'}
-        />
-      </div>
+      {(() => {
+        const totalUnrealizedPnl = positions.reduce((sum, p) => sum + p.pnlUsdt, 0);
+        return (
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+            <StatCard label="오픈 포지션" value={`${status?.openCount ?? 0}개`} />
+            <StatCard label="총 체결 거래" value={`${stats?.totalTrades ?? 0}건`} />
+            <StatCard
+              label="미실현 손익"
+              value={`${totalUnrealizedPnl >= 0 ? '+' : ''}$${totalUnrealizedPnl.toFixed(2)}`}
+              sub={`포지션 ${positions.length}개`}
+              valueClass={totalUnrealizedPnl >= 0 ? 'text-up' : 'text-down'}
+            />
+            <StatCard
+              label="실현 손익 (전체)"
+              value={`${(stats?.totalPnlUsdt ?? 0) >= 0 ? '+' : ''}$${(stats?.totalPnlUsdt ?? 0).toFixed(2)}`}
+              valueClass={(stats?.totalPnlUsdt ?? 0) >= 0 ? 'text-up' : 'text-down'}
+            />
+            <StatCard
+              label="승률 (전체)"
+              value={stats == null || stats.totalTrades === 0 ? '-' : `${(stats.winRate * 100).toFixed(1)}%`}
+              sub="연속 SL 묶음 기준"
+              valueClass={stats && stats.winRate >= 0.5 ? 'text-up' : 'text-gray-400'}
+            />
+          </div>
+        );
+      })()}
 
       {/* 오픈 포지션 */}
       <div className="card">
@@ -321,7 +339,8 @@ export default function LiveTrading() {
                       <td className="py-2 pr-3 text-gray-300 num">${pos.currentPrice.toPrecision(5)}</td>
                       <td className="py-2 pr-3">
                         <span className={`font-bold num ${pos.pnlUsdt >= 0 ? 'text-up' : 'text-down'}`}>
-                          {pos.pnlUsdt >= 0 ? '+' : ''}{pos.pnlPct.toFixed(2)}%
+                          {pos.pnlUsdt >= 0 ? '+' : ''}{(pos.pnlPct / pos.leverage).toFixed(2)}%
+                          <span className="font-normal opacity-70">({pos.pnlUsdt >= 0 ? '+' : ''}{pos.pnlPct.toFixed(2)}%)</span>
                         </span>
                         <span className="ml-1 text-gray-500 num">
                           ({pos.pnlUsdt >= 0 ? '+' : ''}${pos.pnlUsdt.toFixed(2)})
@@ -362,20 +381,34 @@ export default function LiveTrading() {
             <div className="space-y-1.5 max-h-80 overflow-y-auto">
               {logs.map(log => {
                 const exit = EXIT_LABEL[log.exitReason];
+                const expanded = expandedLogId === log.id;
                 return (
-                  <div key={log.id} className="flex items-center gap-2 text-xs p-2 bg-surface rounded-lg">
-                    <span className="text-gray-300 font-semibold w-12 flex-shrink-0">{log.symbol.replace('USDT', '')}</span>
-                    <span className="text-gray-600 truncate w-16 flex-shrink-0" title={log.strategyName}>{log.strategyName}</span>
-                    <span className="text-gray-500 num w-16 flex-shrink-0">${log.entryPrice.toPrecision(4)}</span>
-                    <span className="text-gray-400">→</span>
-                    <span className="text-gray-500 num w-16 flex-shrink-0">${log.exitPrice.toPrecision(4)}</span>
-                    <span className={`font-bold num flex-1 ${log.pnlUsdt >= 0 ? 'text-up' : 'text-down'}`}>
-                      {log.pnlUsdt >= 0 ? '+' : ''}{log.pnlPct.toFixed(2)}%
-                      <span className="text-gray-500 font-normal ml-1">(${log.pnlUsdt.toFixed(2)})</span>
-                    </span>
-                    <span className={`text-xs px-1.5 py-0.5 rounded flex-shrink-0 ${exit.cls}`}>
-                      {exit.text}
-                    </span>
+                  <div
+                    key={log.id}
+                    className="text-xs bg-surface rounded-lg overflow-hidden cursor-pointer hover:bg-white/5 transition-colors"
+                    onClick={() => setExpandedLogId(expanded ? null : log.id)}
+                  >
+                    <div className="flex items-center gap-2 p-2">
+                      <span className="text-gray-300 font-semibold w-12 flex-shrink-0">{log.symbol.replace('USDT', '')}</span>
+                      <span className="text-gray-600 truncate w-16 flex-shrink-0" title={log.strategyName}>{log.strategyName}</span>
+                      <span className="text-gray-500 num w-16 flex-shrink-0">${log.entryPrice.toPrecision(4)}</span>
+                      <span className="text-gray-400">→</span>
+                      <span className="text-gray-500 num w-16 flex-shrink-0">${log.exitPrice.toPrecision(4)}</span>
+                      <span className={`font-bold num flex-1 ${log.pnlUsdt >= 0 ? 'text-up' : 'text-down'}`}>
+                        {log.pnlUsdt >= 0 ? '+' : ''}{(log.pnlPct / log.leverage).toFixed(2)}%
+                        <span className="font-normal opacity-70">({log.pnlUsdt >= 0 ? '+' : ''}{log.pnlPct.toFixed(2)}%)</span>
+                        <span className="text-gray-500 font-normal ml-1">(${log.pnlUsdt.toFixed(2)})</span>
+                      </span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded flex-shrink-0 ${exit.cls}`}>
+                        {exit.text}
+                      </span>
+                    </div>
+                    {expanded && (
+                      <div className="px-2 pb-2 pt-0 text-gray-500 border-t border-border/40 space-y-0.5">
+                        <div>진입: <span className="text-gray-300">{fmtDt(log.entryTime)}</span></div>
+                        <div>청산: <span className="text-gray-300">{fmtDt(log.exitTime)}</span></div>
+                      </div>
+                    )}
                   </div>
                 );
               })}

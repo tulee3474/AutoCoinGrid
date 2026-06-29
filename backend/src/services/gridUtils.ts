@@ -51,6 +51,8 @@ export function calcPdfStopLoss(
     sumPrices += nextPrice;
     count++;
   }
-  const finalAvg = sumPrices / count;
-  return finalAvg * (1 + step);
+  const pdfSL = (sumPrices / count) * (1 + step);
+  // 격리 마진(ISOLATED) 기준 최대 손실 99%로 제한: 진입가 × (1 + 0.99/레버리지)
+  const isolatedSL = entryPrice * (1 + 0.99 / leverage);
+  return Math.min(pdfSL, isolatedSL);
 }

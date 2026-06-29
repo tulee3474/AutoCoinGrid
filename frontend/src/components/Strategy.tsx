@@ -359,7 +359,9 @@ function calcPdfSlPct(leverage: number, gridLevels: number, gridSpacing: number)
     sumPrices += next;
     count++;
   }
-  return (sumPrices / count) * (1 + step) * 100 - 100;
+  const pdfSlPct     = (sumPrices / count) * (1 + step) * 100 - 100;
+  const isolatedSlPct = 99 / leverage;
+  return Math.min(pdfSlPct, isolatedSlPct);
 }
 
 // ── 메인 컴포넌트 ─────────────────────────────────────────────

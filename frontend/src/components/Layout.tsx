@@ -25,8 +25,8 @@ export default function Layout() {
 
   return (
     <div className="flex h-screen overflow-hidden">
-      {/* Sidebar */}
-      <aside className="w-52 bg-card border-r border-border flex flex-col flex-shrink-0">
+      {/* Sidebar — 데스크탑만 */}
+      <aside className="hidden md:flex md:flex-col w-52 bg-card border-r border-border flex-shrink-0">
         <div className="px-5 py-5 border-b border-border">
           <div className="text-base font-bold text-accent tracking-wide">AutoCoin</div>
           <div className="text-xs text-gray-500 mt-0.5">숏 그리드 자동매매</div>
@@ -105,9 +105,27 @@ export default function Layout() {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-y-auto p-6 bg-surface">
+      <main className="flex-1 overflow-y-auto p-4 md:p-6 pb-20 md:pb-6 bg-surface">
         <Outlet />
       </main>
+
+      {/* 모바일 하단 네비게이션 */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-card border-t border-border z-50 flex">
+        {NAV.map(({ to, label, icon }) => (
+          <NavLink
+            key={to}
+            to={to}
+            className={({ isActive }) =>
+              `flex-1 flex flex-col items-center justify-center py-2 text-xs transition-colors ${
+                isActive ? 'text-accent' : 'text-gray-500'
+              }`
+            }
+          >
+            <span className="text-lg leading-tight">{icon}</span>
+            <span className="mt-0.5 leading-tight">{label.replace(' ', ' ')}</span>
+          </NavLink>
+        ))}
+      </nav>
     </div>
   );
 }
