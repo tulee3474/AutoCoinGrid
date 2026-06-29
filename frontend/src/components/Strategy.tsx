@@ -312,7 +312,8 @@ function ValidationPanel({ result, loading, conditions, trade }: {
         </div>
         {/* 전체 기간 통계 */}
         <div className="mb-1">
-          <div className="text-xs text-gray-500 mb-2">전체 기간 ({intervalToPeriodLabel(result.interval)} · {result.totalSignals}건)</div>
+          <div className="text-xs text-gray-500 mb-1">전체 기간 ({intervalToPeriodLabel(result.interval)} · {result.totalSignals}건)</div>
+          <div className="text-xs text-gray-600 mb-2">※ 상장폐지 코인 포함 — 최근 62일에 신호 없으면 현재 비활성</div>
           <div className="grid grid-cols-2 gap-2">
             <div className="bg-surface rounded-lg p-3 text-center">
               <div className={`text-lg font-bold num ${result.winRate >= 0.5 ? 'text-up' : 'text-down'}`}>{winPct}%</div>
