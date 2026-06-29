@@ -24,6 +24,7 @@ export interface StrategyConditions {
 export interface TradeConfig {
   leverage: number;
   entryAmountUsdt: number;
+  gridEnabled?: boolean;  // false = 그리드 없음 (단순 숏)
   gridLevels: number;
   gridSpacing: number;
   takeProfitPct: number;

@@ -86,10 +86,12 @@ function simulateTrade(
     : klines.length;
   const maxEndIdx = Math.min(entryIdx + 1 + maxCandles, klines.length - 1);
 
-  // PDF 방식 그리드
-  const gridPrices      = calcPdfGridPrices(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing);
+  const gridEnabled = trade.gridEnabled !== false;
+  const gridPrices      = gridEnabled ? calcPdfGridPrices(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing) : [];
   const takeProfitPrice = entryPrice * (1 - trade.takeProfitPct / 100);
-  const stopLossPrice   = calcPdfStopLoss(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing);
+  const stopLossPrice   = gridEnabled
+    ? calcPdfStopLoss(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing)
+    : entryPrice * (1 + trade.stopLossPct / 100);
 
   let exitPrice = 0;
   let exitTime  = 0;

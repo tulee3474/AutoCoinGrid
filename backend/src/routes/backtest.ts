@@ -91,10 +91,12 @@ router.post('/validate', async (req, res) => {
         expectedValuePct: 0, avgProfitPct: 0, avgLossPct: 0,
         coinsAnalyzed: allAlt.length, coinsWithSignal: 0,
         interval, perCoin: [],
+        recentTotalSignals: 0, recentWins: 0,
         message: '조건을 충족한 신호가 없습니다. 조건 범위를 넓혀보세요.'
       });
     }
 
+    const recentCutoff = Date.now() - 62 * 24 * 60 * 60 * 1000;
     const allTrades  = validResults.flatMap(r => r.trades);
     const winTrades  = allTrades.filter(t => t.pnlPct > 0);
     const lossTrades = allTrades.filter(t => t.pnlPct <= 0);
@@ -105,14 +107,30 @@ router.post('/validate', async (req, res) => {
     const avgLossPct    = lossTrades.length > 0 ? Math.abs(lossTrades.reduce((s, t) => s + t.pnlPct, 0) / lossTrades.length) : 0;
     const expectedValuePct = winRate * avgProfitPct - (1 - winRate) * avgLossPct;
 
+    const recentAllTrades = allTrades.filter(t => t.entryTime >= recentCutoff);
+    const recentTotalSignals = recentAllTrades.length;
+    const recentWins = recentAllTrades.filter(t => t.pnlPct > 0).length;
+
     res.json({
       totalSignals, wins, winRate,
       expectedValuePct, avgProfitPct, avgLossPct,
       coinsAnalyzed: allAlt.length,
       coinsWithSignal: validResults.length,
       interval,
+      recentTotalSignals,
+      recentWins,
       perCoin: validResults
-        .map(r => ({ symbol: r.symbol, signals: r.totalTrades, wins: r.winningTrades, winRate: r.winRate }))
+        .map(r => {
+          const recentTrades = r.trades.filter(t => t.entryTime >= recentCutoff);
+          return {
+            symbol: r.symbol,
+            signals: r.totalTrades,
+            wins: r.winningTrades,
+            winRate: r.winRate,
+            recentSignals: recentTrades.length,
+            recentWins: recentTrades.filter(t => t.pnlPct > 0).length,
+          };
+        })
         .sort((a, b) => b.signals - a.signals)
         .slice(0, 15)
     });

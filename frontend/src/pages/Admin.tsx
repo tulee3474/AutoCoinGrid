@@ -164,12 +164,26 @@ function PresetForm({
       </div>
 
       <div>
-        <div className="text-xs font-semibold text-gray-400 mb-2">거래 설정</div>
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-xs font-semibold text-gray-400">거래 설정</div>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" className="w-3.5 h-3.5 accent-accent"
+              checked={t.gridEnabled !== false}
+              onChange={e => st({ gridEnabled: e.target.checked })} />
+            <span className="text-xs text-gray-300">그리드 DCA</span>
+          </label>
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <Num label="레버리지" unit="x" value={t.leverage} onChange={v => st({ leverage: v })} />
           <Num label="진입 금액" unit="USDT" value={t.entryAmountUsdt} onChange={v => st({ entryAmountUsdt: v })} />
-          <Num label="그리드 레벨" value={t.gridLevels} onChange={v => st({ gridLevels: v })} />
-          <Num label="물타기 간격 (PDF)" value={t.gridSpacing} onChange={v => st({ gridSpacing: v })} />
+          {t.gridEnabled !== false ? (
+            <>
+              <Num label="그리드 레벨" value={t.gridLevels} onChange={v => st({ gridLevels: v })} />
+              <Num label="물타기 간격 (PDF)" value={t.gridSpacing} onChange={v => st({ gridSpacing: v })} />
+            </>
+          ) : (
+            <Num label="손절 %" unit="% 상승시" value={t.stopLossPct} onChange={v => st({ stopLossPct: v })} />
+          )}
           <Num label="익절" unit="% 하락시" value={t.takeProfitPct} onChange={v => st({ takeProfitPct: v })} />
           <F label="최대 보유">
             <div className="flex items-center gap-1">
@@ -201,7 +215,9 @@ function PresetForm({
           </F>
         </div>
         <div className="text-xs text-gray-500 p-2 bg-card rounded-lg">
-          자동 손절(ISOLATED): 진입가 대비 {Math.min(t.gridSpacing / t.leverage, 99 / t.leverage).toFixed(1)}% 상승시 (레버리지 반영)
+          {t.gridEnabled !== false
+            ? `자동 손절(ISOLATED): 진입가 대비 ${Math.min(t.gridSpacing / t.leverage, 99 / t.leverage).toFixed(1)}% 상승시 (레버리지 반영)`
+            : `손절: 진입가 대비 +${t.stopLossPct}% 상승시 청산`}
         </div>
       </div>
 

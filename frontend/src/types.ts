@@ -24,6 +24,7 @@ export interface StrategyConditions {
 export interface TradeConfig {
   leverage: number;
   entryAmountUsdt: number;
+  gridEnabled?: boolean;  // false = 그리드 없음 (단순 숏)
   gridLevels: number;
   gridSpacing: number;
   takeProfitPct: number;
@@ -111,11 +112,15 @@ export interface ValidationResult {
   coinsAnalyzed: number;
   coinsWithSignal: number;
   interval: string;
+  recentTotalSignals: number;  // 최근 62일 신호 수
+  recentWins: number;          // 최근 62일 수익 수
   perCoin: {
     symbol: string;
     signals: number;
     wins: number;
     winRate: number;
+    recentSignals: number;  // 최근 62일 신호 수
+    recentWins: number;     // 최근 62일 수익 수
   }[];
   message?: string;
 }
@@ -134,6 +139,7 @@ export const DEFAULT_CONDITIONS: StrategyConditions = {
 export const DEFAULT_TRADE: TradeConfig = {
   leverage: 2,
   entryAmountUsdt: 100,
+  gridEnabled: true,
   gridLevels: 3,
   gridSpacing: 72,
   takeProfitPct: 20,

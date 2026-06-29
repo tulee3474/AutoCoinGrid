@@ -26,9 +26,14 @@ export async function openPaperPosition(
   if (wallet.openPositions.find(p => p.symbol === symbol)) return null;
   if (wallet.balance < trade.entryAmountUsdt) return null;
 
+  const gridEnabled = trade.gridEnabled !== false;
   const takeProfitPrice = entryPrice * (1 - trade.takeProfitPct / 100);
-  const stopLossPrice = calcPdfStopLoss(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing);
-  const gridPrices = calcPdfGridPrices(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing);
+  const stopLossPrice = gridEnabled
+    ? calcPdfStopLoss(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing)
+    : entryPrice * (1 + trade.stopLossPct / 100);
+  const gridPrices = gridEnabled
+    ? calcPdfGridPrices(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing)
+    : [];
   const expiresAt = trade.maxDurationHours != null
     ? new Date(Date.now() + trade.maxDurationHours * 3_600_000)
     : new Date(Date.now() + 365 * 24 * 3_600_000);

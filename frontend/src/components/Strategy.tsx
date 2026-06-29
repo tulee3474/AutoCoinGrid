@@ -321,6 +321,15 @@ function ValidationPanel({ result, loading, conditions, trade }: {
             {result.expectedValuePct >= 0 ? '+' : ''}{result.expectedValuePct.toFixed(2)}% / 거래
           </span>
         </div>
+        {result.recentTotalSignals !== undefined && (
+          <div className="text-xs text-gray-400 bg-surface rounded-lg p-3 mb-3">
+            <span className="text-gray-300 font-semibold">최근 62일 기준: </span>
+            {result.recentTotalSignals}건 발생 · 수익 {result.recentWins}건 ·{' '}
+            {result.recentTotalSignals > 0
+              ? `약 ${(62 / result.recentTotalSignals).toFixed(1)}일에 1번`
+              : '신호 없음'}
+          </div>
+        )}
         <button onClick={() => setShowPerCoin(v => !v)} className="text-xs text-accent hover:underline flex items-center gap-1">
           {showPerCoin ? '▲' : '▼'} 코인별 신호 상세 ({result.coinsWithSignal}개 코인)
           <span className="text-gray-500">· 클릭하면 상세 백테스트</span>
@@ -331,7 +340,13 @@ function ValidationPanel({ result, loading, conditions, trade }: {
               <button key={coin.symbol} onClick={() => setSelectedCoin(coin.symbol)}
                 className="w-full flex items-center gap-3 hover:bg-white/5 rounded-lg p-1.5 transition-colors text-left">
                 <span className="text-xs text-accent hover:underline w-24 flex-shrink-0 font-medium">{coin.symbol.replace('USDT', '')} →</span>
-                <span className="text-xs text-gray-500 w-12 flex-shrink-0 num">{coin.signals}회</span>
+                <div className="flex flex-col items-start w-32 flex-shrink-0">
+                  <span className="text-xs text-gray-500 num">전체 {coin.signals}회</span>
+                  <span className={`text-xs num ${coin.recentSignals > 0 ? 'text-gray-300' : 'text-gray-600'}`}>
+                    최근 {coin.recentSignals}회
+                    {coin.recentSignals > 0 && <span className="text-gray-500"> ({(62 / coin.recentSignals).toFixed(0)}일마다)</span>}
+                  </span>
+                </div>
                 <div className="flex-1 h-1.5 bg-border rounded-full overflow-hidden">
                   <div className={`h-full rounded-full ${coin.winRate >= 0.5 ? 'bg-up' : 'bg-down'}`} style={{ width: `${coin.winRate * 100}%` }} />
                 </div>
@@ -648,12 +663,27 @@ export default function Strategy() {
 
       {/* 그리드 거래 설정 */}
       <div className="card space-y-5">
-        <h2 className="section-title">그리드 숏 거래 설정</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="section-title">거래 설정</h2>
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input type="checkbox" className="w-4 h-4 accent-accent"
+              checked={draftTrade.gridEnabled !== false}
+              onChange={e => setDraftTrade({ gridEnabled: e.target.checked })} />
+            <span className="text-sm text-gray-300">그리드 DCA 사용</span>
+          </label>
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
           <NumberInput label="레버리지"          value={draftTrade.leverage}        onChange={v => setDraftTrade({ leverage: v })}        min={1} max={10}  unit="x"       fieldId="leverage"     emptyTracker={emptyFields} />
           <NumberInput label="초기 진입 금액"    value={draftTrade.entryAmountUsdt} onChange={v => setDraftTrade({ entryAmountUsdt: v })} min={10}          unit="USDT"    fieldId="entry-amt"    emptyTracker={emptyFields} />
-          <NumberInput label="그리드 레벨 수"    value={draftTrade.gridLevels}      onChange={v => setDraftTrade({ gridLevels: v })}      min={1} max={20}               fieldId="grid-levels"  emptyTracker={emptyFields} />
-          <NumberInput label="물타기 간격 (PDF)" value={draftTrade.gridSpacing}     onChange={v => setDraftTrade({ gridSpacing: v })}     min={1} max={200}              fieldId="grid-spacing" emptyTracker={emptyFields} />
+          {draftTrade.gridEnabled !== false && (
+            <>
+              <NumberInput label="그리드 레벨 수"    value={draftTrade.gridLevels}  onChange={v => setDraftTrade({ gridLevels: v })}  min={1} max={20}               fieldId="grid-levels"  emptyTracker={emptyFields} />
+              <NumberInput label="물타기 간격 (PDF)" value={draftTrade.gridSpacing} onChange={v => setDraftTrade({ gridSpacing: v })} min={1} max={200}              fieldId="grid-spacing" emptyTracker={emptyFields} />
+            </>
+          )}
+          {draftTrade.gridEnabled === false && (
+            <NumberInput label="손절 %" value={draftTrade.stopLossPct} onChange={v => setDraftTrade({ stopLossPct: v })} min={1} max={200} unit="% 상승시" fieldId="stop-loss" emptyTracker={emptyFields} />
+          )}
           <NumberInput label="익절 목표"         value={draftTrade.takeProfitPct}   onChange={v => setDraftTrade({ takeProfitPct: v })}  min={1} max={100} unit="% 하락시" fieldId="take-profit"  emptyTracker={emptyFields} />
         </div>
 
@@ -696,9 +726,19 @@ export default function Strategy() {
         </div>
 
         <div className="p-3 bg-surface rounded-lg text-xs text-gray-400 space-y-1">
-          <p>PDF 방식: 평균 진입가 기준 <span className="text-gray-300 font-semibold">{(draftTrade.gridSpacing / draftTrade.leverage).toFixed(1)}%</span> 간격으로 숏 {draftTrade.gridLevels}개 추가 (레버리지 분할)</p>
-          <p>자동 손절: 진입가 대비 약 <span className="text-down font-semibold">+{calcPdfSlPct(draftTrade.leverage, draftTrade.gridLevels, draftTrade.gridSpacing).toFixed(1)}%</span> 상승시 청산 (ISOLATED)</p>
-          <p>총 최대 노출: <span className="text-gray-300 num">${draftTrade.entryAmountUsdt * (draftTrade.gridLevels + 1)}</span> USDT × {draftTrade.leverage}x</p>
+          {draftTrade.gridEnabled !== false ? (
+            <>
+              <p>PDF 방식: 평균 진입가 기준 <span className="text-gray-300 font-semibold">{(draftTrade.gridSpacing / draftTrade.leverage).toFixed(1)}%</span> 간격으로 숏 {draftTrade.gridLevels}개 추가 (레버리지 분할)</p>
+              <p>자동 손절: 진입가 대비 약 <span className="text-down font-semibold">+{calcPdfSlPct(draftTrade.leverage, draftTrade.gridLevels, draftTrade.gridSpacing).toFixed(1)}%</span> 상승시 청산 (ISOLATED)</p>
+              <p>총 최대 노출: <span className="text-gray-300 num">${draftTrade.entryAmountUsdt * (draftTrade.gridLevels + 1)}</span> USDT × {draftTrade.leverage}x</p>
+            </>
+          ) : (
+            <>
+              <p>단순 숏 포지션 — 그리드 추가 진입 없음</p>
+              <p>손절: 진입가 대비 <span className="text-down font-semibold">+{draftTrade.stopLossPct.toFixed(1)}%</span> 상승시 청산 (ISOLATED)</p>
+              <p>총 노출: <span className="text-gray-300 num">${draftTrade.entryAmountUsdt}</span> USDT × {draftTrade.leverage}x</p>
+            </>
+          )}
         </div>
       </div>
 
