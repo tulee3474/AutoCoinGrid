@@ -4,6 +4,7 @@ import prisma from '../lib/prisma';
 import { requireAdmin } from '../middleware/admin';
 import { isPaperRunning, startPaperScanner, stopPaperScanner, getRunningUserIds } from '../services/autoScanner';
 import { isLiveRunning, startLiveScanner, stopLiveScanner, getRunningLiveUserIds } from '../services/liveTrader';
+import { binance } from '../services/binance';
 
 const noop = () => {};
 
@@ -78,14 +79,68 @@ router.get('/users/:userId', requireAdmin, async (req: Request, res: Response) =
       include: {
         strategies: true,
         livePositions: true,
-        liveTradeLogs: { orderBy: { exitTime: 'desc' }, take: 50 },
-        paperWallet: { include: { openPositions: true, tradeLogs: { orderBy: { exitTime: 'desc' }, take: 50 } } }
+        liveTradeLogs: { orderBy: { exitTime: 'desc' }, take: 200 },
+        paperWallet: { include: { openPositions: true, tradeLogs: { orderBy: { exitTime: 'desc' }, take: 200 } } }
       }
     });
     if (!user) return res.status(404).json({ error: '사용자 없음' });
 
+    // 오픈 포지션 현재가 조회 → 미실현 PnL 계산
+    const liveSymbols  = user.livePositions.map(p => p.symbol);
+    const paperSymbols = user.paperWallet?.openPositions.map(p => p.symbol) ?? [];
+    const symbols      = [...new Set([...liveSymbols, ...paperSymbols])];
+
+    const priceMap: Record<string, number> = {};
+    if (symbols.length > 0) {
+      try {
+        const indices = await binance.getFuturesPremiumIndex() as any[];
+        for (const m of indices) {
+          if (symbols.includes(m.symbol)) priceMap[m.symbol] = parseFloat(m.markPrice);
+        }
+      } catch {}
+    }
+
+    const livePositions = user.livePositions.map(p => {
+      const markPrice = priceMap[p.symbol] ?? null;
+      // SHORT: 진입가 - 현재가 × 수량
+      const unrealizedPnlUsdt = markPrice !== null ? (p.entryPrice - markPrice) * p.qty : null;
+      return {
+        ...p,
+        tpOrderId: p.tpOrderId.toString(),
+        slOrderId: p.slOrderId.toString(),
+        markPrice,
+        unrealizedPnlUsdt,
+      };
+    });
+
+    const paperPositions = (user.paperWallet?.openPositions ?? []).map(p => {
+      const markPrice  = priceMap[p.symbol] ?? null;
+      const avgEntry   = p.avgEntryPrice > 0 ? p.avgEntryPrice : p.entryPrice;
+      const totalUsdt  = p.totalEntryUsdt  > 0 ? p.totalEntryUsdt  : p.entryAmountUsdt;
+      const impliedQty = totalUsdt * p.leverage / avgEntry;
+      const unrealizedPnlUsdt = markPrice !== null ? (avgEntry - markPrice) * impliedQty : null;
+      return { ...p, markPrice, unrealizedPnlUsdt };
+    });
+
+    // 실현 손익 합계 (보관된 거래 기록 기준)
+    const liveRealizedPnl  = user.liveTradeLogs.reduce((s, t) => s + t.pnlUsdt, 0);
+    const paperRealizedPnl = (user.paperWallet?.tradeLogs ?? []).reduce((s, t) => s + t.pnlUsdt, 0);
+    const liveTrades       = user.liveTradeLogs.length;
+    const paperTrades      = user.paperWallet?.tradeLogs.length ?? 0;
+
     const { passwordHash, apiKey, apiSecret, ...safe } = user;
-    res.json({ ...safe, hasApiKeys: !!(apiKey && apiSecret) });
+    res.json({
+      ...safe,
+      hasApiKeys: !!(apiKey && apiSecret),
+      livePositions,
+      liveRealizedPnl,
+      liveTrades,
+      paperWallet: user.paperWallet
+        ? { ...user.paperWallet, openPositions: paperPositions, tradeLogs: undefined }
+        : null,
+      paperRealizedPnl,
+      paperTrades,
+    });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

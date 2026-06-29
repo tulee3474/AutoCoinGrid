@@ -13,6 +13,7 @@ import { StrategyConditions, TradeConfig, DEFAULT_CONDITIONS, DEFAULT_TRADE } fr
 interface UserDetail {
   id: string;
   email: string;
+  hasApiKeys: boolean;
   strategies: Array<{
     id: string; name: string; enabled: boolean;
     coins: string[]; conditions: any; trade: any;
@@ -21,59 +22,174 @@ interface UserDetail {
     id: string; symbol: string; qty: number; entryPrice: number;
     takeProfitPrice: number; stopLossPrice: number; leverage: number;
     entryAmountUsdt: number; strategyName: string; openedAt: string;
+    markPrice: number | null; unrealizedPnlUsdt: number | null;
   }>;
+  liveRealizedPnl: number;
+  liveTrades: number;
   paperWallet: {
     balance: number;
     openPositions: Array<{
       id: string; symbol: string; entryPrice: number; avgEntryPrice: number;
-      gridsFilled: number; takeProfitPrice: number; stopLossPrice: number;
-      leverage: number; entryAmountUsdt: number; strategyName: string; openedAt: string;
+      totalEntryUsdt: number; gridsFilled: number; takeProfitPrice: number;
+      stopLossPrice: number; leverage: number; entryAmountUsdt: number;
+      strategyName: string; openedAt: string;
+      markPrice: number | null; unrealizedPnlUsdt: number | null;
     }>;
   } | null;
+  paperRealizedPnl: number;
+  paperTrades: number;
 }
 
 function UserDetailPanel({ detail }: { detail: UserDetail }) {
+  const [expandedStrategyIds, setExpandedStrategyIds] = useState<Set<string>>(new Set());
+
+  const toggleStrategy = (id: string) =>
+    setExpandedStrategyIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
   const strategies     = detail.strategies ?? [];
   const livePositions  = detail.livePositions ?? [];
   const paperPositions = detail.paperWallet?.openPositions ?? [];
 
+  const liveUnrealizedTotal  = livePositions.reduce((s, p)  => s + (p.unrealizedPnlUsdt  ?? 0), 0);
+  const paperUnrealizedTotal = paperPositions.reduce((s, p) => s + (p.unrealizedPnlUsdt ?? 0), 0);
+
+  const fmt = (v: number) => `${v >= 0 ? '+' : '-'}$${Math.abs(v).toFixed(2)}`;
+  const cls = (v: number) => v >= 0 ? 'text-up' : 'text-down';
+
+  const hasLiveActivity  = livePositions.length  > 0 || detail.liveRealizedPnl  !== 0;
+  const hasPaperActivity = paperPositions.length > 0 || detail.paperRealizedPnl !== 0;
+
   return (
-    <div className="mx-2 mb-2 p-4 bg-surface rounded-xl border border-border/50 space-y-4">
-      {/* 전략 */}
+    <div className="mx-2 mb-2 p-4 bg-surface rounded-xl border border-border/50 space-y-5">
+
+      {/* ── 수익 현황 ───────────────────────────────── */}
+      {(hasLiveActivity || hasPaperActivity) && (
+        <div>
+          <div className="text-xs font-semibold text-gray-400 mb-2">수익 현황</div>
+          <div className="grid grid-cols-2 gap-3">
+            {hasLiveActivity && (
+              <div className="bg-card rounded-lg p-3 space-y-1.5">
+                <div className="text-xs text-yellow-400 font-semibold mb-1">실거래 ({detail.liveTrades}건)</div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-gray-500">실현 손익</span>
+                  <span className={cls(detail.liveRealizedPnl)}>{fmt(detail.liveRealizedPnl)}</span>
+                </div>
+                {livePositions.length > 0 && (
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-500">미실현 ({livePositions.length}개)</span>
+                    <span className={cls(liveUnrealizedTotal)}>{fmt(liveUnrealizedTotal)}</span>
+                  </div>
+                )}
+                <div className="border-t border-border/30 pt-1.5 flex justify-between text-xs">
+                  <span className="text-gray-400 font-semibold">합계</span>
+                  <span className={`font-semibold ${cls(detail.liveRealizedPnl + liveUnrealizedTotal)}`}>
+                    {fmt(detail.liveRealizedPnl + liveUnrealizedTotal)}
+                  </span>
+                </div>
+              </div>
+            )}
+            {hasPaperActivity && (
+              <div className="bg-card rounded-lg p-3 space-y-1.5">
+                <div className="text-xs text-blue-400 font-semibold mb-1">가상 ({detail.paperTrades}건)</div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-gray-500">실현 손익</span>
+                  <span className={cls(detail.paperRealizedPnl)}>{fmt(detail.paperRealizedPnl)}</span>
+                </div>
+                {paperPositions.length > 0 && (
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-500">미실현 ({paperPositions.length}개)</span>
+                    <span className={cls(paperUnrealizedTotal)}>{fmt(paperUnrealizedTotal)}</span>
+                  </div>
+                )}
+                <div className="border-t border-border/30 pt-1.5 flex justify-between text-xs">
+                  <span className="text-gray-400 font-semibold">합계</span>
+                  <span className={`font-semibold ${cls(detail.paperRealizedPnl + paperUnrealizedTotal)}`}>
+                    {fmt(detail.paperRealizedPnl + paperUnrealizedTotal)}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── 전략 ────────────────────────────────────── */}
       <div>
         <div className="text-xs font-semibold text-gray-400 mb-2">전략 ({strategies.length}개)</div>
         {strategies.length === 0 ? (
           <div className="text-xs text-gray-600 px-1">전략 없음</div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             {strategies.map(s => {
               const c = s.conditions as StrategyConditions;
+              const t = s.trade as TradeConfig;
               const coins = Array.isArray(s.coins) ? s.coins as string[] : [];
+              const isExp = expandedStrategyIds.has(s.id);
               return (
-                <div key={s.id} className="flex items-start gap-3 p-2.5 bg-card rounded-lg">
-                  <div className={`mt-1 w-1.5 h-1.5 rounded-full flex-shrink-0 ${s.enabled ? 'bg-green-400' : 'bg-gray-600'}`} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm text-gray-200 font-medium">{s.name}</span>
-                      <span className={`text-xs px-1.5 py-0.5 rounded-full ${s.enabled ? 'bg-green-500/15 text-green-400' : 'bg-gray-500/15 text-gray-500'}`}>
-                        {s.enabled ? '활성' : '비활성'}
-                      </span>
-                      <span className="text-xs text-gray-500">
-                        RSI {c?.rsi?.min}~{c?.rsi?.max} ({c?.rsi?.timeframe}) · 24h +{c?.priceChange24h?.min}~+{c?.priceChange24h?.max}%
-                      </span>
+                <div key={s.id} className="bg-card rounded-lg overflow-hidden">
+                  <button onClick={() => toggleStrategy(s.id)}
+                    className="w-full flex items-center gap-2.5 p-2.5 hover:bg-white/5 transition-colors text-left">
+                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${s.enabled ? 'bg-green-400' : 'bg-gray-600'}`} />
+                    <span className="text-sm text-gray-200 font-medium flex-1 truncate">{s.name}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full flex-shrink-0 ${s.enabled ? 'bg-green-500/15 text-green-400' : 'bg-gray-500/15 text-gray-500'}`}>
+                      {s.enabled ? '활성' : '비활성'}
+                    </span>
+                    <span className="text-xs text-gray-500 flex-shrink-0 hidden sm:block">
+                      RSI {c?.rsi?.min}~{c?.rsi?.max} ({c?.rsi?.timeframe}) · 코인 {coins.length}개
+                    </span>
+                    <span className="text-xs text-gray-600 flex-shrink-0">{isExp ? '▲' : '▼'}</span>
+                  </button>
+
+                  {isExp && (
+                    <div className="border-t border-border/30 px-3 pb-3 pt-2.5 space-y-3">
+                      <div>
+                        <div className="text-xs text-gray-500 font-semibold mb-1.5">진입 조건</div>
+                        <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
+                          <div><span className="text-gray-600">RSI </span><span className="text-gray-300">{c?.rsi?.min}~{c?.rsi?.max} ({c?.rsi?.period}일, {c?.rsi?.timeframe}봉)</span></div>
+                          <div><span className="text-gray-600">24h 상승률 </span><span className="text-gray-300">+{c?.priceChange24h?.min}%~+{c?.priceChange24h?.max}%</span></div>
+                          <div><span className="text-gray-600">볼륨 배수 </span><span className="text-gray-300">{c?.volumeMultiplier?.min}x~{c?.volumeMultiplier?.max}x</span></div>
+                          <div><span className="text-gray-600">가격변화 기준 </span><span className="text-gray-300">{c?.priceChangeTimeframe}</span></div>
+                          <div><span className="text-gray-600">MA7 위 </span><span className="text-gray-300">{c?.priceAboveMa7 ? '✓' : '✗'}</span></div>
+                          <div><span className="text-gray-600">MA20 위 </span><span className="text-gray-300">{c?.priceAboveMa20 ? '✓' : '✗'}</span></div>
+                          <div><span className="text-gray-600">볼린저 상단 </span><span className="text-gray-300">{c?.priceAboveBB ? '✓' : '✗'}</span></div>
+                          <div><span className="text-gray-600">BTC 도미넌스 </span><span className="text-gray-300">&lt;{c?.btcDominanceMax}%</span></div>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-gray-500 font-semibold mb-1.5">거래 설정</div>
+                        <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
+                          <div><span className="text-gray-600">레버리지 </span><span className="text-gray-300">{t?.leverage}x</span></div>
+                          <div><span className="text-gray-600">진입 금액 </span><span className="text-gray-300">${t?.entryAmountUsdt}</span></div>
+                          <div><span className="text-gray-600">그리드 DCA </span><span className="text-gray-300">{t?.gridEnabled !== false ? '사용' : '미사용'}</span></div>
+                          {t?.gridEnabled !== false
+                            ? <>
+                                <div><span className="text-gray-600">그리드 레벨 </span><span className="text-gray-300">{t?.gridLevels}단계</span></div>
+                                <div><span className="text-gray-600">물타기 간격 </span><span className="text-gray-300">{t?.gridSpacing}% (PDF)</span></div>
+                              </>
+                            : <div><span className="text-gray-600">손절 </span><span className="text-gray-300">+{t?.stopLossPct}% 상승시</span></div>
+                          }
+                          <div><span className="text-gray-600">익절 </span><span className="text-gray-300">-{t?.takeProfitPct}% 하락시</span></div>
+                          <div><span className="text-gray-600">최대 보유 </span><span className="text-gray-300">{t?.maxDurationHours != null ? `${t.maxDurationHours}시간` : '제한 없음'}</span></div>
+                          <div><span className="text-gray-600">RSI 반전 청산 </span><span className="text-gray-300">{t?.rsiExitThreshold != null ? `RSI ${t.rsiExitThreshold} 미만` : '비활성'}</span></div>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-gray-500 font-semibold mb-1.5">코인 ({coins.length}개)</div>
+                        <div className="flex flex-wrap gap-1">
+                          {coins.map(coin => (
+                            <span key={coin} className="text-xs bg-border/60 text-gray-400 px-1.5 py-0.5 rounded">
+                              {coin.replace('USDT', '')}
+                            </span>
+                          ))}
+                          {coins.length === 0 && <span className="text-xs text-gray-600">코인 미지정</span>}
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex flex-wrap gap-1 mt-1.5">
-                      {coins.slice(0, 12).map(coin => (
-                        <span key={coin} className="text-xs bg-border/60 text-gray-400 px-1.5 py-0.5 rounded">
-                          {coin.replace('USDT', '')}
-                        </span>
-                      ))}
-                      {coins.length > 12 && (
-                        <span className="text-xs text-gray-600">+{coins.length - 12}개</span>
-                      )}
-                      {coins.length === 0 && <span className="text-xs text-gray-600">코인 미지정</span>}
-                    </div>
-                  </div>
+                  )}
                 </div>
               );
             })}
@@ -81,7 +197,7 @@ function UserDetailPanel({ detail }: { detail: UserDetail }) {
         )}
       </div>
 
-      {/* 오픈 포지션 */}
+      {/* ── 오픈 포지션 ─────────────────────────────── */}
       <div>
         <div className="text-xs font-semibold text-gray-400 mb-2">
           오픈 포지션 (실거래 {livePositions.length} · 가상 {paperPositions.length})
@@ -89,32 +205,61 @@ function UserDetailPanel({ detail }: { detail: UserDetail }) {
         {livePositions.length === 0 && paperPositions.length === 0 ? (
           <div className="text-xs text-gray-600 px-1">오픈 포지션 없음</div>
         ) : (
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             {livePositions.map(p => (
-              <div key={p.id} className="flex items-center gap-3 p-2.5 bg-card rounded-lg flex-wrap">
-                <span className="text-xs bg-yellow-500/15 text-yellow-400 border border-yellow-500/20 px-1.5 py-0.5 rounded flex-shrink-0">실거래</span>
-                <span className="text-sm font-bold text-gray-100 w-16 flex-shrink-0">{p.symbol.replace('USDT', '')}</span>
-                <span className="text-xs text-gray-400">진입 <span className="text-gray-200">${p.entryPrice.toFixed(4)}</span></span>
-                <span className="text-xs text-gray-400">수량 <span className="text-gray-200">{p.qty}</span></span>
-                <span className="text-xs text-gray-400">TP <span className="text-up">${p.takeProfitPrice.toFixed(4)}</span></span>
-                <span className="text-xs text-gray-400">SL <span className="text-down">${p.stopLossPrice.toFixed(4)}</span></span>
-                <span className="text-xs text-gray-400">{p.leverage}x</span>
-                <span className="text-xs text-gray-600 ml-auto">{p.strategyName}</span>
+              <div key={p.id} className="bg-card rounded-lg p-2.5 space-y-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs bg-yellow-500/15 text-yellow-400 border border-yellow-500/20 px-1.5 py-0.5 rounded">실거래</span>
+                  <span className="text-sm font-bold text-gray-100">{p.symbol.replace('USDT', '')}</span>
+                  <span className="text-xs text-gray-500">{p.leverage}x SHORT</span>
+                  <span className="text-xs text-gray-600 ml-auto truncate max-w-32">{p.strategyName}</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div><div className="text-gray-600 mb-0.5">진입가</div><div className="text-gray-300">${p.entryPrice.toFixed(4)}</div></div>
+                  {p.markPrice !== null && <div><div className="text-gray-600 mb-0.5">현재가</div><div className="text-gray-200">${p.markPrice.toFixed(4)}</div></div>}
+                  {p.unrealizedPnlUsdt !== null && (
+                    <div>
+                      <div className="text-gray-600 mb-0.5">미실현 손익</div>
+                      <div className={`font-semibold ${cls(p.unrealizedPnlUsdt)}`}>{fmt(p.unrealizedPnlUsdt)}</div>
+                    </div>
+                  )}
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div><span className="text-gray-600">TP </span><span className="text-up">${p.takeProfitPrice.toFixed(4)}</span></div>
+                  <div><span className="text-gray-600">SL </span><span className="text-down">${p.stopLossPrice.toFixed(4)}</span></div>
+                  <div><span className="text-gray-600">수량 </span><span className="text-gray-300">{p.qty}</span></div>
+                </div>
               </div>
             ))}
-            {paperPositions.map(p => (
-              <div key={p.id} className="flex items-center gap-3 p-2.5 bg-card rounded-lg flex-wrap">
-                <span className="text-xs bg-blue-500/15 text-blue-400 border border-blue-500/20 px-1.5 py-0.5 rounded flex-shrink-0">가상</span>
-                <span className="text-sm font-bold text-gray-100 w-16 flex-shrink-0">{p.symbol.replace('USDT', '')}</span>
-                <span className="text-xs text-gray-400">진입 <span className="text-gray-200">${p.entryPrice.toFixed(4)}</span></span>
-                {p.gridsFilled > 0 && <span className="text-xs text-gray-400">평균 <span className="text-gray-200">${p.avgEntryPrice.toFixed(4)}</span></span>}
-                {p.gridsFilled > 0 && <span className="text-xs text-gray-400">그리드 <span className="text-gray-200">{p.gridsFilled}회</span></span>}
-                <span className="text-xs text-gray-400">TP <span className="text-up">${p.takeProfitPrice.toFixed(4)}</span></span>
-                <span className="text-xs text-gray-400">SL <span className="text-down">${p.stopLossPrice.toFixed(4)}</span></span>
-                <span className="text-xs text-gray-400">{p.leverage}x</span>
-                <span className="text-xs text-gray-600 ml-auto">{p.strategyName}</span>
-              </div>
-            ))}
+            {paperPositions.map(p => {
+              const avgEntry = p.avgEntryPrice > 0 ? p.avgEntryPrice : p.entryPrice;
+              return (
+                <div key={p.id} className="bg-card rounded-lg p-2.5 space-y-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs bg-blue-500/15 text-blue-400 border border-blue-500/20 px-1.5 py-0.5 rounded">가상</span>
+                    <span className="text-sm font-bold text-gray-100">{p.symbol.replace('USDT', '')}</span>
+                    <span className="text-xs text-gray-500">{p.leverage}x SHORT</span>
+                    {p.gridsFilled > 0 && <span className="text-xs text-gray-500">그리드 {p.gridsFilled}회</span>}
+                    <span className="text-xs text-gray-600 ml-auto truncate max-w-32">{p.strategyName}</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-xs">
+                    <div><div className="text-gray-600 mb-0.5">진입가</div><div className="text-gray-300">${p.entryPrice.toFixed(4)}</div></div>
+                    {p.gridsFilled > 0 && <div><div className="text-gray-600 mb-0.5">평균 진입가</div><div className="text-gray-300">${avgEntry.toFixed(4)}</div></div>}
+                    {p.markPrice !== null && <div><div className="text-gray-600 mb-0.5">현재가</div><div className="text-gray-200">${p.markPrice.toFixed(4)}</div></div>}
+                    {p.unrealizedPnlUsdt !== null && (
+                      <div>
+                        <div className="text-gray-600 mb-0.5">미실현 손익</div>
+                        <div className={`font-semibold ${cls(p.unrealizedPnlUsdt)}`}>{fmt(p.unrealizedPnlUsdt)}</div>
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div><span className="text-gray-600">TP </span><span className="text-up">${p.takeProfitPrice.toFixed(4)}</span></div>
+                    <div><span className="text-gray-600">SL </span><span className="text-down">${p.stopLossPrice.toFixed(4)}</span></div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
