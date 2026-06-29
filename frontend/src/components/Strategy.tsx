@@ -760,6 +760,9 @@ export default function Strategy() {
             <p className="text-xs text-gray-500 mt-1">
               Binance 전체 알트코인 (일 거래량 $200K 이상) · {draftConditions.rsi.timeframe}봉 {intervalToPeriodLabel(draftConditions.rsi.timeframe)} 데이터로 승률 계산
             </p>
+            <p className="text-xs text-gray-600 mt-0.5">
+              ※ 분석 기간 내 상장폐지된 코인도 포함 — 코인별 상세에서 최근 62일 신호 수로 현재 활성 여부 확인 가능
+            </p>
           </div>
           <button onClick={handleValidate} disabled={validating} className="btn-outline flex-shrink-0 disabled:opacity-50">
             {validating ? '분석 중...' : '승률 검증'}
