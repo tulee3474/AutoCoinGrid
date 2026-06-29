@@ -62,6 +62,10 @@ model PaperPosition {
   walletId        String
   symbol          String
   entryPrice      Float
+  avgEntryPrice   Float    @default(0)
+  totalEntryUsdt  Float    @default(0)
+  gridsFilled     Int      @default(0)
+  gridPrices      Json     @default("[]")
   takeProfitPrice Float
   stopLossPrice   Float
   entryAmountUsdt Float
@@ -82,11 +86,14 @@ model PaperTradeLog {
   entryTime       DateTime
   exitTime        DateTime
   entryPrice      Float
+  avgEntryPrice   Float    @default(0)
   exitPrice       Float
   pnlPct          Float
   pnlUsdt         Float
   exitReason      String
   entryAmountUsdt Float
+  totalEntryUsdt  Float    @default(0)
+  gridsFilled     Int      @default(0)
   leverage        Int
   strategyName    String
 

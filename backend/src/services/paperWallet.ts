@@ -1,6 +1,6 @@
 import { TradeConfig } from '../types';
 import prisma from '../lib/prisma';
-import { calcPdfStopLoss } from './gridUtils';
+import { calcPdfStopLoss, calcPdfGridPrices } from './gridUtils';
 
 export async function getOrCreateWallet(userId: string) {
   return prisma.paperWallet.upsert({
@@ -27,9 +27,8 @@ export async function openPaperPosition(
   if (wallet.balance < trade.entryAmountUsdt) return null;
 
   const takeProfitPrice = entryPrice * (1 - trade.takeProfitPct / 100);
-  // SL = PDF 방식: 전체 그리드 체결 후 조화평균 진입가에서 한 단계 더
   const stopLossPrice = calcPdfStopLoss(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing);
-  // maxDurationHours: null = 타임아웃 없음 → 1년 후로 설정
+  const gridPrices = calcPdfGridPrices(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing);
   const expiresAt = trade.maxDurationHours != null
     ? new Date(Date.now() + trade.maxDurationHours * 3_600_000)
     : new Date(Date.now() + 365 * 24 * 3_600_000);
@@ -41,13 +40,17 @@ export async function openPaperPosition(
     }),
     prisma.paperPosition.create({
       data: {
-        walletId: wallet.id,
+        walletId:        wallet.id,
         symbol,
         entryPrice,
+        avgEntryPrice:   entryPrice,
+        totalEntryUsdt:  trade.entryAmountUsdt,
+        gridsFilled:     0,
+        gridPrices:      gridPrices as any,
         takeProfitPrice,
         stopLossPrice,
         entryAmountUsdt: trade.entryAmountUsdt,
-        leverage: trade.leverage,
+        leverage:        trade.leverage,
         expiresAt,
         strategyName
       }
@@ -67,10 +70,14 @@ export async function closePaperPosition(
   const pos    = wallet.openPositions.find(p => p.id === positionId);
   if (!pos) return null;
 
+  // 그리드 추가진입이 있으면 avgEntryPrice 기준으로 PnL 계산
+  const avgEntry   = pos.avgEntryPrice > 0 ? pos.avgEntryPrice : pos.entryPrice;
+  const totalUsdt  = pos.totalEntryUsdt > 0 ? pos.totalEntryUsdt : pos.entryAmountUsdt;
+
   // SHORT: 가격이 내려가면 수익
-  const pnlPct  = ((pos.entryPrice - exitPrice) / pos.entryPrice) * 100 * pos.leverage;
-  const pnlUsdt = pos.entryAmountUsdt * pnlPct / 100;
-  const newBalance = Math.max(0, wallet.balance + pos.entryAmountUsdt + pnlUsdt);
+  const pnlPct  = ((avgEntry - exitPrice) / avgEntry) * 100 * pos.leverage;
+  const pnlUsdt = totalUsdt * pnlPct / 100;
+  const newBalance = Math.max(0, wallet.balance + totalUsdt + pnlUsdt);
 
   const [, log] = await prisma.$transaction([
     prisma.paperWallet.update({
@@ -84,11 +91,14 @@ export async function closePaperPosition(
         entryTime:       pos.openedAt,
         exitTime:        new Date(),
         entryPrice:      pos.entryPrice,
+        avgEntryPrice:   avgEntry,
         exitPrice,
         pnlPct,
         pnlUsdt,
         exitReason,
         entryAmountUsdt: pos.entryAmountUsdt,
+        totalEntryUsdt:  totalUsdt,
+        gridsFilled:     pos.gridsFilled,
         leverage:        pos.leverage,
         strategyName:    pos.strategyName
       }

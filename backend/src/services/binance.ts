@@ -51,6 +51,16 @@ export class BinanceService {
     }));
   }
 
+  async getKlinesSince(symbol: string, interval: string, startTime: number): Promise<Kline[]> {
+    const { data } = await this.spotClient.get('/api/v3/klines', {
+      params: { symbol, interval, startTime, limit: 1000 }
+    });
+    return data.map((k: any[]) => ({
+      openTime: k[0], open: +k[1], high: +k[2], low: +k[3],
+      close: +k[4], volume: +k[5], closeTime: k[6]
+    }));
+  }
+
   async getFuturesKlines(symbol: string, interval: string, limit = 500): Promise<Kline[]> {
     const { data } = await this.futuresClient.get('/fapi/v1/klines', {
       params: { symbol, interval, limit }

@@ -85,14 +85,93 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
       const tickers  = await binance.get24hrTickers() as any[];
       const priceMap = new Map<string, number>(tickers.map((t: any) => [t.symbol, parseFloat(t.lastPrice)]));
 
+      // 심볼별로 포지션 오픈 시각부터 현재까지의 1h 캔들 미리 조회 (SL/TP 누락 감지용)
+      const klinesBySymbol = new Map<string, Awaited<ReturnType<typeof binance.getKlines>>>();
+      for (const sym of new Set(wallet.openPositions.map(p => p.symbol))) {
+        const oldestMs = Math.min(
+          ...wallet.openPositions.filter(p => p.symbol === sym).map(p => p.openedAt.getTime())
+        );
+        try {
+          klinesBySymbol.set(sym, await binance.getKlinesSince(sym, '1h', oldestMs));
+        } catch { klinesBySymbol.set(sym, []); }
+      }
+
       for (const pos of wallet.openPositions) {
         const price = priceMap.get(pos.symbol);
         if (!price) continue;
 
+        // 이 포지션 오픈 이후 캔들만 필터
+        const posKlines = (klinesBySymbol.get(pos.symbol) ?? [])
+          .filter(k => k.openTime >= pos.openedAt.getTime());
+
+        // ── 그리드 추가진입 체크 ──────────────────────────────────
+        const gridPrices = Array.isArray(pos.gridPrices) ? (pos.gridPrices as number[]) : [];
+        const currentGridsFilled = pos.gridsFilled;
+
+        if (gridPrices.length > 0 && currentGridsFilled < gridPrices.length) {
+          let gridsToFill = 0;
+          for (let gi = currentGridsFilled; gi < gridPrices.length; gi++) {
+            const gp = gridPrices[gi];
+            // 현재가 또는 이전 캔들 HIGH가 그리드 가격에 도달했으면 체결
+            const reached = price >= gp || posKlines.some(k => k.high >= gp);
+            if (reached) gridsToFill++;
+            else break;
+          }
+
+          if (gridsToFill > 0) {
+            const freshWallet = await getOrCreateWallet(userId);
+            const cost = pos.entryAmountUsdt * gridsToFill;
+            if (freshWallet.balance >= cost) {
+              let newAvgEntry = pos.avgEntryPrice > 0 ? pos.avgEntryPrice : pos.entryPrice;
+              let newTotalUsdt = pos.totalEntryUsdt > 0 ? pos.totalEntryUsdt : pos.entryAmountUsdt;
+
+              for (let i = 0; i < gridsToFill; i++) {
+                const gp = gridPrices[currentGridsFilled + i];
+                newAvgEntry = (newAvgEntry * newTotalUsdt + gp * pos.entryAmountUsdt) / (newTotalUsdt + pos.entryAmountUsdt);
+                newTotalUsdt += pos.entryAmountUsdt;
+              }
+
+              const newGridsFilled = currentGridsFilled + gridsToFill;
+              await prisma.$transaction([
+                prisma.paperWallet.update({
+                  where: { id: freshWallet.id },
+                  data:  { balance: freshWallet.balance - cost }
+                }),
+                prisma.paperPosition.update({
+                  where: { id: pos.id },
+                  data:  { gridsFilled: newGridsFilled, avgEntryPrice: newAvgEntry, totalEntryUsdt: newTotalUsdt }
+                })
+              ]);
+
+              addLog(userId,
+                `📈 [그리드] ${pos.symbol} ${newGridsFilled}차 추가진입 | 평균진입가: $${newAvgEntry.toPrecision(5)}`,
+                'signal'
+              );
+              broadcast({ type: 'paper_grid_fill', data: { symbol: pos.symbol, gridsFilled: newGridsFilled, avgEntryPrice: newAvgEntry } });
+            }
+          }
+        }
+
+        // ── TP / SL / 타임아웃 체크 ──────────────────────────────
         let exitReason: 'takeProfit' | 'stopLoss' | 'timeout' | 'signalReversal' | null = null;
-        if      (price <= pos.takeProfitPrice)         exitReason = 'takeProfit';
-        else if (price >= pos.stopLossPrice)            exitReason = 'stopLoss';
-        else if (Date.now() >= pos.expiresAt.getTime()) exitReason = 'timeout';
+        let exitPrice = price;
+
+        if (Date.now() >= pos.expiresAt.getTime()) {
+          exitReason = 'timeout';
+        }
+
+        if (!exitReason) {
+          if      (price <= pos.takeProfitPrice) { exitReason = 'takeProfit'; exitPrice = pos.takeProfitPrice; }
+          else if (price >= pos.stopLossPrice)   { exitReason = 'stopLoss';   exitPrice = pos.stopLossPrice;   }
+        }
+
+        // 60초 폴링 사이에 놓친 SL/TP: 캔들 HIGH/LOW로 소급 감지
+        if (!exitReason) {
+          for (const k of posKlines) {
+            if (k.high >= pos.stopLossPrice)   { exitReason = 'stopLoss';   exitPrice = pos.stopLossPrice;   break; }
+            if (k.low  <= pos.takeProfitPrice) { exitReason = 'takeProfit'; exitPrice = pos.takeProfitPrice; break; }
+          }
+        }
 
         // RSI 반전 신호: 전략의 rsiExitThreshold 미만이면 숏 조기 청산
         const rsiThreshold = strategyThresholdMap.get(pos.strategyName) ?? null;
@@ -103,13 +182,14 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
               const ind = computeIndicators(klines, '1h');
               if (ind.rsi14 < rsiThreshold) {
                 exitReason = 'signalReversal';
+                exitPrice  = price;
               }
             }
           } catch { /* 개별 실패 무시 */ }
         }
 
         if (exitReason) {
-          const log = await closePaperPosition(userId, pos.id, price, exitReason as any);
+          const log = await closePaperPosition(userId, pos.id, exitPrice, exitReason as any);
           if (log) {
             const emoji = exitReason === 'takeProfit' ? '✅' : exitReason === 'stopLoss' ? '❌' : exitReason === 'signalReversal' ? '🔄' : '⏰';
             addLog(userId,
