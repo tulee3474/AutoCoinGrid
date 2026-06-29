@@ -213,6 +213,30 @@ export default function LiveTrading() {
           : '스캐너 중지됨 — 위 버튼으로 시작하세요. 전략을 먼저 활성화해야 신호가 발생합니다'}
       </div>
 
+      {/* Binance 선물 지갑 현황 */}
+      {hasApiKeys && (
+        <div className="card">
+          <h2 className="section-title mb-3">Binance 선물 지갑</h2>
+          {account ? (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              {[
+                { label: '지갑 잔고',    value: `$${account.totalWalletBalance.toFixed(2)}`,    cls: 'text-gray-100' },
+                { label: '가용 잔고',    value: `$${account.availableBalance.toFixed(2)}`,      cls: account.availableBalance > 0 ? 'text-up' : 'text-gray-400' },
+                { label: '미실현 손익',  value: `${account.totalUnrealizedProfit >= 0 ? '+' : ''}$${account.totalUnrealizedProfit.toFixed(2)}`, cls: account.totalUnrealizedProfit >= 0 ? 'text-up' : 'text-down' },
+                { label: '마진 잔고',    value: `$${account.totalMarginBalance.toFixed(2)}`,    cls: 'text-gray-300' },
+              ].map(({ label, value, cls }) => (
+                <div key={label} className="bg-surface rounded-lg p-3 text-center">
+                  <div className="text-xs text-gray-500 mb-1">{label}</div>
+                  <div className={`text-lg font-bold num ${cls}`}>{value}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-xs text-gray-500 text-center py-3">잔고 조회 중...</div>
+          )}
+        </div>
+      )}
+
       {/* 전략 목록 */}
       <div className="card">
         <div className="flex items-center justify-between mb-4">
@@ -287,42 +311,6 @@ export default function LiveTrading() {
           </div>
         )}
       </div>
-
-      {/* Binance 지갑 현황 */}
-      {account && (
-        <div className="card">
-          <h2 className="section-title mb-3">Binance 선물 지갑</h2>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            {[
-              {
-                label: '지갑 잔고',
-                value: `$${account.totalWalletBalance.toFixed(2)}`,
-                cls: 'text-gray-100',
-              },
-              {
-                label: '가용 잔고',
-                value: `$${account.availableBalance.toFixed(2)}`,
-                cls: account.availableBalance > 0 ? 'text-up' : 'text-gray-400',
-              },
-              {
-                label: '미실현 손익',
-                value: `${account.totalUnrealizedProfit >= 0 ? '+' : ''}$${account.totalUnrealizedProfit.toFixed(2)}`,
-                cls: account.totalUnrealizedProfit >= 0 ? 'text-up' : 'text-down',
-              },
-              {
-                label: '마진 잔고',
-                value: `$${account.totalMarginBalance.toFixed(2)}`,
-                cls: 'text-gray-300',
-              },
-            ].map(({ label, value, cls }) => (
-              <div key={label} className="bg-surface rounded-lg p-3 text-center">
-                <div className="text-xs text-gray-500 mb-1">{label}</div>
-                <div className={`text-lg font-bold num ${cls}`}>{value}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* 통계 */}
       {(() => {
