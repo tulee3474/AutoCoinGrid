@@ -44,8 +44,19 @@ export class BinanceService {
   async getKlines(symbol: string, interval: string, limit = 500, startTime?: number): Promise<Kline[]> {
     const params: Record<string, any> = { symbol, interval, limit };
     if (startTime) params.startTime = startTime;
-    const { data } = await this.spotClient.get('/api/v3/klines', { params });
-    return data.map((k: any[]) => ({
+    let res;
+    try {
+      res = await this.spotClient.get('/api/v3/klines', { params });
+    } catch (e: any) {
+      // 429: Rate limit → 5초 대기 후 1회 재시도
+      if (e.response?.status === 429) {
+        await new Promise(r => setTimeout(r, 5000));
+        res = await this.spotClient.get('/api/v3/klines', { params });
+      } else {
+        throw e;
+      }
+    }
+    return res.data.map((k: any[]) => ({
       openTime: k[0], open: +k[1], high: +k[2], low: +k[3],
       close: +k[4], volume: +k[5], closeTime: k[6]
     }));
