@@ -59,7 +59,11 @@ async function getBtcDominance(): Promise<number> {
 async function getUserBinance(userId: string): Promise<BinanceService> {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user?.apiKey || !user?.apiSecret) throw new Error('Binance API 키가 등록되지 않았습니다');
-  return new BinanceService(decrypt(user.apiKey), decrypt(user.apiSecret));
+  try {
+    return new BinanceService(decrypt(user.apiKey), decrypt(user.apiSecret));
+  } catch {
+    throw new Error('API 키 복호화 실패 — 서버 암호화 키가 변경됐을 수 있습니다. 내 정보에서 API 키를 다시 입력해주세요.');
+  }
 }
 
 // ── 전략 로드 (DB) ────────────────────────────────────────────
