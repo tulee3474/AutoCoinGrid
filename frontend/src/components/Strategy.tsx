@@ -326,7 +326,7 @@ function ValidationPanel({ result, loading, conditions, trade }: {
             <span className="text-gray-300 font-semibold">최근 62일 기준: </span>
             {result.recentTotalSignals}건 발생 · 수익 {result.recentWins}건 ·{' '}
             {result.recentTotalSignals > 0
-              ? `약 ${(62 / result.recentTotalSignals).toFixed(1)}일에 1번`
+              ? `약 ${(62 / result.recentTotalSignals).toFixed(1)}일당 한 번`
               : '신호 없음'}
           </div>
         )}
@@ -344,7 +344,7 @@ function ValidationPanel({ result, loading, conditions, trade }: {
                   <span className="text-xs text-gray-500 num">전체 {coin.signals}회</span>
                   <span className={`text-xs num ${coin.recentSignals > 0 ? 'text-gray-300' : 'text-gray-600'}`}>
                     최근 {coin.recentSignals}회
-                    {coin.recentSignals > 0 && <span className="text-gray-500"> ({(62 / coin.recentSignals).toFixed(0)}일마다)</span>}
+                    {coin.recentSignals > 0 && <span className="text-gray-500"> ({(62 / coin.recentSignals).toFixed(0)}일당 한 번)</span>}
                   </span>
                 </div>
                 <div className="flex-1 h-1.5 bg-border rounded-full overflow-hidden">
