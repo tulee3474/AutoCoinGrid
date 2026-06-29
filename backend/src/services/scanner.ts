@@ -54,9 +54,7 @@ export async function scanMarket(
   // 2단계: 후보 코인들의 지표 계산 (동시 10개 제한)
   // 스코어 배점: RSI 30 + 가격변화 25 + 볼륨 20 + MA7 5 + MA20 5 + BB 15 = 100
   const results: MarketSnapshot[] = [];
-  const top = candidates.slice(0, 80); // Rate limit 방어: 최대 80개만 처리
-
-  const queue = [...top];
+  const queue = [...candidates];
   const CONCURRENCY = 10;
   const workers = Array(CONCURRENCY).fill(null).map(async () => {
     while (queue.length > 0) {
