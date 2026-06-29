@@ -41,10 +41,10 @@ export class BinanceService {
 
   // ── 퍼블릭 API ──────────────────────────────────────────────
 
-  async getKlines(symbol: string, interval: string, limit = 500): Promise<Kline[]> {
-    const { data } = await this.spotClient.get('/api/v3/klines', {
-      params: { symbol, interval, limit }
-    });
+  async getKlines(symbol: string, interval: string, limit = 500, startTime?: number): Promise<Kline[]> {
+    const params: Record<string, any> = { symbol, interval, limit };
+    if (startTime) params.startTime = startTime;
+    const { data } = await this.spotClient.get('/api/v3/klines', { params });
     return data.map((k: any[]) => ({
       openTime: k[0], open: +k[1], high: +k[2], low: +k[3],
       close: +k[4], volume: +k[5], closeTime: k[6]

@@ -72,11 +72,14 @@ router.post('/validate', async (req, res) => {
       )
       .map(t => t.symbol);
 
+    // 항상 최근 62일 기준으로 캔들 조회 (interval 무관하게 날짜 고정)
+    const startTime62d = Date.now() - 62 * 24 * 60 * 60 * 1000;
+
     // 배치 처리 (40개씩, Binance rate limit 보호)
     const allResults = await batchSettled(
       allAlt,
       async (symbol) => {
-        const klines = await binance.getKlines(symbol, interval, 1500);
+        const klines = await binance.getKlines(symbol, interval, 1500, startTime62d);
         return runBacktest(klines, { conditions, trade, interval }, symbol);
       },
       40,
