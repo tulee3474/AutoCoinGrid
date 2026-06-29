@@ -111,8 +111,8 @@ model LivePosition {
   entryPrice      Float
   takeProfitPrice Float
   stopLossPrice   Float
-  tpOrderId       BigInt
-  slOrderId       BigInt
+  tpOrderId       BigInt?
+  slOrderId       BigInt?
   entryAmountUsdt Float
   leverage        Int
   openedAt        DateTime @default(now())

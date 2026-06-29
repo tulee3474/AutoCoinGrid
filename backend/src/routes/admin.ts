@@ -106,8 +106,8 @@ router.get('/users/:userId', requireAdmin, async (req: Request, res: Response) =
       const unrealizedPnlUsdt = markPrice !== null ? (p.entryPrice - markPrice) * p.qty : null;
       return {
         ...p,
-        tpOrderId: p.tpOrderId.toString(),
-        slOrderId: p.slOrderId.toString(),
+        tpOrderId: p.tpOrderId?.toString() ?? null,
+        slOrderId: p.slOrderId?.toString() ?? null,
         markPrice,
         unrealizedPnlUsdt,
       };

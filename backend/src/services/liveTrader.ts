@@ -164,6 +164,12 @@ async function syncClosed(userId: string, broadcast: (data: unknown) => void) {
   for (const pos of positions) {
     if (activeSymbols.has(pos.symbol)) continue;
 
+    // 스탠딩 주문 없는 포지션은 monitorNonOrderPositions에서 가격 모니터링으로 처리
+    if (pos.tpOrderId === null) {
+      await recordClose(userId, pos.id, pos.entryPrice, 'takeProfit', broadcast);
+      continue;
+    }
+
     // Binance에서 포지션이 사라짐 → TP 또는 SL 체결됨
     let exitPrice = pos.takeProfitPrice;
     let exitReason: 'takeProfit' | 'stopLoss' = 'takeProfit';
@@ -263,6 +269,9 @@ export async function openLivePosition(
     const qtyPrec    = symbolInfo?.quantityPrecision  ?? 2;
     const pricePrec  = symbolInfo?.pricePrecision     ?? 2;
 
+    const orderTypes: string[] = symbolInfo?.orderTypes ?? [];
+    const supportsTpSl = orderTypes.includes('TAKE_PROFIT_MARKET') && orderTypes.includes('STOP_MARKET');
+
     const qty = parseFloat((trade.entryAmountUsdt * trade.leverage / entryPrice).toFixed(qtyPrec));
     if (qty <= 0) {
       addLog(userId, `수량 계산 오류 ${symbol}: qty=${qty} (진입금 $${trade.entryAmountUsdt}, 레버리지 ${trade.leverage}x, 가격 $${entryPrice})`, 'error');
@@ -284,22 +293,31 @@ export async function openLivePosition(
     const actualEntry = parseFloat(entryOrder.avgPrice)    || entryPrice;
     const filledQty   = parseFloat(entryOrder.executedQty  || '0') || qty;
 
-    const tpOrder = await binanceSvc.placeOrder({
-      symbol, side: 'BUY', type: 'TAKE_PROFIT_MARKET',
-      quantity: filledQty.toString(), stopPrice: tpPrice.toFixed(pricePrec),
-      ...(isHedge ? { positionSide: posSide } : { reduceOnly: true })
-    });
-    const slOrder = await binanceSvc.placeOrder({
-      symbol, side: 'BUY', type: 'STOP_MARKET',
-      quantity: filledQty.toString(), stopPrice: slPrice.toFixed(pricePrec),
-      ...(isHedge ? { positionSide: posSide } : { reduceOnly: true })
-    });
+    let tpOrderId: bigint | null = null;
+    let slOrderId: bigint | null = null;
+
+    if (supportsTpSl) {
+      const tpOrder = await binanceSvc.placeOrder({
+        symbol, side: 'BUY', type: 'TAKE_PROFIT_MARKET',
+        quantity: filledQty.toString(), stopPrice: tpPrice.toFixed(pricePrec),
+        ...(isHedge ? { positionSide: posSide } : { reduceOnly: true })
+      });
+      const slOrder = await binanceSvc.placeOrder({
+        symbol, side: 'BUY', type: 'STOP_MARKET',
+        quantity: filledQty.toString(), stopPrice: slPrice.toFixed(pricePrec),
+        ...(isHedge ? { positionSide: posSide } : { reduceOnly: true })
+      });
+      tpOrderId = BigInt(tpOrder.orderId);
+      slOrderId = BigInt(slOrder.orderId);
+    } else {
+      addLog(userId, `${symbol} TP/SL 주문 미지원 — 스캐너 가격 모니터링으로 관리`, 'info');
+    }
 
     const pos = await prisma.livePosition.create({
       data: {
         userId, symbol, side: 'SHORT', qty: filledQty,
         entryPrice: actualEntry, takeProfitPrice: tpPrice, stopLossPrice: slPrice,
-        tpOrderId: BigInt(tpOrder.orderId), slOrderId: BigInt(slOrder.orderId),
+        tpOrderId, slOrderId,
         entryAmountUsdt: trade.entryAmountUsdt, leverage: trade.leverage,
         expiresAt: trade.maxDurationHours != null
           ? new Date(Date.now() + trade.maxDurationHours * 3_600_000)
@@ -312,7 +330,7 @@ export async function openLivePosition(
       `📈 [진입] ${symbol} @ $${actualEntry.toPrecision(5)} | qty ${filledQty} | TP $${tpPrice.toPrecision(4)} | SL $${slPrice.toPrecision(4)}`,
       'signal'
     );
-    broadcast({ type: 'live_signal', data: { ...pos, tpOrderId: pos.tpOrderId.toString(), slOrderId: pos.slOrderId.toString() } });
+    broadcast({ type: 'live_signal', data: { ...pos, tpOrderId: pos.tpOrderId?.toString() ?? null, slOrderId: pos.slOrderId?.toString() ?? null } });
     return pos;
   } catch (e: any) {
     const errMsg = e.response?.data?.msg ?? e.message;
@@ -373,6 +391,52 @@ export async function closeLivePositionManual(
   }
 }
 
+// ── 스탠딩 주문 없는 포지션 가격 모니터링 ────────────────────
+
+async function monitorNonOrderPositions(userId: string, broadcast: (data: unknown) => void) {
+  const positions = await prisma.livePosition.findMany({
+    where: { userId, tpOrderId: null }
+  });
+  if (positions.length === 0) return;
+
+  const binanceSvc      = await getUserBinance(userId);
+  const isHedge         = await getHedgeMode(userId, binanceSvc);
+  const binancePositions = await binanceSvc.getPositions();
+  const priceMap        = new Map<string, number>(
+    binancePositions.map((p: any) => [p.symbol, parseFloat(p.markPrice)])
+  );
+
+  for (const pos of positions) {
+    const price = priceMap.get(pos.symbol);
+    if (price === undefined) continue;
+
+    let exitReason: 'takeProfit' | 'stopLoss' | null = null;
+    let exitPrice = price;
+
+    if (price <= pos.takeProfitPrice) {
+      exitReason = 'takeProfit'; exitPrice = pos.takeProfitPrice;
+    } else if (price >= pos.stopLossPrice) {
+      exitReason = 'stopLoss';   exitPrice = pos.stopLossPrice;
+    }
+
+    if (!exitReason) continue;
+
+    try {
+      const binPos = binancePositions.find((p: any) => p.symbol === pos.symbol);
+      if (binPos) {
+        const closeOrder = await binanceSvc.placeOrder(
+          closeOrderParams(pos.symbol, pos.side as 'SHORT' | 'LONG',
+            Math.abs(parseFloat(binPos.positionAmt)).toString(), isHedge)
+        );
+        exitPrice = parseFloat(closeOrder.avgPrice) || exitPrice;
+      }
+      await recordClose(userId, pos.id, exitPrice, exitReason, broadcast);
+    } catch (e: any) {
+      addLog(userId, `모니터링 청산 오류 ${pos.symbol}: ${e.message}`, 'error');
+    }
+  }
+}
+
 // ── TP/SL 동기화 + 타임아웃 (mutex 보호) ─────────────────────
 
 async function runSync(userId: string, broadcast: (data: unknown) => void) {
@@ -410,6 +474,7 @@ async function runLiveScanCycle(userId: string, broadcast: (data: unknown) => vo
 
   // runSync는 isSyncing 플래그로 중복 실행 방지 — 15s sync 인터벌과 동시 실행 시 자동 skip
   await runSync(userId, broadcast);
+  await monitorNonOrderPositions(userId, broadcast);
 
   if (state.isStopping) return;   // runSync에서 이미 처리
 
@@ -558,8 +623,8 @@ export async function getLivePositions(userId: string) {
   const positions = await prisma.livePosition.findMany({ where: { userId } });
   return positions.map(p => ({
     ...p,
-    tpOrderId: p.tpOrderId.toString(),
-    slOrderId: p.slOrderId.toString()
+    tpOrderId: p.tpOrderId?.toString() ?? null,
+    slOrderId: p.slOrderId?.toString() ?? null
   }));
 }
 
