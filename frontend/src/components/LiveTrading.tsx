@@ -53,6 +53,7 @@ export default function LiveTrading() {
   const [strategies, setStrategies]       = useState<StrategyConfig[]>([]);
   const [hasApiKeys, setHasApiKeys]       = useState<boolean | null>(null);
   const [account, setAccount]             = useState<LiveAccountInfo | null>(null);
+  const [accountError, setAccountError]   = useState<string | null>(null);
   const [loading, setLoading]             = useState(true);
   const [stopping, setStopping]           = useState(false);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
@@ -75,7 +76,13 @@ export default function LiveTrading() {
     if (me.status        === 'fulfilled') setHasApiKeys(me.value.hasApiKeys);
     if (liveStats.status === 'fulfilled') setStats(liveStats.value);
     if (ss.status        === 'fulfilled') setStrategyStats(ss.value);
-    if (acct.status      === 'fulfilled') setAccount(acct.value);
+    if (acct.status === 'fulfilled') {
+      setAccount(acct.value);
+      setAccountError(null);
+    } else {
+      const err = (acct as PromiseRejectedResult).reason;
+      setAccountError(err?.response?.data?.error ?? err?.message ?? '잔고 조회 실패');
+    }
     setLoading(false);
   }, []);
 
@@ -230,6 +237,10 @@ export default function LiveTrading() {
                   <div className={`text-lg font-bold num ${cls}`}>{value}</div>
                 </div>
               ))}
+            </div>
+          ) : accountError ? (
+            <div className="text-xs text-down bg-down/5 border border-down/20 rounded-lg px-3 py-2">
+              ⚠ 잔고 조회 실패: {accountError}
             </div>
           ) : (
             <div className="text-xs text-gray-500 text-center py-3">잔고 조회 중...</div>
