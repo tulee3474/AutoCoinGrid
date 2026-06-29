@@ -83,14 +83,33 @@ router.put('/api-keys', requireAuth, async (req: AuthRequest, res: Response) => 
   }
 
   try {
+    const encKey    = encrypt(apiKey);
+    const encSecret = encrypt(apiSecret);
+
+    // 저장 전 복호화 검증 — 이 서버 인스턴스의 키로 바로 복호화되는지 확인
+    const verifyKey    = decrypt(encKey);
+    const verifySecret = decrypt(encSecret);
+    if (verifyKey !== apiKey || verifySecret !== apiSecret) {
+      return res.status(500).json({ error: '키 암호화 검증 실패 — 서버 내부 오류' });
+    }
+
     await prisma.user.update({
       where: { id: req.userId },
-      data: {
-        apiKey:    encrypt(apiKey),
-        apiSecret: encrypt(apiSecret)
-      }
+      data: { apiKey: encKey, apiSecret: encSecret }
     });
-    res.json({ ok: true, message: 'API 키가 저장되었습니다' });
+
+    // 저장 후 DB에서 다시 읽어 검증
+    const saved = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!saved?.apiKey || !saved?.apiSecret) {
+      return res.status(500).json({ error: 'DB 저장 후 조회 실패' });
+    }
+    const readbackKey    = decrypt(saved.apiKey);
+    const readbackSecret = decrypt(saved.apiSecret);
+    if (readbackKey !== apiKey || readbackSecret !== apiSecret) {
+      return res.status(500).json({ error: 'DB 저장 후 복호화 불일치 — 저장 실패' });
+    }
+
+    res.json({ ok: true, message: 'API 키가 저장되었습니다 (검증 완료)' });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
