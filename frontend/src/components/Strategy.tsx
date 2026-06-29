@@ -242,6 +242,16 @@ function CoinDetailModal({
 
 // ── 검증 결과 패널 ────────────────────────────────────────────
 
+const INTERVAL_MINS: Record<string, number> = {
+  '1m': 1, '5m': 5, '15m': 15, '30m': 30, '1h': 60, '4h': 240, '1d': 1440
+};
+function intervalToPeriodLabel(interval: string): string {
+  const mins = INTERVAL_MINS[interval] ?? 60;
+  const days = Math.round(1500 * mins / (24 * 60));
+  if (days >= 365) return `약 ${Math.round(days / 365)}년`;
+  return `약 ${days}일`;
+}
+
 function ValidationPanel({ result, loading, conditions, trade }: {
   result: ValidationResult | null;
   loading: boolean;
@@ -288,7 +298,7 @@ function ValidationPanel({ result, loading, conditions, trade }: {
           <div>
             <p className="section-title">전략 성과 검증 결과</p>
             <p className="text-xs text-gray-500 mt-0.5">
-              Binance USDT 전체 페어 · {result.coinsAnalyzed}개 코인 · {result.interval}봉 최근 62일
+              Binance USDT 전체 페어 · {result.coinsAnalyzed}개 코인 · {result.interval}봉 {intervalToPeriodLabel(result.interval)}
             </p>
           </div>
           <span className={`text-xs font-bold px-2 py-1 rounded-full flex-shrink-0 ${isPositiveEV ? 'bg-up/20 text-up' : 'bg-down/20 text-down'}`}>
@@ -748,7 +758,7 @@ export default function Strategy() {
           <div>
             <h2 className="section-title">전략 성과 검증</h2>
             <p className="text-xs text-gray-500 mt-1">
-              Binance 전체 알트코인 (일 거래량 $200K 이상)의 과거 데이터로 이 조건의 승률을 계산합니다
+              Binance 전체 알트코인 (일 거래량 $200K 이상) · {draftConditions.rsi.timeframe}봉 {intervalToPeriodLabel(draftConditions.rsi.timeframe)} 데이터로 승률 계산
             </p>
           </div>
           <button onClick={handleValidate} disabled={validating} className="btn-outline flex-shrink-0 disabled:opacity-50">

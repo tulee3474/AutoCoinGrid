@@ -72,14 +72,13 @@ router.post('/validate', async (req, res) => {
       )
       .map(t => t.symbol);
 
-    // 항상 최근 62일 기준으로 캔들 조회 (interval 무관하게 날짜 고정)
-    const startTime62d = Date.now() - 62 * 24 * 60 * 60 * 1000;
-
     // 배치 처리 (40개씩, Binance rate limit 보호)
+    // interval에 따라 1500캔들이 커버하는 기간이 자동으로 달라짐
+    // 1h=62일, 4h=250일, 1d=약 4년
     const allResults = await batchSettled(
       allAlt,
       async (symbol) => {
-        const klines = await binance.getKlines(symbol, interval, 1500, startTime62d);
+        const klines = await binance.getKlines(symbol, interval, 1500);
         return runBacktest(klines, { conditions, trade, interval }, symbol);
       },
       40,

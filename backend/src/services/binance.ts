@@ -53,12 +53,31 @@ export class BinanceService {
 
   async getKlinesSince(symbol: string, interval: string, startTime: number): Promise<Kline[]> {
     const { data } = await this.spotClient.get('/api/v3/klines', {
-      params: { symbol, interval, startTime, limit: 1000 }
+      params: { symbol, interval, startTime, limit: 1500 }
     });
     return data.map((k: any[]) => ({
       openTime: k[0], open: +k[1], high: +k[2], low: +k[3],
       close: +k[4], volume: +k[5], closeTime: k[6]
     }));
+  }
+
+  // startTime부터 현재까지 모든 캔들을 1500개씩 페이지네이션으로 수집
+  async getKlinesPaged(symbol: string, interval: string, startTime: number): Promise<Kline[]> {
+    const all: Kline[] = [];
+    let from = startTime;
+    while (true) {
+      const { data } = await this.spotClient.get('/api/v3/klines', {
+        params: { symbol, interval, startTime: from, limit: 1500 }
+      });
+      const batch: Kline[] = data.map((k: any[]) => ({
+        openTime: k[0], open: +k[1], high: +k[2], low: +k[3],
+        close: +k[4], volume: +k[5], closeTime: k[6]
+      }));
+      all.push(...batch);
+      if (batch.length < 1500) break;
+      from = batch[batch.length - 1].closeTime + 1;
+    }
+    return all;
   }
 
   async getFuturesKlines(symbol: string, interval: string, limit = 500): Promise<Kline[]> {
