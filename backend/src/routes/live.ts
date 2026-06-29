@@ -8,6 +8,7 @@ import {
 } from '../services/liveTrader';
 import { binance } from '../services/binance';
 import prisma from '../lib/prisma';
+import { encrypt, decrypt } from '../lib/crypto';
 
 const router = Router();
 let broadcastFn: (data: unknown) => void = () => {};
@@ -44,7 +45,27 @@ router.get('/account', requireAuth, async (req: AuthRequest, res: Response) => {
     const info = await getLiveAccountInfo(req.userId!);
     res.json(info);
   } catch (e: any) {
-    res.status(500).json({ error: e.response?.data?.msg ?? e.message });
+    // 복호화 실패 시 진단 정보 함께 반환
+    const apiErr = e.response?.data?.msg ?? e.message;
+    let diag: Record<string, unknown> | undefined;
+    if (apiErr?.includes('복호화') || apiErr?.includes('authenticate') || apiErr?.includes('state')) {
+      const key = process.env.ENCRYPTION_KEY ?? '';
+      let cycleOk = false; let cycleErr = '';
+      try { const enc = encrypt('__t__'); cycleOk = decrypt(enc) === '__t__'; }
+      catch (ce: any) { cycleErr = ce.message; }
+      const user = await prisma.user.findUnique({ where: { id: req.userId } }).catch(() => null);
+      const storedKey = user?.apiKey ?? null;
+      let storedFmt = 'none'; let decOk = false; let decErr = '';
+      if (storedKey) {
+        const parts = storedKey.split(':');
+        storedFmt = parts.length === 3
+          ? `ok(iv=${parts[0].length} tag=${parts[1].length} enc=${parts[2].length})`
+          : `bad(${parts.length} parts)`;
+        try { decrypt(storedKey); decOk = true; } catch (de: any) { decErr = de.message; }
+      }
+      diag = { keyLen: key.length, keyValid: key.length >= 32, cycleOk, cycleErr: cycleErr || null, storedFmt, decOk, decErr: decErr || null };
+    }
+    res.status(500).json({ error: apiErr, diag });
   }
 });
 

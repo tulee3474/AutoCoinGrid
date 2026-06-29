@@ -28,7 +28,7 @@ const allowedOrigins = process.env.CORS_ORIGIN
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
 
-app.use('/api', rateLimit({ windowMs: 60_000, max: 120, message: 'Too many requests' }));
+app.use('/api', rateLimit({ windowMs: 60_000, max: 600, message: 'Too many requests' }));
 
 app.use('/api/market', marketRoutes);
 app.use('/api/strategy', strategyRoutes);

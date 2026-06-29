@@ -54,6 +54,7 @@ export default function LiveTrading() {
   const [hasApiKeys, setHasApiKeys]       = useState<boolean | null>(null);
   const [account, setAccount]             = useState<LiveAccountInfo | null>(null);
   const [accountError, setAccountError]   = useState<string | null>(null);
+  const [accountDiag, setAccountDiag]     = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading]             = useState(true);
   const [stopping, setStopping]           = useState(false);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
@@ -79,9 +80,11 @@ export default function LiveTrading() {
     if (acct.status === 'fulfilled') {
       setAccount(acct.value);
       setAccountError(null);
+      setAccountDiag(null);
     } else {
       const err = (acct as PromiseRejectedResult).reason;
       setAccountError(err?.response?.data?.error ?? err?.message ?? '잔고 조회 실패');
+      setAccountDiag(err?.response?.data?.diag ?? null);
     }
     setLoading(false);
   }, []);
@@ -239,8 +242,15 @@ export default function LiveTrading() {
               ))}
             </div>
           ) : accountError ? (
-            <div className="text-xs text-down bg-down/5 border border-down/20 rounded-lg px-3 py-2">
-              ⚠ 잔고 조회 실패: {accountError}
+            <div className="text-xs text-down bg-down/5 border border-down/20 rounded-lg px-3 py-2 space-y-1">
+              <div>⚠ 잔고 조회 실패: {accountError}</div>
+              {accountDiag && (
+                <div className="text-gray-500 font-mono text-[10px] leading-relaxed mt-1">
+                  {Object.entries(accountDiag).map(([k, v]) => (
+                    <div key={k}>{k}: {String(v ?? 'null')}</div>
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             <div className="text-xs text-gray-500 text-center py-3">잔고 조회 중...</div>
