@@ -200,7 +200,7 @@ export default function LiveTrading() {
       {/* 실거래 위험 안내 */}
       <div className="p-3 rounded-xl border border-down/30 bg-down/5 text-xs text-down/80 space-y-1">
         <p className="font-semibold text-down">⚠ 실제 자금 사용 — 주의사항</p>
-        <p>· TP/SL 주문은 Binance에 직접 등록되며 서버가 꺼져도 체결됩니다</p>
+        <p>· TP/SL 주문은 Binance에 직접 등록되며 서버가 꺼져도 체결됩니다 (<span className="text-yellow-400">스캐너 모니터링</span> 표기 코인은 서버가 켜져 있어야 청산됩니다)</p>
         <p>· 즉시 중지는 모든 포지션을 시장가로 청산합니다 — 슬리피지 발생 가능</p>
         <p>· 일반 중지는 기존 포지션 모두 정리 후 자동으로 멈춥니다</p>
       </div>
@@ -386,9 +386,20 @@ export default function LiveTrading() {
                   const expiresAt = new Date(pos.expiresAt);
                   const remaining = expiresAt.getTime() - Date.now();
                   const hoursLeft = Math.max(0, Math.floor(remaining / 3_600_000));
+                  const isMonitored = pos.tpOrderId === null; // 바이낸스 주문 미지원, 스캐너 가격 모니터링
                   return (
-                    <tr key={pos.id} className="border-b border-border/40 hover:bg-white/3">
-                      <td className="py-2 pr-3 font-bold text-gray-200">{pos.symbol.replace('USDT', '')}</td>
+                    <tr key={pos.id} className={`border-b border-border/40 hover:bg-white/3 ${isMonitored ? 'bg-yellow-500/3' : ''}`}>
+                      <td className="py-2 pr-3">
+                        <div className="font-bold text-gray-200">{pos.symbol.replace('USDT', '')}</div>
+                        {isMonitored && (
+                          <div
+                            className="text-[10px] text-yellow-400/80 leading-tight mt-0.5"
+                            title="이 코인은 바이낸스 조건부 주문(TP/SL)을 지원하지 않아 스캐너가 60초마다 가격을 확인해 청산합니다. 서버가 꺼지면 자동 청산이 중단됩니다."
+                          >
+                            스캐너 모니터링
+                          </div>
+                        )}
+                      </td>
                       <td className="py-2 pr-3 text-gray-500 truncate max-w-[80px]">{pos.strategyName}</td>
                       <td className="py-2 pr-3 text-gray-400 num">${pos.entryPrice.toPrecision(5)}</td>
                       <td className="py-2 pr-3 text-gray-300 num">${pos.currentPrice.toPrecision(5)}</td>
@@ -401,8 +412,12 @@ export default function LiveTrading() {
                           ({pos.pnlUsdt >= 0 ? '+' : ''}${pos.pnlUsdt.toFixed(2)})
                         </span>
                       </td>
-                      <td className="py-2 pr-3 text-up num">${pos.takeProfitPrice.toPrecision(4)}</td>
-                      <td className="py-2 pr-3 text-down num">${pos.stopLossPrice.toPrecision(4)}</td>
+                      <td className="py-2 pr-3 num">
+                        <span className={isMonitored ? 'text-yellow-400' : 'text-up'}>${pos.takeProfitPrice.toPrecision(4)}</span>
+                      </td>
+                      <td className="py-2 pr-3 num">
+                        <span className={isMonitored ? 'text-yellow-400' : 'text-down'}>${pos.stopLossPrice.toPrecision(4)}</span>
+                      </td>
                       <td className={`py-2 pr-3 num ${hoursLeft < 2 ? 'text-warn' : 'text-gray-500'}`}>
                         {hoursLeft}h 후
                       </td>

@@ -255,6 +255,8 @@ export interface LivePosition {
   currentPrice: number;
   takeProfitPrice: number;
   stopLossPrice: number;
+  tpOrderId: string | null;  // null = 스캐너 가격 모니터링 관리
+  slOrderId: string | null;
   entryAmountUsdt: number;
   leverage: number;
   pnlPct: number;
