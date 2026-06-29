@@ -66,6 +66,38 @@ async function getUserBinance(userId: string): Promise<BinanceService> {
   }
 }
 
+// ── 헤지 모드 감지 헬퍼 ──────────────────────────────────────
+
+const hedgeModeCache = new Map<string, boolean>();
+
+async function getHedgeMode(userId: string, svc: BinanceService): Promise<boolean> {
+  if (hedgeModeCache.has(userId)) return hedgeModeCache.get(userId)!;
+  try {
+    const hedgeMode = await svc.getDualSidePosition();
+    hedgeModeCache.set(userId, hedgeMode);
+    return hedgeMode;
+  } catch {
+    return false; // 조회 실패 시 단방향 모드로 가정
+  }
+}
+
+// positionSide('SHORT'|'LONG')와 isHedge를 받아 시장가 청산 파라미터 생성
+// LONG 추가 시 posSide 인자만 바꾸면 됨
+function closeOrderParams(
+  symbol: string,
+  posSide: 'SHORT' | 'LONG',
+  quantity: string,
+  isHedge: boolean
+): Parameters<BinanceService['placeOrder']>[0] {
+  return {
+    symbol,
+    side: posSide === 'SHORT' ? 'BUY' : 'SELL',
+    type: 'MARKET',
+    quantity,
+    ...(isHedge ? { positionSide: posSide } : { reduceOnly: true })
+  };
+}
+
 // ── 전략 로드 (DB) ────────────────────────────────────────────
 
 async function loadStrategies(userId: string): Promise<StrategyConfig[]> {
@@ -164,6 +196,7 @@ async function closeTimedOut(userId: string, broadcast: (data: unknown) => void)
   if (expired.length === 0) return;
 
   const binanceSvc = await getUserBinance(userId);
+  const isHedge = await getHedgeMode(userId, binanceSvc);
 
   for (const pos of expired) {
     try {
@@ -172,11 +205,10 @@ async function closeTimedOut(userId: string, broadcast: (data: unknown) => void)
       const binPos = binancePositions.find((p: any) => p.symbol === pos.symbol);
 
       if (binPos) {
-        const closeOrder = await binanceSvc.placeOrder({
-          symbol: pos.symbol, side: 'BUY', type: 'MARKET',
-          quantity: Math.abs(parseFloat(binPos.positionAmt)).toString(),
-          reduceOnly: true
-        });
+        const closeOrder = await binanceSvc.placeOrder(
+          closeOrderParams(pos.symbol, pos.side as 'SHORT' | 'LONG',
+            Math.abs(parseFloat(binPos.positionAmt)).toString(), isHedge)
+        );
         const exitPrice = parseFloat(closeOrder.avgPrice) || parseFloat(binPos.markPrice);
         await recordClose(userId, pos.id, exitPrice, 'timeout', broadcast);
       } else {
@@ -219,6 +251,9 @@ export async function openLivePosition(
     return null;
   }
 
+  let isHedge = false;
+  const posSide = 'SHORT' as const; // LONG 추가 시 파라미터로 변경
+
   try {
     await binanceSvc.setMarginType(symbol, 'ISOLATED');
     await binanceSvc.setLeverage(symbol, trade.leverage);
@@ -241,17 +276,23 @@ export async function openLivePosition(
       ? calcPdfStopLoss(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing)
       : entryPrice * (1 + trade.stopLossPct / 100);
 
-    const entryOrder  = await binanceSvc.placeOrder({ symbol, side: 'SELL', type: 'MARKET', quantity: qty.toString() });
+    isHedge = await getHedgeMode(userId, binanceSvc);
+    const entryOrder  = await binanceSvc.placeOrder({
+      symbol, side: 'SELL', type: 'MARKET', quantity: qty.toString(),
+      ...(isHedge ? { positionSide: posSide } : {})
+    });
     const actualEntry = parseFloat(entryOrder.avgPrice)    || entryPrice;
-    const filledQty   = parseFloat(entryOrder.executedQty  || '0') || qty;  // 실제 체결 수량
+    const filledQty   = parseFloat(entryOrder.executedQty  || '0') || qty;
 
     const tpOrder = await binanceSvc.placeOrder({
       symbol, side: 'BUY', type: 'TAKE_PROFIT_MARKET',
-      quantity: filledQty.toString(), stopPrice: tpPrice.toFixed(pricePrec), reduceOnly: true
+      quantity: filledQty.toString(), stopPrice: tpPrice.toFixed(pricePrec),
+      ...(isHedge ? { positionSide: posSide } : { reduceOnly: true })
     });
     const slOrder = await binanceSvc.placeOrder({
       symbol, side: 'BUY', type: 'STOP_MARKET',
-      quantity: filledQty.toString(), stopPrice: slPrice.toFixed(pricePrec), reduceOnly: true
+      quantity: filledQty.toString(), stopPrice: slPrice.toFixed(pricePrec),
+      ...(isHedge ? { positionSide: posSide } : { reduceOnly: true })
     });
 
     const pos = await prisma.livePosition.create({
@@ -282,10 +323,9 @@ export async function openLivePosition(
       const binancePositions = await binanceSvc.getPositions();
       const binPos = binancePositions.find((p: any) => p.symbol === symbol);
       if (binPos) {
-        await binanceSvc.placeOrder({
-          symbol, side: 'BUY', type: 'MARKET',
-          quantity: Math.abs(parseFloat(binPos.positionAmt)).toString(), reduceOnly: true
-        });
+        await binanceSvc.placeOrder(
+          closeOrderParams(symbol, posSide, Math.abs(parseFloat(binPos.positionAmt)).toString(), isHedge)
+        );
         addLog(userId, `⚠️ 긴급 청산 완료 ${symbol}`, 'error');
       }
     } catch (e2: any) {
@@ -310,6 +350,7 @@ export async function closeLivePositionManual(
 
   try {
     const binanceSvc = await getUserBinance(userId);
+    const isHedge = await getHedgeMode(userId, binanceSvc);
     await binanceSvc.cancelAllOrders(symbol);
 
     const binancePositions = await binanceSvc.getPositions();
@@ -317,10 +358,10 @@ export async function closeLivePositionManual(
 
     let exitPrice = pos.entryPrice;
     if (binPos) {
-      const closeOrder = await binanceSvc.placeOrder({
-        symbol, side: 'BUY', type: 'MARKET',
-        quantity: Math.abs(parseFloat(binPos.positionAmt)).toString(), reduceOnly: true
-      });
+      const closeOrder = await binanceSvc.placeOrder(
+        closeOrderParams(symbol, pos.side as 'SHORT' | 'LONG',
+          Math.abs(parseFloat(binPos.positionAmt)).toString(), isHedge)
+      );
       exitPrice = parseFloat(closeOrder.avgPrice) || parseFloat(binPos.markPrice);
     }
 
@@ -488,16 +529,17 @@ export async function forceStopLiveScanner(userId: string, broadcast: (data: unk
   const positions = await prisma.livePosition.findMany({ where: { userId } });
   if (positions.length > 0) {
     const binanceSvc = await getUserBinance(userId);
+    const isHedge = await getHedgeMode(userId, binanceSvc);
     for (const pos of positions) {
       try {
         await binanceSvc.cancelAllOrders(pos.symbol);
         const binancePositions = await binanceSvc.getPositions();
         const binPos = binancePositions.find((p: any) => p.symbol === pos.symbol);
         if (binPos) {
-          const closeOrder = await binanceSvc.placeOrder({
-            symbol: pos.symbol, side: 'BUY', type: 'MARKET',
-            quantity: Math.abs(parseFloat(binPos.positionAmt)).toString(), reduceOnly: true
-          });
+          const closeOrder = await binanceSvc.placeOrder(
+            closeOrderParams(pos.symbol, pos.side as 'SHORT' | 'LONG',
+              Math.abs(parseFloat(binPos.positionAmt)).toString(), isHedge)
+          );
           const exitPrice = parseFloat(closeOrder.avgPrice) || parseFloat(binPos.markPrice);
           await recordClose(userId, pos.id, exitPrice, 'manual', broadcast);
         }

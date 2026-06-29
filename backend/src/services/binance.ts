@@ -211,6 +211,13 @@ export class BinanceService {
     return data;
   }
 
+  async getDualSidePosition(): Promise<boolean> {
+    const { data } = await this.futuresClient.get('/fapi/v1/positionSide/dual', {
+      params: this.signedParams()
+    });
+    return data.dualSidePosition; // true = 헤지 모드, false = 단방향 모드
+  }
+
   async getOrder(symbol: string, orderId: number): Promise<any> {
     const { data } = await this.futuresClient.get('/fapi/v1/order', {
       params: this.signedParams({ symbol, orderId })
