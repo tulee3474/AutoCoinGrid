@@ -1,6 +1,6 @@
 import { useState, useEffect, FormEvent } from 'react';
 import {
-  adminLogin, getAdminStats, getAdminUsers, deleteAdminUser,
+  adminLogin, getAdminStats, getAdminUsers, deleteAdminUser, getAdminUser,
   getAdminScanners,
   adminStartPaperScanner, adminStopPaperScanner,
   adminStartLiveScanner, adminStopLiveScanner,
@@ -9,6 +9,118 @@ import {
   AdminUser, AdminPreset
 } from '../utils/api';
 import { StrategyConditions, TradeConfig, DEFAULT_CONDITIONS, DEFAULT_TRADE } from '../types';
+
+interface UserDetail {
+  id: string;
+  email: string;
+  strategies: Array<{
+    id: string; name: string; enabled: boolean;
+    coins: string[]; conditions: any; trade: any;
+  }>;
+  livePositions: Array<{
+    id: string; symbol: string; qty: number; entryPrice: number;
+    takeProfitPrice: number; stopLossPrice: number; leverage: number;
+    entryAmountUsdt: number; strategyName: string; openedAt: string;
+  }>;
+  paperWallet: {
+    balance: number;
+    openPositions: Array<{
+      id: string; symbol: string; entryPrice: number; avgEntryPrice: number;
+      gridsFilled: number; takeProfitPrice: number; stopLossPrice: number;
+      leverage: number; entryAmountUsdt: number; strategyName: string; openedAt: string;
+    }>;
+  } | null;
+}
+
+function UserDetailPanel({ detail }: { detail: UserDetail }) {
+  const strategies     = detail.strategies ?? [];
+  const livePositions  = detail.livePositions ?? [];
+  const paperPositions = detail.paperWallet?.openPositions ?? [];
+
+  return (
+    <div className="mx-2 mb-2 p-4 bg-surface rounded-xl border border-border/50 space-y-4">
+      {/* 전략 */}
+      <div>
+        <div className="text-xs font-semibold text-gray-400 mb-2">전략 ({strategies.length}개)</div>
+        {strategies.length === 0 ? (
+          <div className="text-xs text-gray-600 px-1">전략 없음</div>
+        ) : (
+          <div className="space-y-2">
+            {strategies.map(s => {
+              const c = s.conditions as StrategyConditions;
+              const coins = Array.isArray(s.coins) ? s.coins as string[] : [];
+              return (
+                <div key={s.id} className="flex items-start gap-3 p-2.5 bg-card rounded-lg">
+                  <div className={`mt-1 w-1.5 h-1.5 rounded-full flex-shrink-0 ${s.enabled ? 'bg-green-400' : 'bg-gray-600'}`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm text-gray-200 font-medium">{s.name}</span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full ${s.enabled ? 'bg-green-500/15 text-green-400' : 'bg-gray-500/15 text-gray-500'}`}>
+                        {s.enabled ? '활성' : '비활성'}
+                      </span>
+                      <span className="text-xs text-gray-500">
+                        RSI {c?.rsi?.min}~{c?.rsi?.max} ({c?.rsi?.timeframe}) · 24h +{c?.priceChange24h?.min}~+{c?.priceChange24h?.max}%
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {coins.slice(0, 12).map(coin => (
+                        <span key={coin} className="text-xs bg-border/60 text-gray-400 px-1.5 py-0.5 rounded">
+                          {coin.replace('USDT', '')}
+                        </span>
+                      ))}
+                      {coins.length > 12 && (
+                        <span className="text-xs text-gray-600">+{coins.length - 12}개</span>
+                      )}
+                      {coins.length === 0 && <span className="text-xs text-gray-600">코인 미지정</span>}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* 오픈 포지션 */}
+      <div>
+        <div className="text-xs font-semibold text-gray-400 mb-2">
+          오픈 포지션 (실거래 {livePositions.length} · 가상 {paperPositions.length})
+        </div>
+        {livePositions.length === 0 && paperPositions.length === 0 ? (
+          <div className="text-xs text-gray-600 px-1">오픈 포지션 없음</div>
+        ) : (
+          <div className="space-y-1.5">
+            {livePositions.map(p => (
+              <div key={p.id} className="flex items-center gap-3 p-2.5 bg-card rounded-lg flex-wrap">
+                <span className="text-xs bg-yellow-500/15 text-yellow-400 border border-yellow-500/20 px-1.5 py-0.5 rounded flex-shrink-0">실거래</span>
+                <span className="text-sm font-bold text-gray-100 w-16 flex-shrink-0">{p.symbol.replace('USDT', '')}</span>
+                <span className="text-xs text-gray-400">진입 <span className="text-gray-200">${p.entryPrice.toFixed(4)}</span></span>
+                <span className="text-xs text-gray-400">수량 <span className="text-gray-200">{p.qty}</span></span>
+                <span className="text-xs text-gray-400">TP <span className="text-up">${p.takeProfitPrice.toFixed(4)}</span></span>
+                <span className="text-xs text-gray-400">SL <span className="text-down">${p.stopLossPrice.toFixed(4)}</span></span>
+                <span className="text-xs text-gray-400">{p.leverage}x</span>
+                <span className="text-xs text-gray-600 ml-auto">{p.strategyName}</span>
+              </div>
+            ))}
+            {paperPositions.map(p => (
+              <div key={p.id} className="flex items-center gap-3 p-2.5 bg-card rounded-lg flex-wrap">
+                <span className="text-xs bg-blue-500/15 text-blue-400 border border-blue-500/20 px-1.5 py-0.5 rounded flex-shrink-0">가상</span>
+                <span className="text-sm font-bold text-gray-100 w-16 flex-shrink-0">{p.symbol.replace('USDT', '')}</span>
+                <span className="text-xs text-gray-400">진입 <span className="text-gray-200">${p.entryPrice.toFixed(4)}</span></span>
+                {p.gridsFilled > 0 && <span className="text-xs text-gray-400">평균 <span className="text-gray-200">${p.avgEntryPrice.toFixed(4)}</span></span>}
+                {p.gridsFilled > 0 && <span className="text-xs text-gray-400">그리드 <span className="text-gray-200">{p.gridsFilled}회</span></span>}
+                <span className="text-xs text-gray-400">TP <span className="text-up">${p.takeProfitPrice.toFixed(4)}</span></span>
+                <span className="text-xs text-gray-400">SL <span className="text-down">${p.stopLossPrice.toFixed(4)}</span></span>
+                <span className="text-xs text-gray-400">{p.leverage}x</span>
+                <span className="text-xs text-gray-600 ml-auto">{p.strategyName}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 interface Stats {
   userCount: number;
@@ -254,6 +366,10 @@ export default function Admin() {
   const [liveIds, setLiveIds]   = useState(new Set<string>());
   const [scannerLoading, setScannerLoading] = useState<string | null>(null);
 
+  const [expandedUserId, setExpandedUserId]                     = useState<string | null>(null);
+  const [detailCache, setDetailCache]                           = useState<Map<string, UserDetail>>(new Map());
+  const [detailLoading, setDetailLoading]                       = useState<string | null>(null);
+
   const [domInfo, setDomInfo]       = useState<{ hasData: boolean; count?: number; dateRange?: string } | null>(null);
   const [domLoading, setDomLoading] = useState(false);
   const [domMsg, setDomMsg]         = useState('');
@@ -415,6 +531,19 @@ export default function Admin() {
       alert(e.response?.data?.error ?? '스캐너 오류');
     } finally {
       setScannerLoading(null);
+    }
+  }
+
+  async function handleExpandUser(userId: string) {
+    if (expandedUserId === userId) { setExpandedUserId(null); return; }
+    setExpandedUserId(userId);
+    if (!detailCache.has(userId)) {
+      setDetailLoading(userId);
+      try {
+        const detail = await getAdminUser(userId);
+        setDetailCache(prev => new Map(prev).set(userId, detail));
+      } catch {}
+      finally { setDetailLoading(null); }
     }
   }
 
@@ -688,55 +817,76 @@ export default function Admin() {
                 const liveRunning   = liveIds.has(u.id);
                 const paperToggling = scannerLoading === `paper-${u.id}`;
                 const liveToggling  = scannerLoading === `live-${u.id}`;
+                const isExpanded    = expandedUserId === u.id;
+                const isLoadingDetail = detailLoading === u.id;
                 return (
-                  <tr key={u.id} className="border-b border-border/50 hover:bg-white/3">
-                    <td className="py-3 pr-4 text-gray-200">{u.email}</td>
-                    <td className="py-3 pr-4 text-gray-400 whitespace-nowrap">
-                      {new Date(u.createdAt).toLocaleDateString('ko')}
-                    </td>
-                    <td className="py-3 pr-4 text-center">
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${
-                        u.hasApiKeys ? 'bg-green-500/15 text-green-400' : 'bg-gray-500/15 text-gray-500'
-                      }`}>{u.hasApiKeys ? '등록' : '없음'}</span>
-                    </td>
-                    <td className="py-3 pr-4 text-center text-gray-300">{u.strategies}</td>
-                    <td className="py-3 pr-4 text-center text-gray-300">{u.liveTrades}</td>
-                    <td className="py-3 pr-4 text-right text-gray-300">
-                      {u.paperBalance != null ? `$${u.paperBalance.toFixed(0)}` : '-'}
-                    </td>
-                    <td className="py-3 pr-4 text-center">
-                      <button
-                        onClick={() => handlePaperToggle(u.id)}
-                        disabled={paperToggling || liveToggling}
-                        className={`text-xs px-2 py-0.5 rounded border transition-colors disabled:opacity-50 ${
-                          paperRunning
-                            ? 'bg-green-500/15 text-green-400 border-green-500/30 hover:bg-red-500/15 hover:text-red-400 hover:border-red-500/30'
-                            : 'bg-gray-500/10 text-gray-500 border-gray-500/20 hover:bg-green-500/15 hover:text-green-400 hover:border-green-500/30'
-                        }`}
-                      >
-                        {paperToggling ? '...' : paperRunning ? '● 실행 중' : '○ 중지'}
-                      </button>
-                    </td>
-                    <td className="py-3 pr-4 text-center">
-                      <button
-                        onClick={() => handleLiveToggle(u.id)}
-                        disabled={paperToggling || liveToggling}
-                        className={`text-xs px-2 py-0.5 rounded border transition-colors disabled:opacity-50 ${
-                          liveRunning
-                            ? 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30 hover:bg-red-500/15 hover:text-red-400 hover:border-red-500/30'
-                            : 'bg-gray-500/10 text-gray-500 border-gray-500/20 hover:bg-yellow-500/15 hover:text-yellow-400 hover:border-yellow-500/30'
-                        }`}
-                      >
-                        {liveToggling ? '...' : liveRunning ? '● 실행 중' : '○ 중지'}
-                      </button>
-                    </td>
-                    <td className="py-3 text-right">
-                      <button onClick={() => handleDelete(u.id, u.email)}
-                        className="text-xs text-red-400 hover:text-red-300 border border-red-400/30 rounded px-2 py-0.5">
-                        삭제
-                      </button>
-                    </td>
-                  </tr>
+                  <>
+                    <tr key={u.id} className={`border-b border-border/50 hover:bg-white/3 ${isExpanded ? 'bg-white/3' : ''}`}>
+                      <td className="py-3 pr-4">
+                        <button onClick={() => handleExpandUser(u.id)}
+                          className="flex items-center gap-1.5 text-left hover:text-accent transition-colors">
+                          <span className="text-xs text-gray-500">{isExpanded ? '▲' : '▼'}</span>
+                          <span className="text-gray-200">{u.email}</span>
+                        </button>
+                      </td>
+                      <td className="py-3 pr-4 text-gray-400 whitespace-nowrap">
+                        {new Date(u.createdAt).toLocaleDateString('ko')}
+                      </td>
+                      <td className="py-3 pr-4 text-center">
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${
+                          u.hasApiKeys ? 'bg-green-500/15 text-green-400' : 'bg-gray-500/15 text-gray-500'
+                        }`}>{u.hasApiKeys ? '등록' : '없음'}</span>
+                      </td>
+                      <td className="py-3 pr-4 text-center text-gray-300">{u.strategies}</td>
+                      <td className="py-3 pr-4 text-center text-gray-300">{u.liveTrades}</td>
+                      <td className="py-3 pr-4 text-right text-gray-300">
+                        {u.paperBalance != null ? `$${u.paperBalance.toFixed(0)}` : '-'}
+                      </td>
+                      <td className="py-3 pr-4 text-center">
+                        <button
+                          onClick={() => handlePaperToggle(u.id)}
+                          disabled={paperToggling || liveToggling}
+                          className={`text-xs px-2 py-0.5 rounded border transition-colors disabled:opacity-50 ${
+                            paperRunning
+                              ? 'bg-green-500/15 text-green-400 border-green-500/30 hover:bg-red-500/15 hover:text-red-400 hover:border-red-500/30'
+                              : 'bg-gray-500/10 text-gray-500 border-gray-500/20 hover:bg-green-500/15 hover:text-green-400 hover:border-green-500/30'
+                          }`}
+                        >
+                          {paperToggling ? '...' : paperRunning ? '● 실행 중' : '○ 중지'}
+                        </button>
+                      </td>
+                      <td className="py-3 pr-4 text-center">
+                        <button
+                          onClick={() => handleLiveToggle(u.id)}
+                          disabled={paperToggling || liveToggling}
+                          className={`text-xs px-2 py-0.5 rounded border transition-colors disabled:opacity-50 ${
+                            liveRunning
+                              ? 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30 hover:bg-red-500/15 hover:text-red-400 hover:border-red-500/30'
+                              : 'bg-gray-500/10 text-gray-500 border-gray-500/20 hover:bg-yellow-500/15 hover:text-yellow-400 hover:border-yellow-500/30'
+                          }`}
+                        >
+                          {liveToggling ? '...' : liveRunning ? '● 실행 중' : '○ 중지'}
+                        </button>
+                      </td>
+                      <td className="py-3 text-right">
+                        <button onClick={() => handleDelete(u.id, u.email)}
+                          className="text-xs text-red-400 hover:text-red-300 border border-red-400/30 rounded px-2 py-0.5">
+                          삭제
+                        </button>
+                      </td>
+                    </tr>
+                    {isExpanded && (
+                      <tr key={`${u.id}-detail`}>
+                        <td colSpan={9} className="pb-1 pt-0">
+                          {isLoadingDetail ? (
+                            <div className="mx-2 mb-2 p-4 text-xs text-gray-500 text-center">로딩 중...</div>
+                          ) : detailCache.get(u.id) ? (
+                            <UserDetailPanel detail={detailCache.get(u.id)!} />
+                          ) : null}
+                        </td>
+                      </tr>
+                    )}
+                  </>
                 );
               })}
             </tbody>
