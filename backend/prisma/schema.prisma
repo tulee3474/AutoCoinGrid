@@ -12,8 +12,8 @@ model User {
   id            String   @id @default(uuid())
   email         String   @unique
   passwordHash  String
-  apiKey        String?
-  apiSecret     String?
+  apiKey        String?  @db.Text
+  apiSecret     String?  @db.Text
   scannerActive Boolean  @default(false)
   liveActive    Boolean  @default(false)
   createdAt     DateTime @default(now())
