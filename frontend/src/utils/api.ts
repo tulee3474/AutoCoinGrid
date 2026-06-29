@@ -230,6 +230,16 @@ export const getLiveStats = () =>
 export const getLiveStrategyStats = () =>
   api.get('/live/strategy-stats').then(r => r.data as Record<string, { winRate: number; trades: number }>);
 
+export interface LiveAccountInfo {
+  totalWalletBalance:    number;
+  availableBalance:      number;
+  totalUnrealizedProfit: number;
+  totalMarginBalance:    number;
+}
+
+export const getLiveAccount = () =>
+  api.get('/live/account').then(r => r.data as LiveAccountInfo);
+
 export const getPaperStrategyStats = () =>
   api.get('/paper/strategy-stats').then(r => r.data as Record<string, { winRate: number; trades: number }>);
 

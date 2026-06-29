@@ -6,6 +6,7 @@ import { decrypt } from '../lib/crypto';
 import { calcPdfStopLoss } from './gridUtils';
 
 const SCAN_INTERVAL_MS = 60_000;
+const SYNC_INTERVAL_MS = 15_000;   // TP/SL 체결 감지 전용 빠른 인터벌
 
 // ── 타입 ──────────────────────────────────────────────────────
 
@@ -13,8 +14,10 @@ type LogType = 'info' | 'signal' | 'close' | 'error';
 interface LogEntry { time: number; message: string; type: LogType }
 
 interface LiveUserState {
-  interval: NodeJS.Timeout | null;
+  interval:     NodeJS.Timeout | null;   // 60s: 신호 스캔 + sync
+  syncInterval: NodeJS.Timeout | null;   // 15s: TP/SL 체결 동기화 전용
   isStopping: boolean;
+  isSyncing:  boolean;                   // 동시 실행 방지 플래그
   log: LogEntry[];
 }
 
@@ -23,7 +26,7 @@ interface LiveUserState {
 const traders = new Map<string, LiveUserState>();
 
 function ensureState(userId: string): LiveUserState {
-  if (!traders.has(userId)) traders.set(userId, { interval: null, isStopping: false, log: [] });
+  if (!traders.has(userId)) traders.set(userId, { interval: null, syncInterval: null, isStopping: false, isSyncing: false, log: [] });
   return traders.get(userId)!;
 }
 
@@ -325,6 +328,34 @@ export async function closeLivePositionManual(
   }
 }
 
+// ── TP/SL 동기화 + 타임아웃 (mutex 보호) ─────────────────────
+
+async function runSync(userId: string, broadcast: (data: unknown) => void) {
+  const state = traders.get(userId);
+  if (!state || state.isSyncing) return;
+  state.isSyncing = true;
+  try {
+    await syncClosed(userId, broadcast);
+    await closeTimedOut(userId, broadcast);
+
+    // 중지 예정: 포지션이 모두 닫혔으면 완전 중지
+    if (state.isStopping) {
+      const remaining = await prisma.livePosition.count({ where: { userId } });
+      if (remaining === 0) {
+        _clearUserInterval(userId);
+        addLog(userId, '⏹ 모든 포지션 정리 완료 — 실거래 스캐너 중지됨', 'info');
+        broadcast({ type: 'live_stopped', userId });
+      } else {
+        addLog(userId, `중지 예정 — 잔여 포지션 ${remaining}개 모니터링 중`);
+      }
+    }
+  } catch (e: any) {
+    addLog(userId, `동기화 오류: ${e.message}`, 'error');
+  } finally {
+    state.isSyncing = false;
+  }
+}
+
 // ── 스캔 사이클 ───────────────────────────────────────────────
 
 async function runLiveScanCycle(userId: string, broadcast: (data: unknown) => void) {
@@ -332,24 +363,10 @@ async function runLiveScanCycle(userId: string, broadcast: (data: unknown) => vo
   if (!state) return;
   const now = new Date().toLocaleTimeString('ko');
 
-  try { await syncClosed(userId, broadcast); }
-  catch (e: any) { addLog(userId, `동기화 오류: ${e.message}`, 'error'); }
+  // runSync는 isSyncing 플래그로 중복 실행 방지 — 15s sync 인터벌과 동시 실행 시 자동 skip
+  await runSync(userId, broadcast);
 
-  try { await closeTimedOut(userId, broadcast); }
-  catch (e: any) { addLog(userId, `타임아웃 체크 오류: ${e.message}`, 'error'); }
-
-  // 중지 예정: 포지션이 모두 닫혔으면 완전 중지
-  if (state.isStopping) {
-    const remaining = await prisma.livePosition.count({ where: { userId } });
-    if (remaining === 0) {
-      _clearUserInterval(userId);
-      addLog(userId, '⏹ 모든 포지션 정리 완료 — 실거래 스캐너 중지됨', 'info');
-      broadcast({ type: 'live_stopped', userId });
-    } else {
-      addLog(userId, `[${now}] 중지 예정 — 잔여 포지션 ${remaining}개 모니터링 중`);
-    }
-    return;
-  }
+  if (state.isStopping) return;   // runSync에서 이미 처리
 
   // 신호 스캔 → 신규 진입
   const strategies = await loadStrategies(userId);
@@ -373,7 +390,8 @@ async function runLiveScanCycle(userId: string, broadcast: (data: unknown) => vo
 
 function _clearUserInterval(userId: string) {
   const state = traders.get(userId);
-  if (state?.interval) { clearInterval(state.interval); state.interval = null; }
+  if (state?.interval)     { clearInterval(state.interval);     state.interval     = null; }
+  if (state?.syncInterval) { clearInterval(state.syncInterval); state.syncInterval = null; }
   state && (state.isStopping = false);
   prisma.user.update({ where: { id: userId }, data: { liveActive: false } }).catch(() => {});
 }
@@ -394,13 +412,37 @@ export function startLiveScanner(userId: string, broadcast: (data: unknown) => v
   const state = ensureState(userId);
   if (state.interval) return;
   state.isStopping = false;
+  state.isSyncing  = false;
   prisma.user.update({ where: { id: userId }, data: { liveActive: true } }).catch(() => {});
-  addLog(userId, '🚀 실거래 스캐너 시작 (1분 간격)', 'info');
+  addLog(userId, '🚀 실거래 스캐너 시작 (신호 스캔 1분 / TP·SL 감지 15초)', 'info');
+
+  // 즉시 sync 후 신호 스캔
   runLiveScanCycle(userId, broadcast).catch(e => addLog(userId, `초기 스캔 오류: ${e.message}`, 'error'));
+
+  // 15초마다 TP/SL 체결 + 타임아웃 감지 (main cycle과 mutex로 충돌 방지)
+  state.syncInterval = setInterval(
+    () => runSync(userId, broadcast).catch(e => addLog(userId, `sync 오류: ${e.message}`, 'error')),
+    SYNC_INTERVAL_MS
+  );
+
+  // 60초마다 신호 스캔 + sync 시도
   state.interval = setInterval(
     () => runLiveScanCycle(userId, broadcast).catch(e => addLog(userId, `스캔 오류: ${e.message}`, 'error')),
     SCAN_INTERVAL_MS
   );
+}
+
+// ── 사용자 Binance 계좌 정보 ──────────────────────────────────
+
+export async function getLiveAccountInfo(userId: string) {
+  const binanceSvc = await getUserBinance(userId);
+  const info = await binanceSvc.getAccountInfo();
+  return {
+    totalWalletBalance:    parseFloat(info.totalWalletBalance    ?? '0'),
+    availableBalance:      parseFloat(info.availableBalance      ?? '0'),
+    totalUnrealizedProfit: parseFloat(info.totalUnrealizedProfit ?? '0'),
+    totalMarginBalance:    parseFloat(info.totalMarginBalance    ?? '0'),
+  };
 }
 
 export async function restoreLiveScanners(broadcast: (data: unknown) => void) {

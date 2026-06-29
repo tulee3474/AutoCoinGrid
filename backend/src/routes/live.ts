@@ -3,7 +3,8 @@ import { requireAuth, AuthRequest } from '../middleware/auth';
 import {
   startLiveScanner, stopLiveScanner, forceStopLiveScanner,
   isLiveRunning, isLiveStopping,
-  getLiveLog, getLivePositions, getLiveTradeLogs, closeLivePositionManual
+  getLiveLog, getLivePositions, getLiveTradeLogs, closeLivePositionManual,
+  getLiveAccountInfo
 } from '../services/liveTrader';
 import { binance } from '../services/binance';
 import prisma from '../lib/prisma';
@@ -36,6 +37,16 @@ function groupedWinRate(logs: { symbol: string; strategyName: string; exitReason
 export function setLiveBroadcast(fn: (data: unknown) => void) {
   broadcastFn = fn;
 }
+
+// GET /api/live/account — Binance 선물 지갑 현황
+router.get('/account', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const info = await getLiveAccountInfo(req.userId!);
+    res.json(info);
+  } catch (e: any) {
+    res.status(500).json({ error: e.response?.data?.msg ?? e.message });
+  }
+});
 
 // GET /api/live/status
 router.get('/status', requireAuth, async (req: AuthRequest, res: Response) => {

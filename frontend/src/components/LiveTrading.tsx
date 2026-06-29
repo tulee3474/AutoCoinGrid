@@ -4,8 +4,8 @@ import { useWebSocket } from '../hooks/useWebSocket';
 import {
   getLiveStatus, startLiveScanner, stopLiveScanner, forceStopLiveScanner,
   getLivePositions, getLiveLogs, getLiveScanLog, getLiveStats, getLiveStrategyStats,
-  closeLivePosition, getStrategies, toggleStrategy, deleteStrategy, getMe,
-  LivePosition, LiveTradeLog, ScanLogEntry
+  getLiveAccount, closeLivePosition, getStrategies, toggleStrategy, deleteStrategy, getMe,
+  LivePosition, LiveTradeLog, ScanLogEntry, LiveAccountInfo
 } from '../utils/api';
 import { StrategyConfig } from '../types';
 
@@ -52,12 +52,13 @@ export default function LiveTrading() {
   const [scanLog, setScanLog]             = useState<ScanLogEntry[]>([]);
   const [strategies, setStrategies]       = useState<StrategyConfig[]>([]);
   const [hasApiKeys, setHasApiKeys]       = useState<boolean | null>(null);
+  const [account, setAccount]             = useState<LiveAccountInfo | null>(null);
   const [loading, setLoading]             = useState(true);
   const [stopping, setStopping]           = useState(false);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const [st, pos, lg, sl, me, liveStats, ss] = await Promise.allSettled([
+    const [st, pos, lg, sl, me, liveStats, ss, acct] = await Promise.allSettled([
       getLiveStatus(),
       getLivePositions(),
       getLiveLogs(50),
@@ -65,6 +66,7 @@ export default function LiveTrading() {
       getMe(),
       getLiveStats(),
       getLiveStrategyStats(),
+      getLiveAccount(),
     ]);
     if (st.status        === 'fulfilled') setStatus(st.value);
     if (pos.status       === 'fulfilled') setPositions(pos.value);
@@ -73,6 +75,7 @@ export default function LiveTrading() {
     if (me.status        === 'fulfilled') setHasApiKeys(me.value.hasApiKeys);
     if (liveStats.status === 'fulfilled') setStats(liveStats.value);
     if (ss.status        === 'fulfilled') setStrategyStats(ss.value);
+    if (acct.status      === 'fulfilled') setAccount(acct.value);
     setLoading(false);
   }, []);
 
@@ -284,6 +287,42 @@ export default function LiveTrading() {
           </div>
         )}
       </div>
+
+      {/* Binance 지갑 현황 */}
+      {account && (
+        <div className="card">
+          <h2 className="section-title mb-3">Binance 선물 지갑</h2>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {[
+              {
+                label: '지갑 잔고',
+                value: `$${account.totalWalletBalance.toFixed(2)}`,
+                cls: 'text-gray-100',
+              },
+              {
+                label: '가용 잔고',
+                value: `$${account.availableBalance.toFixed(2)}`,
+                cls: account.availableBalance > 0 ? 'text-up' : 'text-gray-400',
+              },
+              {
+                label: '미실현 손익',
+                value: `${account.totalUnrealizedProfit >= 0 ? '+' : ''}$${account.totalUnrealizedProfit.toFixed(2)}`,
+                cls: account.totalUnrealizedProfit >= 0 ? 'text-up' : 'text-down',
+              },
+              {
+                label: '마진 잔고',
+                value: `$${account.totalMarginBalance.toFixed(2)}`,
+                cls: 'text-gray-300',
+              },
+            ].map(({ label, value, cls }) => (
+              <div key={label} className="bg-surface rounded-lg p-3 text-center">
+                <div className="text-xs text-gray-500 mb-1">{label}</div>
+                <div className={`text-lg font-bold num ${cls}`}>{value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 통계 */}
       {(() => {
