@@ -177,7 +177,7 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
         const rsiThreshold = strategyThresholdMap.get(pos.strategyName) ?? null;
         if (!exitReason && rsiThreshold !== null) {
           try {
-            const klines = await binance.getKlines(pos.symbol, '1h', 60);
+            const klines = await binance.getFuturesKlines(pos.symbol, '1h', 60);
             if (klines.length >= 20) {
               const ind = computeIndicators(klines, '1h');
               if (ind.rsi14 < rsiThreshold) {

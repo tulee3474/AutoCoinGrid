@@ -103,17 +103,36 @@ export class BinanceService {
   }
 
   async getFuturesKlines(symbol: string, interval: string, limit = 500): Promise<Kline[]> {
-    const { data } = await this.futuresClient.get('/fapi/v1/klines', {
-      params: { symbol, interval, limit }
-    });
-    return data.map((k: any[]) => ({
+    const cacheKey = `${symbol}|${interval}|${limit}`;
+    const cached = this.klinesCache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < BinanceService.KLINES_CACHE_TTL) return cached.data;
+
+    let res;
+    try {
+      res = await this.futuresClient.get('/fapi/v1/klines', { params: { symbol, interval, limit } });
+    } catch (e: any) {
+      if (e.response?.status === 429) {
+        await new Promise(r => setTimeout(r, 5000));
+        res = await this.futuresClient.get('/fapi/v1/klines', { params: { symbol, interval, limit } });
+      } else {
+        throw e;
+      }
+    }
+    const data: Kline[] = res.data.map((k: any[]) => ({
       openTime: k[0], open: +k[1], high: +k[2], low: +k[3],
       close: +k[4], volume: +k[5], closeTime: k[6]
     }));
+    this.klinesCache.set(cacheKey, { data, ts: Date.now() });
+    return data;
   }
 
   async get24hrTickers(): Promise<any[]> {
     const { data } = await this.spotClient.get('/api/v3/ticker/24hr');
+    return data;
+  }
+
+  async getFutures24hrTickers(): Promise<any[]> {
+    const { data } = await this.futuresClient.get('/fapi/v1/ticker/24hr');
     return data;
   }
 

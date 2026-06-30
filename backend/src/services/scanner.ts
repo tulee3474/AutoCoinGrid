@@ -24,8 +24,9 @@ export async function scanMarket(
   const priceChangeTf = conditions.priceChangeTimeframe ?? '24h';
 
   // 1단계: 전체 티커에서 유동성 + 선물 가능 여부 1차 필터
+  // spot이 아닌 선물 API 사용 (spot rate-limit/IP 차단과 분리된 별도 weight 한도)
   const [tickers, futuresSymbols] = await Promise.all([
-    binance.get24hrTickers(),
+    binance.getFutures24hrTickers(),
     binance.getFuturesSymbols()
   ]);
 
@@ -60,7 +61,7 @@ export async function scanMarket(
     while (queue.length > 0) {
       const ticker = queue.shift()!;
       try {
-        const klines = await binance.getKlines(ticker.symbol, conditions.rsi.timeframe, 250);
+        const klines = await binance.getFuturesKlines(ticker.symbol, conditions.rsi.timeframe, 250);
         if (klines.length < 20) continue;
 
         const ind = computeIndicators(klines, conditions.rsi.timeframe, conditions.rsi.period ?? 14);
