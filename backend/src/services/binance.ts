@@ -6,6 +6,9 @@ const SPOT_BASE = 'https://api.binance.com';
 const FUTURES_BASE = 'https://fapi.binance.com';
 const TESTNET_FUTURES = 'https://testnet.binancefuture.com';
 
+// "Way too many requests; IP(x.x.x.x) banned until 1782784293771. ..." 메시지에서 차단 해제 시각 추출
+const BAN_UNTIL_RE = /banned until (\d+)/;
+
 export class BinanceService {
   private apiKey: string;
   private apiSecret: string;
@@ -21,6 +24,10 @@ export class BinanceService {
   private futuresKlinesInflight = new Map<string, Promise<Kline[]>>();
   private futuresTickersInflight: Promise<any[]> | null = null;
 
+  // IP 차단은 인스턴스가 아니라 실제 서버 IP 단위로 걸리므로 static으로 전체 인스턴스(유저별 거래용 + 스캐너용 싱글톤) 공유
+  private static spotBannedUntil = 0;
+  private static futuresBannedUntil = 0;
+
   constructor(apiKey?: string, apiSecret?: string) {
     this.apiKey    = apiKey    ?? '';
     this.apiSecret = apiSecret ?? '';
@@ -32,6 +39,36 @@ export class BinanceService {
       timeout: 10000,
       headers: { 'X-MBX-APIKEY': this.apiKey }
     });
+
+    this.installBanGuard(this.spotClient, 'spot');
+    this.installBanGuard(this.futuresClient, 'futures');
+  }
+
+  // 418 차단 응답을 감지해 해제 시각까지 동일 IP의 모든 후속 요청을 네트워크 호출 없이 즉시 실패시킴
+  // (차단 중 계속 요청을 보내면 차단이 더 길어질 위험 + 불필요한 로그 스팸 방지)
+  private installBanGuard(client: AxiosInstance, kind: 'spot' | 'futures') {
+    client.interceptors.request.use(config => {
+      const bannedUntil = kind === 'spot' ? BinanceService.spotBannedUntil : BinanceService.futuresBannedUntil;
+      if (Date.now() < bannedUntil) {
+        return Promise.reject(new Error(
+          `Binance ${kind === 'spot' ? 'Spot' : 'Futures'} IP 차단 중 — 해제 예정: ${new Date(bannedUntil).toLocaleTimeString('ko')}`
+        ));
+      }
+      return config;
+    });
+    client.interceptors.response.use(
+      res => res,
+      err => {
+        const msg = err.response?.data?.msg as string | undefined;
+        const match = msg && BAN_UNTIL_RE.exec(msg);
+        if (match) {
+          const until = parseInt(match[1], 10);
+          if (kind === 'spot') BinanceService.spotBannedUntil = until;
+          else BinanceService.futuresBannedUntil = until;
+        }
+        return Promise.reject(err);
+      }
+    );
   }
 
   private sign(params: Record<string, string | number>): string {
