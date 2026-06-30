@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useWebSocket } from '../hooks/useWebSocket';
 import {
   getPaperWallet, getPaperPositions, getPaperLogs,
-  resetPaperWallet, closePaperPosition,
+  resetPaperWallet, closePaperPosition, clearPaperLogs,
   getPaperScannerStatus, startPaperScanner, stopPaperScanner,
   getStrategies, toggleStrategy, deleteStrategy, getPaperStrategyStats
 } from '../utils/api';
@@ -106,6 +106,7 @@ export default function PaperTrading() {
   const [strategyStats, setStrategyStats] = useState<Record<string, { winRate: number; trades: number }>>({});
   const [loading, setLoading]             = useState(true);
   const [resetting, setResetting]         = useState(false);
+  const [clearingLogs, setClearingLogs]   = useState(false);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
 
   const refreshStrategies = useCallback(async () => {
@@ -168,6 +169,17 @@ export default function PaperTrading() {
     if (!confirm('이 포지션을 현재가로 청산하겠습니까?')) return;
     await closePaperPosition(id);
     await refresh();
+  };
+
+  const handleClearLogs = async () => {
+    if (!confirm('거래 로그와 실현 손익을 모두 초기화합니까? (잔고·포지션은 유지됩니다)')) return;
+    setClearingLogs(true);
+    try {
+      await clearPaperLogs();
+      await refresh();
+    } finally {
+      setClearingLogs(false);
+    }
   };
 
   const handleToggleStrategy = async (id: string) => {
@@ -404,10 +416,19 @@ export default function PaperTrading() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* 거래 로그 */}
         <div className="card">
-          <h2 className="section-title mb-4">
-            거래 로그
-            <span className="text-gray-500 font-normal ml-2 text-xs">최근 50건</span>
-          </h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="section-title">
+              거래 로그
+              <span className="text-gray-500 font-normal ml-2 text-xs">최근 50건</span>
+            </h2>
+            <button
+              onClick={handleClearLogs}
+              disabled={clearingLogs || logs.length === 0}
+              className="text-xs px-2 py-1 rounded border border-border text-gray-500 hover:text-down hover:border-down/40 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              {clearingLogs ? '삭제 중...' : '로그 초기화'}
+            </button>
+          </div>
           {logs.length === 0 ? (
             <p className="text-gray-500 text-sm text-center py-6">거래 없음</p>
           ) : (

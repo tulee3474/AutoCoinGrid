@@ -246,6 +246,12 @@ export const getPaperStrategyStats = () =>
 export const closeLivePosition = (symbol: string) =>
   api.delete(`/live/position/${symbol}`).then(r => r.data);
 
+export const clearLiveLogs = () =>
+  api.delete('/live/logs').then(r => r.data);
+
+export const clearPaperLogs = () =>
+  api.delete('/paper/logs').then(r => r.data);
+
 export interface LivePosition {
   id: string;
   symbol: string;

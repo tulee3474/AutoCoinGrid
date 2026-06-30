@@ -164,6 +164,12 @@ router.get('/scan-log', requireAuth, (req: AuthRequest, res: Response) => {
   res.json(getLiveLog(req.userId!));
 });
 
+// DELETE /api/live/logs — 거래 로그 전체 삭제
+router.delete('/logs', requireAuth, async (req: AuthRequest, res: Response) => {
+  await prisma.liveTradeLog.deleteMany({ where: { userId: req.userId } });
+  res.json({ ok: true });
+});
+
 // DELETE /api/live/position/:symbol — 수동 청산
 router.delete('/position/:symbol', requireAuth, async (req: AuthRequest, res: Response) => {
   const ok = await closeLivePositionManual(req.userId!, req.params.symbol, broadcastFn);

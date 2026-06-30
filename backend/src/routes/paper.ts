@@ -101,6 +101,13 @@ router.post('/reset', requireAuth, async (req: AuthRequest, res: Response) => {
   res.json({ ok: true });
 });
 
+// ── 거래 로그 초기화 ───────────────────────────────────────────
+router.delete('/logs', requireAuth, async (req: AuthRequest, res: Response) => {
+  const wallet = await getOrCreateWallet(req.userId!);
+  await prisma.paperTradeLog.deleteMany({ where: { walletId: wallet.id } });
+  res.json({ ok: true });
+});
+
 // ── 포지션 수동 청산 ───────────────────────────────────────────
 router.delete('/positions/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   const wallet = await getOrCreateWallet(req.userId!);
