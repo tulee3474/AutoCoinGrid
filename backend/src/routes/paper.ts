@@ -44,7 +44,7 @@ router.get('/wallet', requireAuth, async (req: AuthRequest, res: Response) => {
   let unrealizedPnl = 0;
   if (wallet.openPositions.length > 0) {
     try {
-      const tickers  = await binance.get24hrTickers() as any[];
+      const tickers  = await binance.getFutures24hrTickers() as any[];
       const priceMap = new Map<string, number>(tickers.map((t: any) => [t.symbol, parseFloat(t.lastPrice)]));
       wallet.openPositions.forEach(pos => {
         const price = priceMap.get(pos.symbol);
@@ -74,7 +74,7 @@ router.get('/positions', requireAuth, async (req: AuthRequest, res: Response) =>
   if (wallet.openPositions.length === 0) return res.json([]);
 
   try {
-    const tickers  = await binance.get24hrTickers() as any[];
+    const tickers  = await binance.getFutures24hrTickers() as any[];
     const priceMap = new Map<string, number>(tickers.map((t: any) => [t.symbol, parseFloat(t.lastPrice)]));
     const positions = wallet.openPositions.map(pos => {
       const currentPrice = priceMap.get(pos.symbol) ?? pos.entryPrice;
@@ -115,7 +115,7 @@ router.delete('/positions/:id', requireAuth, async (req: AuthRequest, res: Respo
   if (!pos) return res.status(404).json({ error: 'position not found' });
 
   try {
-    const tickers = await binance.get24hrTickers() as any[];
+    const tickers = await binance.getFutures24hrTickers() as any[];
     const ticker  = (tickers as any[]).find(t => t.symbol === pos.symbol);
     const price   = ticker ? parseFloat(ticker.lastPrice) : pos.entryPrice;
     const log     = await closePaperPosition(req.userId!, req.params.id, price, 'manual');

@@ -96,6 +96,9 @@ const DT_OPTS: Intl.DateTimeFormatOptions = {
 };
 const fmtDt = (ts: number) => new Date(ts).toLocaleString('ko-KR', DT_OPTS);
 
+const REFRESH_SEC = 10;
+const MANUAL_REFRESH_COOLDOWN_SEC = 5;
+
 export default function PaperTrading() {
   const [wallet, setWallet]               = useState<WalletSummary | null>(null);
   const [positions, setPositions]         = useState<PaperPosition[]>([]);
@@ -108,6 +111,9 @@ export default function PaperTrading() {
   const [resetting, setResetting]         = useState(false);
   const [clearingLogs, setClearingLogs]   = useState(false);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+  const [lastRefreshAt, setLastRefreshAt] = useState(Date.now());
+  const [lastManualAt, setLastManualAt]   = useState(0);
+  const [, setTick]                       = useState(0);
 
   const refreshStrategies = useCallback(async () => {
     try { setStrategies(await getStrategies()); } catch {}
@@ -130,20 +136,35 @@ export default function PaperTrading() {
     }
     if (ss.status === 'fulfilled') setStrategyStats(ss.value);
     setLoading(false);
+    setLastRefreshAt(Date.now());
   }, []);
 
   useEffect(() => {
     refresh();
     refreshStrategies();
-    const id = setInterval(refresh, 10_000);
+    const id = setInterval(refresh, REFRESH_SEC * 1000);
     return () => clearInterval(id);
   }, [refresh, refreshStrategies]);
+
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   useWebSocket((data) => {
     if (['paper_signal', 'paper_close', 'paper_grid_fill'].includes(data.type)) {
       refresh();
     }
   });
+
+  const secondsUntilRefresh = Math.max(0, REFRESH_SEC - Math.floor((Date.now() - lastRefreshAt) / 1000));
+  const manualCooldownLeft  = Math.max(0, MANUAL_REFRESH_COOLDOWN_SEC - Math.floor((Date.now() - lastManualAt) / 1000));
+
+  const handleManualRefresh = () => {
+    if (manualCooldownLeft > 0) return;
+    setLastManualAt(Date.now());
+    refresh();
+  };
 
   const handleReset = async () => {
     if (!confirm('가상 지갑을 $10,000 USDT로 초기화하겠습니까? 모든 기록이 삭제됩니다.')) return;
@@ -358,10 +379,22 @@ export default function PaperTrading() {
 
       {/* 오픈 포지션 */}
       <div className="card">
-        <h2 className="section-title mb-4">
-          오픈 포지션
-          <span className="text-gray-500 font-normal ml-2 text-xs">({positions.length}개)</span>
-        </h2>
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+          <h2 className="section-title">
+            오픈 포지션
+            <span className="text-gray-500 font-normal ml-2 text-xs">({positions.length}개)</span>
+          </h2>
+          <div className="flex items-center gap-2 text-xs text-gray-500">
+            <span>시세 {secondsUntilRefresh}초 후 갱신</span>
+            <button
+              onClick={handleManualRefresh}
+              disabled={manualCooldownLeft > 0}
+              className="px-2 py-1 rounded border border-border text-gray-400 hover:text-gray-200 hover:border-gray-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {manualCooldownLeft > 0 ? `${manualCooldownLeft}초 후 가능` : '↻ 새로고침'}
+            </button>
+          </div>
+        </div>
         {positions.length === 0 ? (
           <p className="text-gray-500 text-sm text-center py-6">
             오픈 포지션 없음 — 스캐너가 조건 충족 코인을 발견하면 자동 진입됩니다
@@ -385,8 +418,8 @@ export default function PaperTrading() {
                     <td className="py-2 pr-3 text-gray-300 num">${pos.currentPrice.toPrecision(5)}</td>
                     <td className="py-2 pr-3">
                       <span className={`font-bold num ${pos.pnlUsdt >= 0 ? 'text-up' : 'text-down'}`}>
-                        {pos.pnlUsdt >= 0 ? '+' : ''}{(pos.pnlPct / pos.leverage).toFixed(2)}%
-                        <span className="font-normal opacity-70">({pos.pnlUsdt >= 0 ? '+' : ''}{pos.pnlPct.toFixed(2)}%)</span>
+                        {pos.pnlUsdt >= 0 ? '+' : ''}{pos.pnlPct.toFixed(2)}%
+                        <span className="font-normal opacity-70">({pos.pnlUsdt >= 0 ? '+' : ''}{(pos.pnlPct / pos.leverage).toFixed(2)}%)</span>
                       </span>
                       <span className="ml-1 text-gray-500 num">
                         ({pos.pnlUsdt >= 0 ? '+' : ''}${pos.pnlUsdt.toFixed(2)})
@@ -449,8 +482,8 @@ export default function PaperTrading() {
                       <span className="text-gray-400">→</span>
                       <span className="text-gray-500 num w-16 flex-shrink-0">${log.exitPrice.toPrecision(4)}</span>
                       <span className={`font-bold num flex-1 ${log.pnlUsdt >= 0 ? 'text-up' : 'text-down'}`}>
-                        {log.pnlUsdt >= 0 ? '+' : ''}{(log.pnlPct / log.leverage).toFixed(2)}%
-                        <span className="font-normal opacity-70">({log.pnlUsdt >= 0 ? '+' : ''}{log.pnlPct.toFixed(2)}%)</span>
+                        {log.pnlUsdt >= 0 ? '+' : ''}{log.pnlPct.toFixed(2)}%
+                        <span className="font-normal opacity-70">({log.pnlUsdt >= 0 ? '+' : ''}{(log.pnlPct / log.leverage).toFixed(2)}%)</span>
                         <span className="text-gray-500 font-normal ml-1">(${log.pnlUsdt.toFixed(2)})</span>
                       </span>
                       <span className={`text-xs px-1.5 py-0.5 rounded flex-shrink-0 ${exit.cls}`}>

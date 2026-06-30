@@ -139,7 +139,7 @@ router.get('/positions', requireAuth, async (req: AuthRequest, res: Response) =>
   const positions = await getLivePositions(req.userId!);
   if (positions.length === 0) return res.json([]);
   try {
-    const tickers  = await binance.get24hrTickers() as any[];
+    const tickers  = await binance.getFutures24hrTickers() as any[];
     const priceMap = new Map<string, number>(tickers.map((t: any) => [t.symbol, parseFloat(t.lastPrice)]));
     const enriched = positions.map(pos => {
       const currentPrice = priceMap.get(pos.symbol) ?? pos.entryPrice;
