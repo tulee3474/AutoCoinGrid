@@ -298,6 +298,57 @@ export class BinanceService {
     return data;
   }
 
+  // 2025-12-09부로 STOP_MARKET/TAKE_PROFIT_MARKET 등 조건부 주문은 /fapi/v1/order에서 막히고
+  // 전용 Algo Order API(/fapi/v1/algoOrder)로 이전됨 (-4120 STOP_ORDER_SWITCH_ALGO)
+  async placeAlgoOrder(params: {
+    symbol: string;
+    side: 'BUY' | 'SELL';
+    type: 'STOP_MARKET' | 'TAKE_PROFIT_MARKET';
+    triggerPrice: string;
+    quantity?: string;
+    reduceOnly?: boolean;
+    closePosition?: boolean;
+    positionSide?: 'BOTH' | 'LONG' | 'SHORT';
+  }): Promise<any> {
+    const body: Record<string, string> = {
+      algoType: 'CONDITIONAL',
+      symbol: params.symbol,
+      side: params.side,
+      type: params.type,
+      triggerPrice: params.triggerPrice,
+    };
+    if (params.quantity) body.quantity = params.quantity;
+    if (params.reduceOnly) body.reduceOnly = 'true';
+    if (params.closePosition) body.closePosition = 'true';
+    if (params.positionSide) body.positionSide = params.positionSide;
+
+    const { data } = await this.futuresClient.post('/fapi/v1/algoOrder', null, {
+      params: this.signedParams(body)
+    });
+    return data; // { algoId, ... }
+  }
+
+  async getAlgoOrder(algoId: number): Promise<any> {
+    const { data } = await this.futuresClient.get('/fapi/v1/algoOrder', {
+      params: this.signedParams({ algoId })
+    });
+    return data;
+  }
+
+  async cancelAlgoOrder(algoId: number): Promise<any> {
+    const { data } = await this.futuresClient.delete('/fapi/v1/algoOrder', {
+      params: this.signedParams({ algoId })
+    });
+    return data;
+  }
+
+  async cancelAllAlgoOrders(symbol: string): Promise<any> {
+    const { data } = await this.futuresClient.delete('/fapi/v1/algoOpenOrders', {
+      params: this.signedParams({ symbol })
+    });
+    return data;
+  }
+
   async cancelOrder(symbol: string, orderId: number): Promise<any> {
     const { data } = await this.futuresClient.delete('/fapi/v1/order', {
       params: this.signedParams({ symbol, orderId })

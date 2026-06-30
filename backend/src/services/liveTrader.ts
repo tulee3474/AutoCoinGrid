@@ -107,6 +107,25 @@ function extractFillPrice(order: any, fallback: number): number {
   return parseFloat(order?.avgPrice) || fallback;
 }
 
+// 알고 주문(TP/SL) 체결가 추출: algoOrder 응답의 actualPrice보다 실제 체결주문(actualOrderId)을
+// 재조회한 cumQuote/executedQty 기반 값이 더 정확 — entry/일반청산과 동일한 정확도 기준 적용
+async function extractAlgoExitPrice(
+  binanceSvc: BinanceService,
+  symbol: string,
+  algoOrder: any,
+  fallback: number
+): Promise<number> {
+  const actualOrderId = algoOrder?.actualOrderId;
+  if (actualOrderId) {
+    try {
+      const order = await binanceSvc.getOrder(symbol, Number(actualOrderId));
+      const precise = extractFillPrice(order, 0);
+      if (precise > 0) return precise;
+    } catch { /* 재조회 실패 시 actualPrice로 폴백 */ }
+  }
+  return parseFloat(algoOrder?.actualPrice) || fallback;
+}
+
 // MARKET 청산 주문은 응답 시점에 체결이 완전히 settle 안 됐을 수 있어(특히 저유동성 코인)
 // 최대 5회(200ms 간격) 상태를 재조회한 뒤 실제 체결가를 계산
 async function placeCloseOrderAndGetExitPrice(
@@ -198,21 +217,22 @@ async function syncClosed(userId: string, broadcast: (data: unknown) => void) {
     }
 
     // Binance에서 포지션이 사라짐 → TP 또는 SL 체결됨
+    // (TP/SL은 Algo Order API로 등록되므로 algoStatus가 'TRIGGERED'일 때 체결로 간주)
     let exitPrice = pos.takeProfitPrice;
     let exitReason: 'takeProfit' | 'stopLoss' = 'takeProfit';
 
     try {
-      const tpOrder = await binanceSvc.getOrder(pos.symbol, Number(pos.tpOrderId));
-      if (tpOrder.status === 'FILLED') {
-        exitPrice  = extractFillPrice(tpOrder, pos.takeProfitPrice);
+      const tpOrder = await binanceSvc.getAlgoOrder(Number(pos.tpOrderId));
+      if (tpOrder.algoStatus === 'TRIGGERED') {
+        exitPrice  = await extractAlgoExitPrice(binanceSvc, pos.symbol, tpOrder, pos.takeProfitPrice);
         exitReason = 'takeProfit';
-        await binanceSvc.cancelOrder(pos.symbol, Number(pos.slOrderId)).catch(() => {});
+        await binanceSvc.cancelAlgoOrder(Number(pos.slOrderId)).catch(() => {});
       } else {
-        const slOrder = await binanceSvc.getOrder(pos.symbol, Number(pos.slOrderId));
-        if (slOrder.status === 'FILLED') {
-          exitPrice  = extractFillPrice(slOrder, pos.stopLossPrice);
+        const slOrder = await binanceSvc.getAlgoOrder(Number(pos.slOrderId));
+        if (slOrder.algoStatus === 'TRIGGERED') {
+          exitPrice  = await extractAlgoExitPrice(binanceSvc, pos.symbol, slOrder, pos.stopLossPrice);
           exitReason = 'stopLoss';
-          await binanceSvc.cancelOrder(pos.symbol, Number(pos.tpOrderId)).catch(() => {});
+          await binanceSvc.cancelAlgoOrder(Number(pos.tpOrderId)).catch(() => {});
         }
       }
     } catch { /* 주문 조회 실패 시 TP 가정 */ }
@@ -234,6 +254,7 @@ async function closeTimedOut(userId: string, broadcast: (data: unknown) => void)
   for (const pos of expired) {
     try {
       await binanceSvc.cancelAllOrders(pos.symbol);
+      await binanceSvc.cancelAllAlgoOrders(pos.symbol).catch(() => {});
       const binancePositions = await binanceSvc.getPositions();
       const binPos = binancePositions.find((p: any) => p.symbol === pos.symbol);
 
@@ -326,24 +347,24 @@ export async function openLivePosition(
     let slOrderId: bigint | null = null;
 
     try {
-      // closePosition=true: 포지션 전체 종료 — 일부 코인은 quantity 지정 조건부 주문(Algo Order 영역)을 막아두지만
-      // 포지션 청산용 closePosition 방식은 허용하는 경우가 있어 이 방식을 기본으로 사용
-      const tpOrder = await binanceSvc.placeOrder({
+      // 2025-12-09 Binance 정책 변경: STOP_MARKET/TAKE_PROFIT_MARKET은 /fapi/v1/order에서 막히고
+      // 전용 Algo Order API(/fapi/v1/algoOrder)로 등록해야 함 (-4120 STOP_ORDER_SWITCH_ALGO)
+      const tpOrder = await binanceSvc.placeAlgoOrder({
         symbol, side: 'BUY', type: 'TAKE_PROFIT_MARKET',
-        stopPrice: tpPrice.toFixed(pricePrec), closePosition: true,
+        triggerPrice: tpPrice.toFixed(pricePrec), closePosition: true,
         ...(isHedge ? { positionSide: posSide } : {})
       });
       try {
-        const slOrder = await binanceSvc.placeOrder({
+        const slOrder = await binanceSvc.placeAlgoOrder({
           symbol, side: 'BUY', type: 'STOP_MARKET',
-          stopPrice: slPrice.toFixed(pricePrec), closePosition: true,
+          triggerPrice: slPrice.toFixed(pricePrec), closePosition: true,
           ...(isHedge ? { positionSide: posSide } : {})
         });
-        tpOrderId = BigInt(tpOrder.orderId);
-        slOrderId = BigInt(slOrder.orderId);
+        tpOrderId = BigInt(tpOrder.algoId);
+        slOrderId = BigInt(slOrder.algoId);
       } catch (slErr: any) {
         // SL 실패 → TP도 취소 후 모니터링으로 전환 (dangling 방지)
-        await binanceSvc.cancelOrder(symbol, tpOrder.orderId).catch(() => {});
+        await binanceSvc.cancelAlgoOrder(tpOrder.algoId).catch(() => {});
         addLog(userId, `${symbol} SL 등록 실패 (${slErr.response?.data?.msg ?? slErr.message}) — 스캐너 모니터링 전환`, 'error');
       }
     } catch (tpErr: any) {
@@ -375,6 +396,7 @@ export async function openLivePosition(
     // 진입 주문 성공 후 TP/SL 등록 실패 시 긴급 청산
     try {
       await binanceSvc.cancelAllOrders(symbol);
+      await binanceSvc.cancelAllAlgoOrders(symbol).catch(() => {});
       const binancePositions = await binanceSvc.getPositions();
       const binPos = binancePositions.find((p: any) => p.symbol === symbol);
       if (binPos) {
@@ -407,6 +429,7 @@ export async function closeLivePositionManual(
     const binanceSvc = await getUserBinance(userId);
     const isHedge = await getHedgeMode(userId, binanceSvc);
     await binanceSvc.cancelAllOrders(symbol);
+    await binanceSvc.cancelAllAlgoOrders(symbol).catch(() => {});
 
     const binancePositions = await binanceSvc.getPositions();
     const binPos = binancePositions.find((p: any) => p.symbol === symbol);
@@ -668,6 +691,7 @@ export async function forceStopLiveScanner(userId: string, broadcast: (data: unk
     for (const pos of positions) {
       try {
         await binanceSvc.cancelAllOrders(pos.symbol);
+        await binanceSvc.cancelAllAlgoOrders(pos.symbol).catch(() => {});
         const binancePositions = await binanceSvc.getPositions();
         const binPos = binancePositions.find((p: any) => p.symbol === pos.symbol);
         if (binPos) {
