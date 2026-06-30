@@ -125,6 +125,20 @@ export default function Layout() {
             <span className="mt-0.5 leading-tight">{label.replace(' ', ' ')}</span>
           </NavLink>
         ))}
+        <NavLink
+          to="/profile"
+          className={({ isActive }) =>
+            `relative flex-1 flex flex-col items-center justify-center py-2 text-xs transition-colors ${
+              isActive ? 'text-accent' : 'text-gray-500'
+            }`
+          }
+        >
+          <span className="text-lg leading-tight">{'◌'}</span>
+          <span className="mt-0.5 leading-tight">내 정보</span>
+          {user && !user.hasApiKeys && (
+            <span className="absolute top-1 right-1/4 w-1.5 h-1.5 rounded-full bg-down" title="API 키 미등록" />
+          )}
+        </NavLink>
       </nav>
     </div>
   );
