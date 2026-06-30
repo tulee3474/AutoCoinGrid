@@ -283,10 +283,15 @@ export async function openLivePosition(
       : entryPrice * (1 + trade.stopLossPct / 100);
 
     isHedge = await getHedgeMode(userId, binanceSvc);
-    const entryOrder  = await binanceSvc.placeOrder({
+    let entryOrder  = await binanceSvc.placeOrder({
       symbol, side: 'SELL', type: 'MARKET', quantity: qty.toString(),
       ...(isHedge ? { positionSide: posSide } : {})
     });
+    // MARKET 주문은 체결이 비동기로 마무리될 수 있어(특히 유동성 낮은 코인) 완전 체결 상태를 재조회
+    for (let i = 0; i < 5 && entryOrder.status !== 'FILLED'; i++) {
+      await new Promise(r => setTimeout(r, 200));
+      try { entryOrder = await binanceSvc.getOrder(symbol, entryOrder.orderId); } catch { break; }
+    }
     // Binance Futures MARKET 주문의 avgPrice는 "0.00000" 반환 버그 있음 → cumQuote/executedQty 사용
     const filledQty   = parseFloat(entryOrder.executedQty || '0') || qty;
     const cumQuote    = parseFloat(entryOrder.cumQuote || '0');
@@ -298,16 +303,18 @@ export async function openLivePosition(
     let slOrderId: bigint | null = null;
 
     try {
+      // closePosition=true: 포지션 전체 종료 — 일부 코인은 quantity 지정 조건부 주문(Algo Order 영역)을 막아두지만
+      // 포지션 청산용 closePosition 방식은 허용하는 경우가 있어 이 방식을 기본으로 사용
       const tpOrder = await binanceSvc.placeOrder({
         symbol, side: 'BUY', type: 'TAKE_PROFIT_MARKET',
-        quantity: filledQty.toString(), stopPrice: tpPrice.toFixed(pricePrec),
-        ...(isHedge ? { positionSide: posSide } : { reduceOnly: true })
+        stopPrice: tpPrice.toFixed(pricePrec), closePosition: true,
+        ...(isHedge ? { positionSide: posSide } : {})
       });
       try {
         const slOrder = await binanceSvc.placeOrder({
           symbol, side: 'BUY', type: 'STOP_MARKET',
-          quantity: filledQty.toString(), stopPrice: slPrice.toFixed(pricePrec),
-          ...(isHedge ? { positionSide: posSide } : { reduceOnly: true })
+          stopPrice: slPrice.toFixed(pricePrec), closePosition: true,
+          ...(isHedge ? { positionSide: posSide } : {})
         });
         tpOrderId = BigInt(tpOrder.orderId);
         slOrderId = BigInt(slOrder.orderId);

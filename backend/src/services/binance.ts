@@ -174,21 +174,23 @@ export class BinanceService {
     symbol: string;
     side: 'BUY' | 'SELL';
     type: 'LIMIT' | 'MARKET' | 'STOP_MARKET' | 'TAKE_PROFIT_MARKET';
-    quantity: string;
+    quantity?: string;
     price?: string;
     stopPrice?: string;
     reduceOnly?: boolean;
+    closePosition?: boolean;
     positionSide?: 'BOTH' | 'LONG' | 'SHORT';
   }): Promise<any> {
     const body: Record<string, string | number> = {
       symbol: params.symbol,
       side: params.side,
       type: params.type,
-      quantity: params.quantity,
     };
+    if (params.quantity) body.quantity = params.quantity;
     if (params.price) { body.price = params.price; body.timeInForce = 'GTC'; }
     if (params.stopPrice) body.stopPrice = params.stopPrice;
     if (params.reduceOnly) body.reduceOnly = 'true';
+    if (params.closePosition) body.closePosition = 'true';
     if (params.positionSide) body.positionSide = params.positionSide;
 
     const { data } = await this.futuresClient.post('/fapi/v1/order', null, {
