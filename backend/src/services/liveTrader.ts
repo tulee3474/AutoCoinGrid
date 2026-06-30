@@ -98,6 +98,33 @@ function closeOrderParams(
   };
 }
 
+// Binance Futures MARKET 주문의 avgPrice는 "0.00000"으로 반환되는 버그가 있어
+// cumQuote/executedQty(실제 체결 누적값)를 우선 사용 — 둘 다 없을 때만 avgPrice/fallback 사용
+function extractFillPrice(order: any, fallback: number): number {
+  const qty      = parseFloat(order?.executedQty || '0');
+  const cumQuote = parseFloat(order?.cumQuote || '0');
+  if (qty > 0 && cumQuote > 0) return cumQuote / qty;
+  return parseFloat(order?.avgPrice) || fallback;
+}
+
+// MARKET 청산 주문은 응답 시점에 체결이 완전히 settle 안 됐을 수 있어(특히 저유동성 코인)
+// 최대 5회(200ms 간격) 상태를 재조회한 뒤 실제 체결가를 계산
+async function placeCloseOrderAndGetExitPrice(
+  binanceSvc: BinanceService,
+  symbol: string,
+  posSide: 'SHORT' | 'LONG',
+  quantity: string,
+  isHedge: boolean,
+  fallbackPrice: number
+): Promise<number> {
+  let order = await binanceSvc.placeOrder(closeOrderParams(symbol, posSide, quantity, isHedge));
+  for (let i = 0; i < 5 && order.status !== 'FILLED'; i++) {
+    await new Promise(r => setTimeout(r, 200));
+    try { order = await binanceSvc.getOrder(symbol, order.orderId); } catch { break; }
+  }
+  return extractFillPrice(order, fallbackPrice);
+}
+
 // ── 전략 로드 (DB) ────────────────────────────────────────────
 
 async function loadStrategies(userId: string): Promise<StrategyConfig[]> {
@@ -177,13 +204,13 @@ async function syncClosed(userId: string, broadcast: (data: unknown) => void) {
     try {
       const tpOrder = await binanceSvc.getOrder(pos.symbol, Number(pos.tpOrderId));
       if (tpOrder.status === 'FILLED') {
-        exitPrice  = parseFloat(tpOrder.avgPrice) || pos.takeProfitPrice;
+        exitPrice  = extractFillPrice(tpOrder, pos.takeProfitPrice);
         exitReason = 'takeProfit';
         await binanceSvc.cancelOrder(pos.symbol, Number(pos.slOrderId)).catch(() => {});
       } else {
         const slOrder = await binanceSvc.getOrder(pos.symbol, Number(pos.slOrderId));
         if (slOrder.status === 'FILLED') {
-          exitPrice  = parseFloat(slOrder.avgPrice) || pos.stopLossPrice;
+          exitPrice  = extractFillPrice(slOrder, pos.stopLossPrice);
           exitReason = 'stopLoss';
           await binanceSvc.cancelOrder(pos.symbol, Number(pos.tpOrderId)).catch(() => {});
         }
@@ -211,11 +238,11 @@ async function closeTimedOut(userId: string, broadcast: (data: unknown) => void)
       const binPos = binancePositions.find((p: any) => p.symbol === pos.symbol);
 
       if (binPos) {
-        const closeOrder = await binanceSvc.placeOrder(
-          closeOrderParams(pos.symbol, pos.side as 'SHORT' | 'LONG',
-            Math.abs(parseFloat(binPos.positionAmt)).toString(), isHedge)
+        const exitPrice = await placeCloseOrderAndGetExitPrice(
+          binanceSvc, pos.symbol, pos.side as 'SHORT' | 'LONG',
+          Math.abs(parseFloat(binPos.positionAmt)).toString(), isHedge,
+          parseFloat(binPos.markPrice)
         );
-        const exitPrice = parseFloat(closeOrder.avgPrice) || parseFloat(binPos.markPrice);
         await recordClose(userId, pos.id, exitPrice, 'timeout', broadcast);
       } else {
         await prisma.livePosition.delete({ where: { id: pos.id } });
@@ -292,12 +319,8 @@ export async function openLivePosition(
       await new Promise(r => setTimeout(r, 200));
       try { entryOrder = await binanceSvc.getOrder(symbol, entryOrder.orderId); } catch { break; }
     }
-    // Binance Futures MARKET 주문의 avgPrice는 "0.00000" 반환 버그 있음 → cumQuote/executedQty 사용
     const filledQty   = parseFloat(entryOrder.executedQty || '0') || qty;
-    const cumQuote    = parseFloat(entryOrder.cumQuote || '0');
-    const actualEntry = (filledQty > 0 && cumQuote > 0)
-      ? cumQuote / filledQty
-      : (parseFloat(entryOrder.avgPrice) || entryPrice);
+    const actualEntry = extractFillPrice(entryOrder, entryPrice);
 
     let tpOrderId: bigint | null = null;
     let slOrderId: bigint | null = null;
@@ -390,11 +413,11 @@ export async function closeLivePositionManual(
 
     let exitPrice = pos.entryPrice;
     if (binPos) {
-      const closeOrder = await binanceSvc.placeOrder(
-        closeOrderParams(symbol, pos.side as 'SHORT' | 'LONG',
-          Math.abs(parseFloat(binPos.positionAmt)).toString(), isHedge)
+      exitPrice = await placeCloseOrderAndGetExitPrice(
+        binanceSvc, symbol, pos.side as 'SHORT' | 'LONG',
+        Math.abs(parseFloat(binPos.positionAmt)).toString(), isHedge,
+        parseFloat(binPos.markPrice)
       );
-      exitPrice = parseFloat(closeOrder.avgPrice) || parseFloat(binPos.markPrice);
     }
 
     await recordClose(userId, pos.id, exitPrice, 'manual', broadcast);
@@ -438,11 +461,11 @@ async function monitorNonOrderPositions(userId: string, broadcast: (data: unknow
     try {
       const binPos = binancePositions.find((p: any) => p.symbol === pos.symbol);
       if (binPos) {
-        const closeOrder = await binanceSvc.placeOrder(
-          closeOrderParams(pos.symbol, pos.side as 'SHORT' | 'LONG',
-            Math.abs(parseFloat(binPos.positionAmt)).toString(), isHedge)
+        exitPrice = await placeCloseOrderAndGetExitPrice(
+          binanceSvc, pos.symbol, pos.side as 'SHORT' | 'LONG',
+          Math.abs(parseFloat(binPos.positionAmt)).toString(), isHedge,
+          exitPrice
         );
-        exitPrice = parseFloat(closeOrder.avgPrice) || exitPrice;
       }
       await recordClose(userId, pos.id, exitPrice, exitReason, broadcast);
     } catch (e: any) {
@@ -602,11 +625,11 @@ export function stopLiveScanner(userId: string, broadcast: (data: unknown) => vo
           try {
             const binPos = binancePositions.find((p: any) => p.symbol === pos.symbol);
             if (binPos) {
-              const closeOrder = await binanceSvc.placeOrder(
-                closeOrderParams(pos.symbol, pos.side as 'SHORT' | 'LONG',
-                  Math.abs(parseFloat(binPos.positionAmt)).toString(), isHedge)
+              const exitPrice = await placeCloseOrderAndGetExitPrice(
+                binanceSvc, pos.symbol, pos.side as 'SHORT' | 'LONG',
+                Math.abs(parseFloat(binPos.positionAmt)).toString(), isHedge,
+                parseFloat(binPos.markPrice)
               );
-              const exitPrice = parseFloat(closeOrder.avgPrice) || parseFloat(binPos.markPrice);
               await recordClose(userId, pos.id, exitPrice, 'manual', broadcast);
             } else {
               await prisma.livePosition.delete({ where: { id: pos.id } });
@@ -648,11 +671,11 @@ export async function forceStopLiveScanner(userId: string, broadcast: (data: unk
         const binancePositions = await binanceSvc.getPositions();
         const binPos = binancePositions.find((p: any) => p.symbol === pos.symbol);
         if (binPos) {
-          const closeOrder = await binanceSvc.placeOrder(
-            closeOrderParams(pos.symbol, pos.side as 'SHORT' | 'LONG',
-              Math.abs(parseFloat(binPos.positionAmt)).toString(), isHedge)
+          const exitPrice = await placeCloseOrderAndGetExitPrice(
+            binanceSvc, pos.symbol, pos.side as 'SHORT' | 'LONG',
+            Math.abs(parseFloat(binPos.positionAmt)).toString(), isHedge,
+            parseFloat(binPos.markPrice)
           );
-          const exitPrice = parseFloat(closeOrder.avgPrice) || parseFloat(binPos.markPrice);
           await recordClose(userId, pos.id, exitPrice, 'manual', broadcast);
         }
       } catch (e: any) {
