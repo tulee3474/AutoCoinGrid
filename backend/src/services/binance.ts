@@ -14,6 +14,8 @@ export class BinanceService {
   private futuresClient: AxiosInstance;
   private futuresSymbolsCache: Set<string> | null = null;
   private futuresSymbolsCachedAt = 0;
+  private klinesCache = new Map<string, { data: Kline[]; ts: number }>();
+  private static readonly KLINES_CACHE_TTL = 50_000; // 스캔 사이클(60s)보다 짧게 — 같은 사이클 내 전략/유저 간 중복 요청 방지
 
   constructor(apiKey?: string, apiSecret?: string) {
     this.apiKey    = apiKey    ?? '';
@@ -42,6 +44,13 @@ export class BinanceService {
   // ── 퍼블릭 API ──────────────────────────────────────────────
 
   async getKlines(symbol: string, interval: string, limit = 500, startTime?: number): Promise<Kline[]> {
+    // startTime 지정 시(과거 구간 조회)는 캐시 대상 아님 — 스캐너의 "최근 N개" 조회만 캐시
+    const cacheKey = !startTime ? `${symbol}|${interval}|${limit}` : null;
+    if (cacheKey) {
+      const cached = this.klinesCache.get(cacheKey);
+      if (cached && Date.now() - cached.ts < BinanceService.KLINES_CACHE_TTL) return cached.data;
+    }
+
     const params: Record<string, any> = { symbol, interval, limit };
     if (startTime) params.startTime = startTime;
     let res;
@@ -56,10 +65,12 @@ export class BinanceService {
         throw e;
       }
     }
-    return res.data.map((k: any[]) => ({
+    const data: Kline[] = res.data.map((k: any[]) => ({
       openTime: k[0], open: +k[1], high: +k[2], low: +k[3],
       close: +k[4], volume: +k[5], closeTime: k[6]
     }));
+    if (cacheKey) this.klinesCache.set(cacheKey, { data, ts: Date.now() });
+    return data;
   }
 
   async getKlinesSince(symbol: string, interval: string, startTime: number): Promise<Kline[]> {
