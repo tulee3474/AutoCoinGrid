@@ -82,8 +82,10 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
 
   if (wallet.openPositions.length > 0) {
     try {
-      const tickers  = await binance.get24hrTickers() as any[];
-      const priceMap = new Map<string, number>(tickers.map((t: any) => [t.symbol, parseFloat(t.lastPrice)]));
+      // 현물 lastPrice가 아니라 선물 markPrice 기준 — Binance 실거래 트리거/표시 가격과 일치시키고
+      // 현물에 상장 안 된 선물 전용 코인도 정확히 매칭하기 위함
+      const indices  = await binance.getFuturesPremiumIndex() as any[];
+      const priceMap = new Map<string, number>(indices.map((m: any) => [m.symbol, parseFloat(m.markPrice)]));
 
       // 심볼별로 포지션 오픈 시각부터 현재까지의 1h 캔들 미리 조회 (SL/TP 누락 감지용)
       const klinesBySymbol = new Map<string, Awaited<ReturnType<typeof binance.getKlines>>>();

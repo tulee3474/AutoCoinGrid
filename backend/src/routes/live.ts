@@ -139,8 +139,9 @@ router.get('/positions', requireAuth, async (req: AuthRequest, res: Response) =>
   const positions = await getLivePositions(req.userId!);
   if (positions.length === 0) return res.json([]);
   try {
-    const tickers  = await binance.getFutures24hrTickers() as any[];
-    const priceMap = new Map<string, number>(tickers.map((t: any) => [t.symbol, parseFloat(t.lastPrice)]));
+    // 마지막 체결가(lastPrice)가 아니라 Binance가 PnL/ROE 계산에 쓰는 markPrice 기준으로 맞춤
+    const indices  = await binance.getFuturesPremiumIndex() as any[];
+    const priceMap = new Map<string, number>(indices.map((m: any) => [m.symbol, parseFloat(m.markPrice)]));
     const enriched = positions.map(pos => {
       const currentPrice = priceMap.get(pos.symbol) ?? pos.entryPrice;
       const pnlPct  = ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100 * pos.leverage;

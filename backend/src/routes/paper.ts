@@ -44,8 +44,9 @@ router.get('/wallet', requireAuth, async (req: AuthRequest, res: Response) => {
   let unrealizedPnl = 0;
   if (wallet.openPositions.length > 0) {
     try {
-      const tickers  = await binance.getFutures24hrTickers() as any[];
-      const priceMap = new Map<string, number>(tickers.map((t: any) => [t.symbol, parseFloat(t.lastPrice)]));
+      // 마지막 체결가(lastPrice)가 아니라 Binance가 PnL/ROE 계산에 쓰는 markPrice 기준으로 맞춤
+      const indices  = await binance.getFuturesPremiumIndex() as any[];
+      const priceMap = new Map<string, number>(indices.map((m: any) => [m.symbol, parseFloat(m.markPrice)]));
       wallet.openPositions.forEach(pos => {
         const price = priceMap.get(pos.symbol);
         if (price) {
@@ -74,8 +75,8 @@ router.get('/positions', requireAuth, async (req: AuthRequest, res: Response) =>
   if (wallet.openPositions.length === 0) return res.json([]);
 
   try {
-    const tickers  = await binance.getFutures24hrTickers() as any[];
-    const priceMap = new Map<string, number>(tickers.map((t: any) => [t.symbol, parseFloat(t.lastPrice)]));
+    const indices  = await binance.getFuturesPremiumIndex() as any[];
+    const priceMap = new Map<string, number>(indices.map((m: any) => [m.symbol, parseFloat(m.markPrice)]));
     const positions = wallet.openPositions.map(pos => {
       const currentPrice = priceMap.get(pos.symbol) ?? pos.entryPrice;
       const pnlPct  = ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100 * pos.leverage;
@@ -115,9 +116,9 @@ router.delete('/positions/:id', requireAuth, async (req: AuthRequest, res: Respo
   if (!pos) return res.status(404).json({ error: 'position not found' });
 
   try {
-    const tickers = await binance.getFutures24hrTickers() as any[];
-    const ticker  = (tickers as any[]).find(t => t.symbol === pos.symbol);
-    const price   = ticker ? parseFloat(ticker.lastPrice) : pos.entryPrice;
+    const indices = await binance.getFuturesPremiumIndex() as any[];
+    const index   = indices.find(m => m.symbol === pos.symbol);
+    const price   = index ? parseFloat(index.markPrice) : pos.entryPrice;
     const log     = await closePaperPosition(req.userId!, req.params.id, price, 'manual');
     res.json(log);
   } catch (e: any) {

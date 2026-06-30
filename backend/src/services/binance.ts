@@ -23,6 +23,10 @@ export class BinanceService {
   private static readonly TICKERS_CACHE_TTL = 50_000;
   private futuresKlinesInflight = new Map<string, Promise<Kline[]>>();
   private futuresTickersInflight: Promise<any[]> | null = null;
+  private futuresPremiumIndexCache: { data: any[]; ts: number } | null = null;
+  // 프론트엔드 시세 갱신 주기(10초)보다 짧게 — 그보다 길면 "N초 후 갱신" UI가 실제로는 갱신 안 된 값을 보여주게 됨
+  private static readonly PREMIUM_INDEX_CACHE_TTL = 8_000;
+  private futuresPremiumIndexInflight: Promise<any[]> | null = null;
 
   // IP 차단은 인스턴스가 아니라 실제 서버 IP 단위로 걸리므로 static으로 전체 인스턴스(유저별 거래용 + 스캐너용 싱글톤) 공유
   private static spotBannedUntil = 0;
@@ -225,8 +229,22 @@ export class BinanceService {
   }
 
   async getFuturesPremiumIndex(): Promise<any[]> {
-    const { data } = await this.futuresClient.get('/fapi/v1/premiumIndex');
-    return data;
+    if (this.futuresPremiumIndexCache && Date.now() - this.futuresPremiumIndexCache.ts < BinanceService.PREMIUM_INDEX_CACHE_TTL) {
+      return this.futuresPremiumIndexCache.data;
+    }
+    if (this.futuresPremiumIndexInflight) return this.futuresPremiumIndexInflight;
+
+    this.futuresPremiumIndexInflight = (async () => {
+      const { data } = await this.futuresClient.get('/fapi/v1/premiumIndex');
+      this.futuresPremiumIndexCache = { data, ts: Date.now() };
+      return data;
+    })();
+
+    try {
+      return await this.futuresPremiumIndexInflight;
+    } finally {
+      this.futuresPremiumIndexInflight = null;
+    }
   }
 
   // ── 인증 필요 API ────────────────────────────────────────────
