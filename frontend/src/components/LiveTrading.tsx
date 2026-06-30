@@ -112,6 +112,10 @@ export default function LiveTrading() {
   };
 
   const handleStop = async () => {
+    const monitoringCount = positions.filter(p => p.tpOrderId === null).length;
+    if (monitoringCount > 0) {
+      if (!confirm(`스캐너 모니터링 포지션 ${monitoringCount}개는 스캐너가 꺼지면 자동 관리가 불가능해 즉시 시장가 청산됩니다.\n계속하시겠습니까?`)) return;
+    }
     await stopLiveScanner();
     await refresh();
   };

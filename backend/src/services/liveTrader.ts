@@ -287,8 +287,12 @@ export async function openLivePosition(
       symbol, side: 'SELL', type: 'MARKET', quantity: qty.toString(),
       ...(isHedge ? { positionSide: posSide } : {})
     });
-    const actualEntry = parseFloat(entryOrder.avgPrice)    || entryPrice;
-    const filledQty   = parseFloat(entryOrder.executedQty  || '0') || qty;
+    // Binance Futures MARKET 주문의 avgPrice는 "0.00000" 반환 버그 있음 → cumQuote/executedQty 사용
+    const filledQty   = parseFloat(entryOrder.executedQty || '0') || qty;
+    const cumQuote    = parseFloat(entryOrder.cumQuote || '0');
+    const actualEntry = (filledQty > 0 && cumQuote > 0)
+      ? cumQuote / filledQty
+      : (parseFloat(entryOrder.avgPrice) || entryPrice);
 
     let tpOrderId: bigint | null = null;
     let slOrderId: bigint | null = null;
@@ -299,16 +303,21 @@ export async function openLivePosition(
         quantity: filledQty.toString(), stopPrice: tpPrice.toFixed(pricePrec),
         ...(isHedge ? { positionSide: posSide } : { reduceOnly: true })
       });
-      const slOrder = await binanceSvc.placeOrder({
-        symbol, side: 'BUY', type: 'STOP_MARKET',
-        quantity: filledQty.toString(), stopPrice: slPrice.toFixed(pricePrec),
-        ...(isHedge ? { positionSide: posSide } : { reduceOnly: true })
-      });
-      tpOrderId = BigInt(tpOrder.orderId);
-      slOrderId = BigInt(slOrder.orderId);
-    } catch (e: any) {
-      // TP/SL 주문 실패(미지원 코인 등) → 스캐너 가격 모니터링으로 전환
-      addLog(userId, `${symbol} TP/SL 등록 실패 (${e.response?.data?.msg ?? e.message}) — 스캐너 모니터링 전환`, 'info');
+      try {
+        const slOrder = await binanceSvc.placeOrder({
+          symbol, side: 'BUY', type: 'STOP_MARKET',
+          quantity: filledQty.toString(), stopPrice: slPrice.toFixed(pricePrec),
+          ...(isHedge ? { positionSide: posSide } : { reduceOnly: true })
+        });
+        tpOrderId = BigInt(tpOrder.orderId);
+        slOrderId = BigInt(slOrder.orderId);
+      } catch (slErr: any) {
+        // SL 실패 → TP도 취소 후 모니터링으로 전환 (dangling 방지)
+        await binanceSvc.cancelOrder(symbol, tpOrder.orderId).catch(() => {});
+        addLog(userId, `${symbol} SL 등록 실패 (${slErr.response?.data?.msg ?? slErr.message}) — 스캐너 모니터링 전환`, 'error');
+      }
+    } catch (tpErr: any) {
+      addLog(userId, `${symbol} TP/SL 등록 실패 (${tpErr.response?.data?.msg ?? tpErr.message}) — 스캐너 모니터링 전환`, 'error');
     }
 
     const pos = await prisma.livePosition.create({
@@ -570,8 +579,41 @@ export async function restoreLiveScanners(broadcast: (data: unknown) => void) {
 export function stopLiveScanner(userId: string, broadcast: (data: unknown) => void) {
   const state = traders.get(userId);
   if (!state?.interval) return;
-  // 포지션이 없으면 즉시 중지, 있으면 중지 예정
-  prisma.livePosition.count({ where: { userId } }).then(count => {
+
+  (async () => {
+    // 스캐너 모니터링 포지션(tpOrderId=null)은 스캐너 없이 관리 불가 → 즉시 청산
+    const monitoringPositions = await prisma.livePosition.findMany({
+      where: { userId, tpOrderId: null }
+    });
+    if (monitoringPositions.length > 0) {
+      addLog(userId, `⚠ 스캐너 모니터링 포지션 ${monitoringPositions.length}개 자동 청산 중...`, 'info');
+      try {
+        const binanceSvc       = await getUserBinance(userId);
+        const isHedge          = await getHedgeMode(userId, binanceSvc);
+        const binancePositions = await binanceSvc.getPositions();
+        for (const pos of monitoringPositions) {
+          try {
+            const binPos = binancePositions.find((p: any) => p.symbol === pos.symbol);
+            if (binPos) {
+              const closeOrder = await binanceSvc.placeOrder(
+                closeOrderParams(pos.symbol, pos.side as 'SHORT' | 'LONG',
+                  Math.abs(parseFloat(binPos.positionAmt)).toString(), isHedge)
+              );
+              const exitPrice = parseFloat(closeOrder.avgPrice) || parseFloat(binPos.markPrice);
+              await recordClose(userId, pos.id, exitPrice, 'manual', broadcast);
+            } else {
+              await prisma.livePosition.delete({ where: { id: pos.id } });
+            }
+          } catch (e: any) {
+            addLog(userId, `모니터링 포지션 청산 실패 ${pos.symbol}: ${e.message}`, 'error');
+          }
+        }
+      } catch (e: any) {
+        addLog(userId, `모니터링 포지션 청산 중 오류: ${e.message}`, 'error');
+      }
+    }
+
+    const count = await prisma.livePosition.count({ where: { userId } });
     if (count === 0) {
       _clearUserInterval(userId);
       addLog(userId, '⏹ 실거래 스캐너 중지됨', 'info');
@@ -581,7 +623,7 @@ export function stopLiveScanner(userId: string, broadcast: (data: unknown) => vo
       addLog(userId, `⏸ 중지 예정 — 잔여 포지션 ${count}개 정리 후 자동 중지`, 'info');
       broadcast({ type: 'live_status', data: { stopping: true, openCount: count } });
     }
-  });
+  })().catch(e => addLog(userId, `중지 오류: ${e.message}`, 'error'));
 }
 
 export async function forceStopLiveScanner(userId: string, broadcast: (data: unknown) => void) {
