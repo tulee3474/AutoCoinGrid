@@ -16,6 +16,10 @@ export class BinanceService {
   private futuresSymbolsCachedAt = 0;
   private klinesCache = new Map<string, { data: Kline[]; ts: number }>();
   private static readonly KLINES_CACHE_TTL = 50_000; // 스캔 사이클(60s)보다 짧게 — 같은 사이클 내 전략/유저 간 중복 요청 방지
+  private futuresTickersCache: { data: any[]; ts: number } | null = null;
+  private static readonly TICKERS_CACHE_TTL = 50_000;
+  private futuresKlinesInflight = new Map<string, Promise<Kline[]>>();
+  private futuresTickersInflight: Promise<any[]> | null = null;
 
   constructor(apiKey?: string, apiSecret?: string) {
     this.apiKey    = apiKey    ?? '';
@@ -107,23 +111,36 @@ export class BinanceService {
     const cached = this.klinesCache.get(cacheKey);
     if (cached && Date.now() - cached.ts < BinanceService.KLINES_CACHE_TTL) return cached.data;
 
-    let res;
-    try {
-      res = await this.futuresClient.get('/fapi/v1/klines', { params: { symbol, interval, limit } });
-    } catch (e: any) {
-      if (e.response?.status === 429) {
-        await new Promise(r => setTimeout(r, 5000));
+    // 동시에 여러 전략/유저가 같은 심볼을 요청해도 실제 HTTP 호출은 1회만 — 진행 중인 요청을 공유
+    const inflight = this.futuresKlinesInflight.get(cacheKey);
+    if (inflight) return inflight;
+
+    const promise = (async () => {
+      let res;
+      try {
         res = await this.futuresClient.get('/fapi/v1/klines', { params: { symbol, interval, limit } });
-      } else {
-        throw e;
+      } catch (e: any) {
+        if (e.response?.status === 429) {
+          await new Promise(r => setTimeout(r, 5000));
+          res = await this.futuresClient.get('/fapi/v1/klines', { params: { symbol, interval, limit } });
+        } else {
+          throw e;
+        }
       }
+      const data: Kline[] = res.data.map((k: any[]) => ({
+        openTime: k[0], open: +k[1], high: +k[2], low: +k[3],
+        close: +k[4], volume: +k[5], closeTime: k[6]
+      }));
+      this.klinesCache.set(cacheKey, { data, ts: Date.now() });
+      return data;
+    })();
+
+    this.futuresKlinesInflight.set(cacheKey, promise);
+    try {
+      return await promise;
+    } finally {
+      this.futuresKlinesInflight.delete(cacheKey);
     }
-    const data: Kline[] = res.data.map((k: any[]) => ({
-      openTime: k[0], open: +k[1], high: +k[2], low: +k[3],
-      close: +k[4], volume: +k[5], closeTime: k[6]
-    }));
-    this.klinesCache.set(cacheKey, { data, ts: Date.now() });
-    return data;
   }
 
   async get24hrTickers(): Promise<any[]> {
@@ -132,8 +149,23 @@ export class BinanceService {
   }
 
   async getFutures24hrTickers(): Promise<any[]> {
-    const { data } = await this.futuresClient.get('/fapi/v1/ticker/24hr');
-    return data;
+    if (this.futuresTickersCache && Date.now() - this.futuresTickersCache.ts < BinanceService.TICKERS_CACHE_TTL) {
+      return this.futuresTickersCache.data;
+    }
+    // 같은 사이클 내 여러 전략/유저의 동시 요청을 1회 호출로 합침
+    if (this.futuresTickersInflight) return this.futuresTickersInflight;
+
+    this.futuresTickersInflight = (async () => {
+      const { data } = await this.futuresClient.get('/fapi/v1/ticker/24hr');
+      this.futuresTickersCache = { data, ts: Date.now() };
+      return data;
+    })();
+
+    try {
+      return await this.futuresTickersInflight;
+    } finally {
+      this.futuresTickersInflight = null;
+    }
   }
 
   async getFuturesExchangeInfo(): Promise<any> {
