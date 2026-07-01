@@ -205,10 +205,13 @@ async function syncClosed(userId: string, broadcast: (data: unknown) => void) {
 
   const binanceSvc  = await getUserBinance(userId);
   const binancePos  = await binanceSvc.getPositions();
-  const activeSymbols = new Set(binancePos.map((p: any) => p.symbol));
+  // positionAmt < 0 인 숏 포지션만 추적 — 헤지 모드에서 롱과 혼동 방지
+  const activeShortSymbols = new Set(
+    (binancePos as any[]).filter(p => parseFloat(p.positionAmt) < 0).map(p => p.symbol)
+  );
 
   for (const pos of positions) {
-    if (activeSymbols.has(pos.symbol)) continue;
+    if (activeShortSymbols.has(pos.symbol)) continue;
 
     // 스탠딩 주문 없는 포지션은 monitorNonOrderPositions에서 가격 모니터링으로 처리
     if (pos.tpOrderId === null) {
@@ -270,7 +273,8 @@ async function closeTimedOut(userId: string, broadcast: (data: unknown) => void)
       await binanceSvc.cancelAllOrders(pos.symbol);
       await binanceSvc.cancelAllAlgoOrders(pos.symbol).catch(() => {});
       const binancePositions = await binanceSvc.getPositions();
-      const binPos = binancePositions.find((p: any) => p.symbol === pos.symbol);
+      // 숏 포지션(positionAmt < 0)만 찾아야 헤지 모드에서 롱과 혼동하지 않음
+      const binPos = (binancePositions as any[]).find(p => p.symbol === pos.symbol && parseFloat(p.positionAmt) < 0);
 
       if (binPos) {
         const exitPrice = await placeCloseOrderAndGetExitPrice(
