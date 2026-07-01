@@ -3,7 +3,7 @@ import { scanMarket } from './scanner';
 import { StrategyConfig, StrategyConditions, TradeConfig } from '../types';
 import prisma from '../lib/prisma';
 import { decrypt } from '../lib/crypto';
-import { calcPdfStopLoss } from './gridUtils';
+import { calcPdfStopLoss, calcPdfGridPrices } from './gridUtils';
 
 const SCAN_INTERVAL_MS = 60_000;
 const SYNC_INTERVAL_MS = 15_000;   // TP/SL 체결 감지 전용 빠른 인터벌
@@ -341,12 +341,14 @@ export async function openLivePosition(
       return null;
     }
 
-    const tpPrice = entryPrice * (1 - trade.takeProfitPct / 100);
-    // gridEnabled=false이면 stopLossPct 직접 사용
+    const tpPrice     = entryPrice * (1 - trade.takeProfitPct / 100);
     const gridEnabled = trade.gridEnabled !== false;
     const slPrice     = gridEnabled
       ? calcPdfStopLoss(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing)
       : entryPrice * (1 + trade.stopLossPct / 100);
+    const gridPrices  = gridEnabled
+      ? calcPdfGridPrices(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing)
+      : [];
 
     isHedge = await getHedgeMode(userId, binanceSvc);
     let entryOrder  = await binanceSvc.placeOrder({
@@ -392,7 +394,11 @@ export async function openLivePosition(
     const pos = await prisma.livePosition.create({
       data: {
         userId, symbol, side: 'SHORT', qty: filledQty,
-        entryPrice: actualEntry, takeProfitPrice: tpPrice, stopLossPrice: slPrice,
+        entryPrice: actualEntry, avgEntryPrice: actualEntry,
+        totalEntryUsdt: trade.entryAmountUsdt,
+        gridPrices:  gridPrices as any,
+        gridsFilled: 0,
+        takeProfitPrice: tpPrice, stopLossPrice: slPrice,
         tpOrderId, slOrderId,
         entryAmountUsdt: trade.entryAmountUsdt, leverage: trade.leverage,
         expiresAt: trade.maxDurationHours != null
@@ -515,6 +521,80 @@ async function monitorNonOrderPositions(userId: string, broadcast: (data: unknow
   }
 }
 
+// ── 그리드 추가진입 (라이브) ──────────────────────────────────
+
+async function fillLiveGrids(userId: string, broadcast: (data: unknown) => void) {
+  const positions = await prisma.livePosition.findMany({ where: { userId } });
+  const gridPositions = positions.filter(pos => {
+    const gp = Array.isArray(pos.gridPrices) ? pos.gridPrices as number[] : [];
+    return gp.length > 0 && pos.gridsFilled < gp.length;
+  });
+  if (gridPositions.length === 0) return;
+
+  const binanceSvc = await getUserBinance(userId);
+  const binancePos = await binanceSvc.getPositions();
+  const priceMap   = new Map<string, number>(
+    (binancePos as any[]).map(p => [p.symbol, parseFloat(p.markPrice)])
+  );
+  const isHedge  = await getHedgeMode(userId, binanceSvc);
+  const exchInfo = await binanceSvc.getFuturesExchangeInfo();
+
+  for (const pos of gridPositions) {
+    const price = priceMap.get(pos.symbol);
+    if (!price) continue;
+
+    const gridPrices        = pos.gridPrices as number[];
+    const currentGridsFilled = pos.gridsFilled;
+
+    // 순차적으로 도달한 그리드 수 계산
+    let gridsToFill = 0;
+    for (let gi = currentGridsFilled; gi < gridPrices.length; gi++) {
+      if (price >= gridPrices[gi]) gridsToFill++;
+      else break;
+    }
+    if (gridsToFill === 0) continue;
+
+    const symbolInfo = (exchInfo.symbols as any[]).find((s: any) => s.symbol === pos.symbol);
+    const qtyPrec    = symbolInfo?.quantityPrecision ?? 2;
+
+    let newAvgEntry  = pos.avgEntryPrice  > 0 ? pos.avgEntryPrice  : pos.entryPrice;
+    let newTotalUsdt = pos.totalEntryUsdt > 0 ? pos.totalEntryUsdt : pos.entryAmountUsdt;
+    let actualFilled = 0;
+
+    for (let i = 0; i < gridsToFill; i++) {
+      const gp      = gridPrices[currentGridsFilled + i];
+      const gridQty = parseFloat((pos.entryAmountUsdt * pos.leverage / gp).toFixed(qtyPrec));
+
+      try {
+        await binanceSvc.placeOrder({
+          symbol: pos.symbol, side: 'SELL', type: 'MARKET',
+          quantity: gridQty.toString(),
+          ...(isHedge ? { positionSide: 'SHORT' } : {})
+        });
+        newAvgEntry  = (newAvgEntry * newTotalUsdt + gp * pos.entryAmountUsdt) / (newTotalUsdt + pos.entryAmountUsdt);
+        newTotalUsdt += pos.entryAmountUsdt;
+        actualFilled++;
+      } catch (e: any) {
+        addLog(userId, `그리드 주문 실패 ${pos.symbol} ${currentGridsFilled + i + 1}차: ${e.response?.data?.msg ?? e.message}`, 'error');
+        break;
+      }
+    }
+
+    if (actualFilled === 0) continue;
+
+    const newGridsFilled = currentGridsFilled + actualFilled;
+    await prisma.livePosition.update({
+      where: { id: pos.id },
+      data:  { gridsFilled: newGridsFilled, avgEntryPrice: newAvgEntry, totalEntryUsdt: newTotalUsdt }
+    });
+    addLog(userId,
+      `📈 [그리드] ${pos.symbol} ${newGridsFilled}차 추가진입 | 평균진입가: $${newAvgEntry.toPrecision(5)}`,
+      'signal'
+    );
+    broadcast({ type: 'live_grid_fill', data: { symbol: pos.symbol, gridsFilled: newGridsFilled, avgEntryPrice: newAvgEntry } });
+  }
+}
+
 // ── TP/SL 동기화 + 타임아웃 (mutex 보호) ─────────────────────
 
 async function runSync(userId: string, broadcast: (data: unknown) => void) {
@@ -523,6 +603,7 @@ async function runSync(userId: string, broadcast: (data: unknown) => void) {
   state.isSyncing = true;
   try {
     await syncClosed(userId, broadcast);
+    await fillLiveGrids(userId, broadcast);
     await closeTimedOut(userId, broadcast);
 
     // 중지 예정: 포지션이 모두 닫혔으면 완전 중지

@@ -109,6 +109,10 @@ model LivePosition {
   side            String   @default("SHORT")
   qty             Float
   entryPrice      Float
+  avgEntryPrice   Float    @default(0)
+  totalEntryUsdt  Float    @default(0)
+  gridPrices      Json     @default("[]")
+  gridsFilled     Int      @default(0)
   takeProfitPrice Float
   stopLossPrice   Float
   tpOrderId       BigInt?
