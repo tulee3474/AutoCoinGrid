@@ -3,10 +3,9 @@ import { requireAuth, AuthRequest } from '../middleware/auth';
 import {
   startLiveScanner, stopLiveScanner, forceStopLiveScanner,
   isLiveRunning, isLiveStopping,
-  getLiveLog, getLivePositions, getLiveTradeLogs, closeLivePositionManual,
+  getLiveLog, getLivePositionsEnriched, getLiveTradeLogs, closeLivePositionManual,
   getLiveAccountInfo
 } from '../services/liveTrader';
-import { binance } from '../services/binance';
 import prisma from '../lib/prisma';
 import { encrypt, decrypt } from '../lib/crypto';
 
@@ -136,22 +135,8 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
 
 // GET /api/live/positions
 router.get('/positions', requireAuth, async (req: AuthRequest, res: Response) => {
-  const positions = await getLivePositions(req.userId!);
-  if (positions.length === 0) return res.json([]);
-  try {
-    // 마지막 체결가(lastPrice)가 아니라 Binance가 PnL/ROE 계산에 쓰는 markPrice 기준으로 맞춤
-    const indices  = await binance.getFuturesPremiumIndex() as any[];
-    const priceMap = new Map<string, number>(indices.map((m: any) => [m.symbol, parseFloat(m.markPrice)]));
-    const enriched = positions.map(pos => {
-      const currentPrice = priceMap.get(pos.symbol) ?? pos.entryPrice;
-      const pnlPct  = ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100 * pos.leverage;
-      const pnlUsdt = pos.entryAmountUsdt * pnlPct / 100;
-      return { ...pos, currentPrice, pnlPct, pnlUsdt };
-    });
-    res.json(enriched);
-  } catch {
-    res.json(positions.map(p => ({ ...p, currentPrice: p.entryPrice, pnlPct: 0, pnlUsdt: 0 })));
-  }
+  // Binance positionRisk 실데이터로 PnL 계산 — 펀딩 피까지 반영해 Binance ROE%와 정확히 일치
+  res.json(await getLivePositionsEnriched(req.userId!));
 });
 
 // GET /api/live/logs

@@ -1,4 +1,4 @@
-import { BinanceService } from './binance';
+import { BinanceService, binance } from './binance';
 import { scanMarket } from './scanner';
 import { StrategyConfig, StrategyConditions, TradeConfig } from '../types';
 import prisma from '../lib/prisma';
@@ -720,6 +720,47 @@ export async function getLivePositions(userId: string) {
     tpOrderId: p.tpOrderId?.toString() ?? null,
     slOrderId: p.slOrderId?.toString() ?? null
   }));
+}
+
+export async function getLivePositionsEnriched(userId: string) {
+  const positions = await getLivePositions(userId);
+  if (positions.length === 0) return [];
+
+  // 우선순위: Binance positionRisk 실데이터 (펀딩 피 반영된 ROE% 정확히 일치)
+  try {
+    const binanceSvc    = await getUserBinance(userId);
+    const allBinancePos = await binanceSvc.getPositions();
+    // 숏 포지션만 매칭 (positionAmt < 0)
+    const shortPosMap = new Map<string, any>(
+      allBinancePos
+        .filter((bp: any) => parseFloat(bp.positionAmt) < 0)
+        .map((bp: any) => [bp.symbol, bp])
+    );
+    return positions.map(pos => {
+      const bp = shortPosMap.get(pos.symbol);
+      if (!bp) return { ...pos, currentPrice: pos.entryPrice, pnlPct: 0, pnlUsdt: 0 };
+      const currentPrice   = parseFloat(bp.markPrice);
+      const pnlUsdt        = parseFloat(bp.unRealizedProfit);
+      const isolatedWallet = parseFloat(bp.isolatedWallet);
+      // Binance ROE% = unrealizedProfit / isolatedWallet (펀딩 피 포함)
+      const pnlPct = isolatedWallet > 0 ? (pnlUsdt / isolatedWallet) * 100 : 0;
+      return { ...pos, currentPrice, pnlPct, pnlUsdt };
+    });
+  } catch {
+    // 폴백: markPrice 기반 계산 (펀딩 피 미반영)
+    try {
+      const indices  = await binance.getFuturesPremiumIndex() as any[];
+      const priceMap = new Map<string, number>(indices.map((m: any) => [m.symbol, parseFloat(m.markPrice)]));
+      return positions.map(pos => {
+        const currentPrice = priceMap.get(pos.symbol) ?? pos.entryPrice;
+        const pnlPct  = ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100 * pos.leverage;
+        const pnlUsdt = pos.entryAmountUsdt * pnlPct / 100;
+        return { ...pos, currentPrice, pnlPct, pnlUsdt };
+      });
+    } catch {
+      return positions.map(pos => ({ ...pos, currentPrice: pos.entryPrice, pnlPct: 0, pnlUsdt: 0 }));
+    }
+  }
 }
 
 export async function getLiveTradeLogs(userId: string, limit = 50) {
