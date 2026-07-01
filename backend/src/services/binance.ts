@@ -394,6 +394,15 @@ export class BinanceService {
     });
     return data;
   }
+
+  async getUserTrades(symbol: string, startTime?: number, limit = 50): Promise<any[]> {
+    const params: Record<string, any> = { symbol, limit };
+    if (startTime) params.startTime = startTime;
+    const { data } = await this.futuresClient.get('/fapi/v1/userTrades', {
+      params: this.signedParams(params)
+    });
+    return data;
+  }
 }
 
 export const binance = new BinanceService();

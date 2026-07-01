@@ -234,6 +234,21 @@ async function syncClosed(userId: string, broadcast: (data: unknown) => void) {
       exitPrice  = await extractAlgoExitPrice(binanceSvc, pos.symbol, slOrderData, pos.stopLossPrice);
       exitReason = 'stopLoss';
       await binanceSvc.cancelAlgoOrder(Number(pos.tpOrderId)).catch(() => {});
+    } else {
+      // 청산(Liquidation) 또는 기타 — TP/SL 알고 주문이 모두 미체결이면
+      // userTrades로 실제 체결가 조회
+      try {
+        const trades = await binanceSvc.getUserTrades(pos.symbol, pos.openedAt.getTime());
+        // 숏 청산 = BUY 방향 체결 중 가장 최신
+        const buyTrades = (trades as any[]).filter(t => t.side === 'BUY');
+        if (buyTrades.length > 0) {
+          // 여러 부분 체결 → 수량 가중 평균가
+          const totalQty = buyTrades.reduce((s: number, t: any) => s + parseFloat(t.qty), 0);
+          exitPrice = buyTrades.reduce((s: number, t: any) => s + parseFloat(t.price) * parseFloat(t.qty), 0) / totalQty;
+          // 숏: 청산가 > 진입가이면 손실(강제청산/SL)
+          exitReason = exitPrice > pos.entryPrice ? 'stopLoss' : 'takeProfit';
+        }
+      } catch { /* 조회 실패 시 기본값 유지 */ }
     }
 
     await recordClose(userId, pos.id, exitPrice, exitReason, broadcast);
