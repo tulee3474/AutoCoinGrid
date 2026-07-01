@@ -217,25 +217,24 @@ async function syncClosed(userId: string, broadcast: (data: unknown) => void) {
     }
 
     // Binance에서 포지션이 사라짐 → TP 또는 SL 체결됨
-    // (TP/SL은 Algo Order API로 등록되므로 algoStatus가 'TRIGGERED'일 때 체결로 간주)
-    let exitPrice = pos.takeProfitPrice;
+    // TP/SL 각각 독립적으로 조회 — 한 주문 조회가 실패해도 나머지를 반드시 확인
+    let exitPrice  = pos.takeProfitPrice;
     let exitReason: 'takeProfit' | 'stopLoss' = 'takeProfit';
 
-    try {
-      const tpOrder = await binanceSvc.getAlgoOrder(Number(pos.tpOrderId));
-      if (tpOrder.algoStatus === 'TRIGGERED') {
-        exitPrice  = await extractAlgoExitPrice(binanceSvc, pos.symbol, tpOrder, pos.takeProfitPrice);
-        exitReason = 'takeProfit';
-        await binanceSvc.cancelAlgoOrder(Number(pos.slOrderId)).catch(() => {});
-      } else {
-        const slOrder = await binanceSvc.getAlgoOrder(Number(pos.slOrderId));
-        if (slOrder.algoStatus === 'TRIGGERED') {
-          exitPrice  = await extractAlgoExitPrice(binanceSvc, pos.symbol, slOrder, pos.stopLossPrice);
-          exitReason = 'stopLoss';
-          await binanceSvc.cancelAlgoOrder(Number(pos.tpOrderId)).catch(() => {});
-        }
-      }
-    } catch { /* 주문 조회 실패 시 TP 가정 */ }
+    let tpOrderData: any = null;
+    let slOrderData: any = null;
+    try { tpOrderData = await binanceSvc.getAlgoOrder(Number(pos.tpOrderId)); } catch { /* 조회 실패 */ }
+    try { slOrderData = await binanceSvc.getAlgoOrder(Number(pos.slOrderId)); } catch { /* 조회 실패 */ }
+
+    if (tpOrderData?.algoStatus === 'TRIGGERED') {
+      exitPrice  = await extractAlgoExitPrice(binanceSvc, pos.symbol, tpOrderData, pos.takeProfitPrice);
+      exitReason = 'takeProfit';
+      await binanceSvc.cancelAlgoOrder(Number(pos.slOrderId)).catch(() => {});
+    } else if (slOrderData?.algoStatus === 'TRIGGERED') {
+      exitPrice  = await extractAlgoExitPrice(binanceSvc, pos.symbol, slOrderData, pos.stopLossPrice);
+      exitReason = 'stopLoss';
+      await binanceSvc.cancelAlgoOrder(Number(pos.tpOrderId)).catch(() => {});
+    }
 
     await recordClose(userId, pos.id, exitPrice, exitReason, broadcast);
   }
