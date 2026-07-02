@@ -184,6 +184,17 @@ export class BinanceService {
     }
   }
 
+  // 선물 전용 상장 코인은 스팟에 존재하지 않아 getKlinesSince(스팟)로는 캔들을 못 가져옴 — 포지션 모니터링(그리드/SL/TP 소급 감지)은 반드시 선물 캔들 사용
+  async getFuturesKlinesSince(symbol: string, interval: string, startTime: number): Promise<Kline[]> {
+    const { data } = await this.futuresClient.get('/fapi/v1/klines', {
+      params: { symbol, interval, startTime, limit: 1500 }
+    });
+    return data.map((k: any[]) => ({
+      openTime: k[0], open: +k[1], high: +k[2], low: +k[3],
+      close: +k[4], volume: +k[5], closeTime: k[6]
+    }));
+  }
+
   async get24hrTickers(): Promise<any[]> {
     const { data } = await this.spotClient.get('/api/v3/ticker/24hr');
     return data;

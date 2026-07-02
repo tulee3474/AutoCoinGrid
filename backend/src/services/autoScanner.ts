@@ -94,7 +94,8 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
           ...wallet.openPositions.filter(p => p.symbol === sym).map(p => p.openedAt.getTime())
         );
         try {
-          klinesBySymbol.set(sym, await binance.getKlinesSince(sym, '1h', oldestMs));
+          // 선물 전용 상장 코인은 스팟 캔들이 없어 소급 감지가 통째로 비었던 문제 — 선물 캔들로 통일
+          klinesBySymbol.set(sym, await binance.getFuturesKlinesSince(sym, '1h', oldestMs));
         } catch { klinesBySymbol.set(sym, []); }
       }
 

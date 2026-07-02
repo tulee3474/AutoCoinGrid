@@ -171,8 +171,12 @@ async function recordClose(
   const pos = await prisma.livePosition.findUnique({ where: { id: posId } });
   if (!pos) return null;
 
-  const pnlPct  = ((pos.entryPrice - exitPrice) / pos.entryPrice) * 100 * pos.leverage;
-  const pnlUsdt = pos.entryAmountUsdt * pnlPct / 100;
+  // 그리드 추가진입이 있으면 avgEntryPrice/totalEntryUsdt 기준으로 PnL 계산 (가상거래 closePaperPosition과 동일)
+  const avgEntry  = pos.avgEntryPrice  > 0 ? pos.avgEntryPrice  : pos.entryPrice;
+  const totalUsdt = pos.totalEntryUsdt > 0 ? pos.totalEntryUsdt : pos.entryAmountUsdt;
+
+  const pnlPct  = ((avgEntry - exitPrice) / avgEntry) * 100 * pos.leverage;
+  const pnlUsdt = totalUsdt * pnlPct / 100;
 
   const [log] = await prisma.$transaction([
     prisma.liveTradeLog.create({
@@ -566,12 +570,18 @@ async function fillLiveGrids(userId: string, broadcast: (data: unknown) => void)
       const gridQty = parseFloat((pos.entryAmountUsdt * pos.leverage / gp).toFixed(qtyPrec));
 
       try {
-        await binanceSvc.placeOrder({
+        let order = await binanceSvc.placeOrder({
           symbol: pos.symbol, side: 'SELL', type: 'MARKET',
           quantity: gridQty.toString(),
           ...(isHedge ? { positionSide: 'SHORT' } : {})
         });
-        newAvgEntry  = (newAvgEntry * newTotalUsdt + gp * pos.entryAmountUsdt) / (newTotalUsdt + pos.entryAmountUsdt);
+        // MARKET 주문은 목표가(gp)와 실제 체결가가 다를 수 있어(특히 급등 구간) 실제 체결가로 평균단가 계산
+        for (let r = 0; r < 5 && order.status !== 'FILLED'; r++) {
+          await new Promise(res => setTimeout(res, 200));
+          try { order = await binanceSvc.getOrder(pos.symbol, order.orderId); } catch { break; }
+        }
+        const actualGridPrice = extractFillPrice(order, gp);
+        newAvgEntry  = (newAvgEntry * newTotalUsdt + actualGridPrice * pos.entryAmountUsdt) / (newTotalUsdt + pos.entryAmountUsdt);
         newTotalUsdt += pos.entryAmountUsdt;
         actualFilled++;
       } catch (e: any) {
