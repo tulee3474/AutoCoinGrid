@@ -309,6 +309,21 @@ export async function openLivePosition(
   const existing = await prisma.livePosition.findFirst({ where: { userId, symbol } });
   if (existing) return null;
 
+  if (trade.reEntryCooldownHours) {
+    const cooldownMs = trade.reEntryCooldownHours * 3_600_000;
+    const lastClose = await prisma.liveTradeLog.findFirst({
+      where:   { userId, symbol },
+      orderBy: { exitTime: 'desc' }
+    });
+    if (lastClose) {
+      const remainingMs = cooldownMs - (Date.now() - lastClose.exitTime.getTime());
+      if (remainingMs > 0) {
+        addLog(userId, `⏳ 재진입 쿨다운 ${symbol}: ${(remainingMs / 3_600_000).toFixed(1)}h 남음 (최근 청산: ${lastClose.exitReason})`);
+        return null;
+      }
+    }
+  }
+
   const binanceSvc = await getUserBinance(userId);
 
   // 잔액 사전 확인 (부족 시 주문 없이 조기 종료)

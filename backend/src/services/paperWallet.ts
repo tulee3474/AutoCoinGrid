@@ -26,6 +26,16 @@ export async function openPaperPosition(
   if (wallet.openPositions.find(p => p.symbol === symbol)) return null;
   if (wallet.balance < trade.entryAmountUsdt) return null;
 
+  if (trade.reEntryCooldownHours) {
+    const lastLog = await prisma.paperTradeLog.findFirst({
+      where:   { walletId: wallet.id, symbol },
+      orderBy: { exitTime: 'desc' }
+    });
+    if (lastLog && Date.now() - lastLog.exitTime.getTime() < trade.reEntryCooldownHours * 3_600_000) {
+      return null;
+    }
+  }
+
   const gridEnabled = trade.gridEnabled !== false;
   const takeProfitPrice = entryPrice * (1 - trade.takeProfitPct / 100);
   const stopLossPrice = gridEnabled

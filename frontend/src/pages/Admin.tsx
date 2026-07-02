@@ -175,6 +175,7 @@ function UserDetailPanel({ detail }: { detail: UserDetail }) {
                           <div><span className="text-gray-600">익절 </span><span className="text-gray-300">-{t?.takeProfitPct}% 하락시</span></div>
                           <div><span className="text-gray-600">최대 보유 </span><span className="text-gray-300">{t?.maxDurationHours != null ? `${t.maxDurationHours}시간` : '제한 없음'}</span></div>
                           <div><span className="text-gray-600">RSI 반전 청산 </span><span className="text-gray-300">{t?.rsiExitThreshold != null ? `RSI ${t.rsiExitThreshold} 미만` : '비활성'}</span></div>
+                          <div><span className="text-gray-600">재진입 쿨다운 </span><span className="text-gray-300">{t?.reEntryCooldownHours != null ? `${t.reEntryCooldownHours}시간` : '비활성'}</span></div>
                         </div>
                       </div>
                       <div>
@@ -338,6 +339,7 @@ function PresetForm({
     ...initial.trade,
     rsiExitThreshold: initial.trade.rsiExitThreshold !== undefined ? initial.trade.rsiExitThreshold : null,
     maxDurationHours:  initial.trade.maxDurationHours  !== undefined ? initial.trade.maxDurationHours  : null,
+    reEntryCooldownHours: initial.trade.reEntryCooldownHours !== undefined ? initial.trade.reEntryCooldownHours : null,
   });
 
   const sc = (patch: Partial<StrategyConditions>) => setC(prev => ({ ...prev, ...patch }));
@@ -468,6 +470,20 @@ function PresetForm({
               )}
               {t.rsiExitThreshold != null && <span className="text-xs text-gray-500 flex-shrink-0">미만시</span>}
               {t.rsiExitThreshold == null && <span className="text-xs text-gray-500">비활성</span>}
+            </div>
+          </F>
+          <F label="재진입 쿨다운">
+            <div className="flex items-center gap-1">
+              <input type="checkbox" checked={t.reEntryCooldownHours != null}
+                onChange={e => st({ reEntryCooldownHours: e.target.checked ? 4 : null })}
+                className="w-4 h-4 accent-accent flex-shrink-0" />
+              {t.reEntryCooldownHours != null && (
+                <input type="number" value={t.reEntryCooldownHours}
+                  onChange={e => st({ reEntryCooldownHours: +e.target.value })}
+                  className="w-full bg-surface border border-border rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-accent" />
+              )}
+              {t.reEntryCooldownHours != null && <span className="text-xs text-gray-500 flex-shrink-0">시간</span>}
+              {t.reEntryCooldownHours == null && <span className="text-xs text-gray-500">비활성</span>}
             </div>
           </F>
         </div>

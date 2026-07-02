@@ -169,7 +169,12 @@ export function runBacktest(
         );
         const exitKlineIdx = klines.findIndex(k => k.openTime >= tradeSim.exitTime);
         // exitKlineIdx가 -1이면 거래가 데이터 끝까지 갔다는 뜻 → 루프 종료
-        i = exitKlineIdx > 0 ? exitKlineIdx : klines.length;
+        let nextIdx = exitKlineIdx > 0 ? exitKlineIdx : klines.length;
+        // reEntryCooldownHours: 청산 직후 캔들 수만큼 재진입 스캔 스킵 (실거래/가상거래 쿨다운과 동일하게 반영)
+        if (trade.reEntryCooldownHours) {
+          nextIdx += Math.round(trade.reEntryCooldownHours * 60 / (MINS_PER_CANDLE[interval] ?? 60));
+        }
+        i = nextIdx;
         continue;
       }
     }

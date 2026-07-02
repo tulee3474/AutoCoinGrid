@@ -766,6 +766,25 @@ export default function Strategy() {
           )}
         </div>
 
+        {/* 재진입 쿨다운 (선택) */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-3">
+            <input type="checkbox" id="useReEntryCooldown" className="w-4 h-4 accent-accent"
+              checked={draftTrade.reEntryCooldownHours != null}
+              onChange={e => setDraftTrade({ reEntryCooldownHours: e.target.checked ? 4 : null })} />
+            <label htmlFor="useReEntryCooldown" className="text-sm text-gray-300 cursor-pointer">
+              청산 후 재진입 쿨다운 <span className="text-gray-500 text-xs">(급등 지속 시 동일 코인 반복 진입 방지)</span>
+            </label>
+          </div>
+          {draftTrade.reEntryCooldownHours != null && (
+            <div className="ml-7">
+              <NumberInput label="" value={draftTrade.reEntryCooldownHours}
+                onChange={v => setDraftTrade({ reEntryCooldownHours: v })} min={1} max={168} unit="시간 동안 재진입 금지"
+                fieldId="reentry-cooldown" emptyTracker={emptyFields} />
+            </div>
+          )}
+        </div>
+
         <div className="p-3 bg-surface rounded-lg text-xs text-gray-400 space-y-1">
           {draftTrade.gridEnabled !== false ? (
             <>
