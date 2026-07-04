@@ -66,6 +66,11 @@ async function getUserBinance(userId: string): Promise<BinanceService> {
   }
 }
 
+// ── 그리드 실패 재시도 쿨다운 (마진 부족 등으로 실패 시 15초마다 재시도/로그 스팸 방지) ──
+
+const GRID_RETRY_COOLDOWN_MS = 5 * 60_000;
+const gridFailureCooldown = new Map<string, number>();  // `${userId}:${posId}` -> 마지막 실패 시각
+
 // ── 헤지 모드 감지 헬퍼 ──────────────────────────────────────
 
 const hedgeModeCache = new Map<string, boolean>();
@@ -191,6 +196,8 @@ async function recordClose(
     }),
     prisma.livePosition.delete({ where: { id: posId } })
   ]);
+
+  gridFailureCooldown.delete(`${userId}:${posId}`);
 
   const emoji = exitReason === 'takeProfit' ? '✅' : exitReason === 'stopLoss' ? '❌' : '⏰';
   addLog(userId,
@@ -551,16 +558,25 @@ async function fillLiveGrids(userId: string, broadcast: (data: unknown) => void)
   if (gridPositions.length === 0) return;
 
   const binanceSvc = await getUserBinance(userId);
-  const binancePos = await binanceSvc.getPositions();
-  const priceMap   = new Map<string, number>(
+  const [binancePos, isHedge, exchInfo, accountInfo] = await Promise.all([
+    binanceSvc.getPositions(),
+    getHedgeMode(userId, binanceSvc),
+    binanceSvc.getFuturesExchangeInfo(),
+    binanceSvc.getAccountInfo()
+  ]);
+  const priceMap = new Map<string, number>(
     (binancePos as any[]).map(p => [p.symbol, parseFloat(p.markPrice)])
   );
-  const isHedge  = await getHedgeMode(userId, binanceSvc);
-  const exchInfo = await binanceSvc.getFuturesExchangeInfo();
+  // 같은 사이클 내 여러 포지션/그리드가 순차로 마진을 소비하므로 실제 체결마다 차감해가며 추적
+  let availableBalance = parseFloat(accountInfo.availableBalance ?? '0');
 
   for (const pos of gridPositions) {
     const price = priceMap.get(pos.symbol);
     if (!price) continue;
+
+    const gridKey  = `${userId}:${pos.id}`;
+    const lastFail = gridFailureCooldown.get(gridKey);
+    if (lastFail && Date.now() - lastFail < GRID_RETRY_COOLDOWN_MS) continue;
 
     const gridPrices        = pos.gridPrices as number[];
     const currentGridsFilled = pos.gridsFilled;
@@ -584,6 +600,16 @@ async function fillLiveGrids(userId: string, broadcast: (data: unknown) => void)
       const gp      = gridPrices[currentGridsFilled + i];
       const gridQty = parseFloat((pos.entryAmountUsdt * pos.leverage / gp).toFixed(qtyPrec));
 
+      // 마진 부족이 뻔한 주문을 매 15초 Binance에 반복 제출하지 않도록 사전 체크
+      if (availableBalance < pos.entryAmountUsdt) {
+        addLog(userId,
+          `💰 마진 부족으로 그리드 보류 ${pos.symbol} ${currentGridsFilled + i + 1}차: 가용 $${availableBalance.toFixed(2)} < 필요 $${pos.entryAmountUsdt} — ${GRID_RETRY_COOLDOWN_MS / 60_000}분 후 재시도`,
+          'error'
+        );
+        gridFailureCooldown.set(gridKey, Date.now());
+        break;
+      }
+
       try {
         let order = await binanceSvc.placeOrder({
           symbol: pos.symbol, side: 'SELL', type: 'MARKET',
@@ -599,8 +625,10 @@ async function fillLiveGrids(userId: string, broadcast: (data: unknown) => void)
         newAvgEntry  = (newAvgEntry * newTotalUsdt + actualGridPrice * pos.entryAmountUsdt) / (newTotalUsdt + pos.entryAmountUsdt);
         newTotalUsdt += pos.entryAmountUsdt;
         actualFilled++;
+        availableBalance -= pos.entryAmountUsdt;
       } catch (e: any) {
         addLog(userId, `그리드 주문 실패 ${pos.symbol} ${currentGridsFilled + i + 1}차: ${e.response?.data?.msg ?? e.message}`, 'error');
+        gridFailureCooldown.set(gridKey, Date.now());
         break;
       }
     }
