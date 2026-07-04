@@ -151,5 +151,5 @@ export const DEFAULT_TRADE: TradeConfig = {
   stopLossPct: 60,
   maxDurationHours: null,
   rsiExitThreshold: 40,
-  reEntryCooldownHours: 4
+  reEntryCooldownHours: 24
 };

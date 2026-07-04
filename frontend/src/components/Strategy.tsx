@@ -771,7 +771,7 @@ export default function Strategy() {
           <div className="flex items-center gap-3">
             <input type="checkbox" id="useReEntryCooldown" className="w-4 h-4 accent-accent"
               checked={draftTrade.reEntryCooldownHours != null}
-              onChange={e => setDraftTrade({ reEntryCooldownHours: e.target.checked ? 4 : null })} />
+              onChange={e => setDraftTrade({ reEntryCooldownHours: e.target.checked ? 24 : null })} />
             <label htmlFor="useReEntryCooldown" className="text-sm text-gray-300 cursor-pointer">
               청산 후 재진입 쿨다운 <span className="text-gray-500 text-xs">(급등 지속 시 동일 코인 반복 진입 방지)</span>
             </label>

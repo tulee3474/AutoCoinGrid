@@ -475,7 +475,7 @@ function PresetForm({
           <F label="재진입 쿨다운">
             <div className="flex items-center gap-1">
               <input type="checkbox" checked={t.reEntryCooldownHours != null}
-                onChange={e => st({ reEntryCooldownHours: e.target.checked ? 4 : null })}
+                onChange={e => st({ reEntryCooldownHours: e.target.checked ? 24 : null })}
                 className="w-4 h-4 accent-accent flex-shrink-0" />
               {t.reEntryCooldownHours != null && (
                 <input type="number" value={t.reEntryCooldownHours}
