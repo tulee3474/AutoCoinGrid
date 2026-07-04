@@ -785,6 +785,25 @@ export default function Strategy() {
           )}
         </div>
 
+        {/* 그리드 RSI 과열 포기 (선택) */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-3">
+            <input type="checkbox" id="useGridRsiSkip" className="w-4 h-4 accent-accent"
+              checked={draftTrade.gridRsiSkipThreshold != null}
+              onChange={e => setDraftTrade({ gridRsiSkipThreshold: e.target.checked ? 90 : null })} />
+            <label htmlFor="useGridRsiSkip" className="text-sm text-gray-300 cursor-pointer">
+              그리드 체결 시 RSI 과열이면 포기 <span className="text-gray-500 text-xs">(과열 지속 시 물타기 대신 즉시 전체청산)</span>
+            </label>
+          </div>
+          {draftTrade.gridRsiSkipThreshold != null && (
+            <div className="ml-7">
+              <NumberInput label="" value={draftTrade.gridRsiSkipThreshold}
+                onChange={v => setDraftTrade({ gridRsiSkipThreshold: v })} min={50} max={99} unit="RSI 이상이면 포기"
+                fieldId="grid-rsi-skip" emptyTracker={emptyFields} />
+            </div>
+          )}
+        </div>
+
         <div className="p-3 bg-surface rounded-lg text-xs text-gray-400 space-y-1">
           {draftTrade.gridEnabled !== false ? (
             <>

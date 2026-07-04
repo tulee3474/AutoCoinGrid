@@ -79,7 +79,7 @@ export async function closePaperPosition(
   userId: string,
   positionId: string,
   exitPrice: number,
-  exitReason: 'takeProfit' | 'stopLoss' | 'timeout' | 'manual' | 'signalReversal'
+  exitReason: 'takeProfit' | 'stopLoss' | 'timeout' | 'manual' | 'signalReversal' | 'rsiOverheat'
 ) {
   const wallet = await getOrCreateWallet(userId);
   const pos    = wallet.openPositions.find(p => p.id === positionId);

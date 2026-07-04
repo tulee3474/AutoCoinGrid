@@ -1,5 +1,6 @@
 import { BinanceService, binance } from './binance';
 import { scanMarket } from './scanner';
+import { computeIndicators } from './indicator';
 import { StrategyConfig, StrategyConditions, TradeConfig } from '../types';
 import prisma from '../lib/prisma';
 import { decrypt } from '../lib/crypto';
@@ -164,13 +165,33 @@ async function loadStrategies(userId: string): Promise<StrategyConfig[]> {
   }));
 }
 
+// ── RSI 조회 헬퍼 (1h 기준, getFuturesKlines 캐시 공유) ────────
+
+async function fetchRsi14(symbol: string): Promise<number | null> {
+  try {
+    const klines = await binance.getFuturesKlines(symbol, '1h', 60);
+    if (klines.length < 20) return null;
+    return computeIndicators(klines, '1h').rsi14;
+  } catch {
+    return null;
+  }
+}
+
+// 포지션의 strategyName 기준으로 gridRsiSkipThreshold 조회 — 전략이 이후 비활성화돼도
+// 이미 열린 포지션의 안전장치(RSI 과열 시 그리드 포기)는 그대로 유지되도록 enabled 필터 없이 조회
+async function getGridSkipThresholds(userId: string, strategyNames: string[]): Promise<Map<string, number | null>> {
+  if (strategyNames.length === 0) return new Map();
+  const rows = await prisma.strategy.findMany({ where: { userId, name: { in: strategyNames } } });
+  return new Map(rows.map(r => [r.name, (r.trade as any)?.gridRsiSkipThreshold ?? null]));
+}
+
 // ── 청산 기록 ─────────────────────────────────────────────────
 
 async function recordClose(
   userId: string,
   posId: string,
   exitPrice: number,
-  exitReason: 'takeProfit' | 'stopLoss' | 'timeout' | 'manual',
+  exitReason: 'takeProfit' | 'stopLoss' | 'timeout' | 'manual' | 'rsiOverheat',
   broadcast: (data: unknown) => void
 ) {
   const pos = await prisma.livePosition.findUnique({ where: { id: posId } });
@@ -199,7 +220,8 @@ async function recordClose(
 
   gridFailureCooldown.delete(`${userId}:${posId}`);
 
-  const emoji = exitReason === 'takeProfit' ? '✅' : exitReason === 'stopLoss' ? '❌' : '⏰';
+  const emoji = exitReason === 'takeProfit' ? '✅' : exitReason === 'stopLoss' ? '❌'
+    : exitReason === 'rsiOverheat' ? '🔥' : '⏰';
   addLog(userId,
     `${emoji} [청산] ${pos.symbol} (${exitReason}) ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}% | $${pnlUsdt.toFixed(2)}`,
     'close'
@@ -569,6 +591,7 @@ async function fillLiveGrids(userId: string, broadcast: (data: unknown) => void)
   );
   // 같은 사이클 내 여러 포지션/그리드가 순차로 마진을 소비하므로 실제 체결마다 차감해가며 추적
   let availableBalance = parseFloat(accountInfo.availableBalance ?? '0');
+  const gridSkipMap = await getGridSkipThresholds(userId, [...new Set(gridPositions.map(p => p.strategyName))]);
 
   for (const pos of gridPositions) {
     const price = priceMap.get(pos.symbol);
@@ -588,6 +611,32 @@ async function fillLiveGrids(userId: string, broadcast: (data: unknown) => void)
       else break;
     }
     if (gridsToFill === 0) continue;
+
+    // 1100%/500%급 급등처럼 그리드를 계속 태우면 크게 잃는 상황 방지 —
+    // 이번 그리드 체결 시점 RSI가 임계값 이상이면 추가진입 포기하고 즉시 전체 청산 (가상거래와 동일 로직)
+    const gridSkipThreshold = gridSkipMap.get(pos.strategyName) ?? null;
+    if (gridSkipThreshold !== null) {
+      const rsi14 = await fetchRsi14(pos.symbol);
+      if (rsi14 !== null && rsi14 >= gridSkipThreshold) {
+        addLog(userId, `🔥 RSI 과열(${rsi14.toFixed(1)}) 감지 ${pos.symbol} — 그리드 포기 + 즉시 전체청산`, 'info');
+        try {
+          await binanceSvc.cancelAllOrders(pos.symbol);
+          await binanceSvc.cancelAllAlgoOrders(pos.symbol).catch(() => {});
+          const binPosMatch = (binancePos as any[]).find((p: any) => p.symbol === pos.symbol);
+          let exitPriceFinal = price;
+          if (binPosMatch) {
+            exitPriceFinal = await placeCloseOrderAndGetExitPrice(
+              binanceSvc, pos.symbol, pos.side as 'SHORT' | 'LONG',
+              Math.abs(parseFloat(binPosMatch.positionAmt)).toString(), isHedge, price
+            );
+          }
+          await recordClose(userId, pos.id, exitPriceFinal, 'rsiOverheat', broadcast);
+        } catch (e: any) {
+          addLog(userId, `RSI 과열 청산 오류 ${pos.symbol}: ${e.message}`, 'error');
+        }
+        continue;
+      }
+    }
 
     const symbolInfo = (exchInfo.symbols as any[]).find((s: any) => s.symbol === pos.symbol);
     const qtyPrec    = symbolInfo?.quantityPrecision ?? 2;

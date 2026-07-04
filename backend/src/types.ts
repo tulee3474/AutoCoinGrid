@@ -32,6 +32,7 @@ export interface TradeConfig {
   maxDurationHours: number | null;  // null = 타임아웃 없음
   rsiExitThreshold: number | null;  // null = 비활성, 숫자 = RSI가 이 값 미만이면 조기 청산
   reEntryCooldownHours?: number | null;  // null/0/미설정 = 비활성, 숫자 = 청산 후 해당 심볼 재진입 금지 시간
+  gridRsiSkipThreshold?: number | null;  // null/미설정 = 비활성, 숫자 = 그리드 체결 시점 RSI가 이 값 이상이면 그리드 포기 + 즉시 전체 청산
 }
 
 export interface StrategyConfig {

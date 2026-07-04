@@ -64,6 +64,18 @@ async function loadStrategies(userId: string): Promise<StrategyConfig[]> {
   }));
 }
 
+// ── RSI 조회 헬퍼 (1h 기준, getFuturesKlines 캐시 공유) ────────
+
+async function fetchRsi14(symbol: string): Promise<number | null> {
+  try {
+    const klines = await binance.getFuturesKlines(symbol, '1h', 60);
+    if (klines.length < 20) return null;
+    return computeIndicators(klines, '1h').rsi14;
+  } catch {
+    return null;
+  }
+}
+
 // ── 스캔 사이클 ───────────────────────────────────────────────
 
 async function runScanCycle(userId: string, broadcast: (data: unknown) => void) {
@@ -78,6 +90,10 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
   // 전략명 → rsiExitThreshold 맵 (포지션별 임계값 조회용)
   const strategyThresholdMap = new Map<string, number | null>(
     strategies.map(s => [s.name, s.trade.rsiExitThreshold ?? null])
+  );
+  // 전략명 → gridRsiSkipThreshold 맵 (그리드 체결 시점 RSI 과열 판단용)
+  const strategyGridSkipMap = new Map<string, number | null>(
+    strategies.map(s => [s.name, s.trade.gridRsiSkipThreshold ?? null])
   );
 
   if (wallet.openPositions.length > 0) {
@@ -107,7 +123,10 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
         const posKlines = (klinesBySymbol.get(pos.symbol) ?? [])
           .filter(k => k.openTime >= pos.openedAt.getTime());
 
-        // ── 그리드 추가진입 체크 ──────────────────────────────────
+        let exitReason: 'takeProfit' | 'stopLoss' | 'timeout' | 'signalReversal' | 'rsiOverheat' | null = null;
+        let exitPrice = price;
+
+        // ── 그리드 추가진입 체크 (RSI 과열 시 그리드 포기 + 즉시 전체 청산) ──
         const gridPrices = Array.isArray(pos.gridPrices) ? (pos.gridPrices as number[]) : [];
         const currentGridsFilled = pos.gridsFilled;
 
@@ -122,44 +141,56 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
           }
 
           if (gridsToFill > 0) {
-            const freshWallet = await getOrCreateWallet(userId);
-            const cost = pos.entryAmountUsdt * gridsToFill;
-            if (freshWallet.balance >= cost) {
-              let newAvgEntry = pos.avgEntryPrice > 0 ? pos.avgEntryPrice : pos.entryPrice;
-              let newTotalUsdt = pos.totalEntryUsdt > 0 ? pos.totalEntryUsdt : pos.entryAmountUsdt;
+            // 1100%/500%급 급등처럼 그리드를 계속 태우면 크게 잃는 상황 방지 —
+            // 이번 그리드 체결 시점 RSI가 임계값 이상이면 추가진입 포기하고 즉시 전체 청산
+            const gridSkipThreshold = strategyGridSkipMap.get(pos.strategyName) ?? null;
+            let overheatRsi: number | null = null;
+            if (gridSkipThreshold !== null) {
+              const rsi14 = await fetchRsi14(pos.symbol);
+              if (rsi14 !== null && rsi14 >= gridSkipThreshold) overheatRsi = rsi14;
+            }
 
-              for (let i = 0; i < gridsToFill; i++) {
-                const gp = gridPrices[currentGridsFilled + i];
-                newAvgEntry = (newAvgEntry * newTotalUsdt + gp * pos.entryAmountUsdt) / (newTotalUsdt + pos.entryAmountUsdt);
-                newTotalUsdt += pos.entryAmountUsdt;
+            if (overheatRsi !== null) {
+              exitReason = 'rsiOverheat';
+              exitPrice  = price;
+              addLog(userId, `🔥 RSI 과열(${overheatRsi.toFixed(1)}) 감지 ${pos.symbol} — 그리드 포기 + 즉시 전체청산`, 'info');
+            } else {
+              const freshWallet = await getOrCreateWallet(userId);
+              const cost = pos.entryAmountUsdt * gridsToFill;
+              if (freshWallet.balance >= cost) {
+                let newAvgEntry = pos.avgEntryPrice > 0 ? pos.avgEntryPrice : pos.entryPrice;
+                let newTotalUsdt = pos.totalEntryUsdt > 0 ? pos.totalEntryUsdt : pos.entryAmountUsdt;
+
+                for (let i = 0; i < gridsToFill; i++) {
+                  const gp = gridPrices[currentGridsFilled + i];
+                  newAvgEntry = (newAvgEntry * newTotalUsdt + gp * pos.entryAmountUsdt) / (newTotalUsdt + pos.entryAmountUsdt);
+                  newTotalUsdt += pos.entryAmountUsdt;
+                }
+
+                const newGridsFilled = currentGridsFilled + gridsToFill;
+                await prisma.$transaction([
+                  prisma.paperWallet.update({
+                    where: { id: freshWallet.id },
+                    data:  { balance: freshWallet.balance - cost }
+                  }),
+                  prisma.paperPosition.update({
+                    where: { id: pos.id },
+                    data:  { gridsFilled: newGridsFilled, avgEntryPrice: newAvgEntry, totalEntryUsdt: newTotalUsdt }
+                  })
+                ]);
+
+                addLog(userId,
+                  `📈 [그리드] ${pos.symbol} ${newGridsFilled}차 추가진입 | 평균진입가: $${newAvgEntry.toPrecision(5)}`,
+                  'signal'
+                );
+                broadcast({ type: 'paper_grid_fill', data: { symbol: pos.symbol, gridsFilled: newGridsFilled, avgEntryPrice: newAvgEntry } });
               }
-
-              const newGridsFilled = currentGridsFilled + gridsToFill;
-              await prisma.$transaction([
-                prisma.paperWallet.update({
-                  where: { id: freshWallet.id },
-                  data:  { balance: freshWallet.balance - cost }
-                }),
-                prisma.paperPosition.update({
-                  where: { id: pos.id },
-                  data:  { gridsFilled: newGridsFilled, avgEntryPrice: newAvgEntry, totalEntryUsdt: newTotalUsdt }
-                })
-              ]);
-
-              addLog(userId,
-                `📈 [그리드] ${pos.symbol} ${newGridsFilled}차 추가진입 | 평균진입가: $${newAvgEntry.toPrecision(5)}`,
-                'signal'
-              );
-              broadcast({ type: 'paper_grid_fill', data: { symbol: pos.symbol, gridsFilled: newGridsFilled, avgEntryPrice: newAvgEntry } });
             }
           }
         }
 
         // ── TP / SL / 타임아웃 체크 ──────────────────────────────
-        let exitReason: 'takeProfit' | 'stopLoss' | 'timeout' | 'signalReversal' | null = null;
-        let exitPrice = price;
-
-        if (Date.now() >= pos.expiresAt.getTime()) {
+        if (!exitReason && Date.now() >= pos.expiresAt.getTime()) {
           exitReason = 'timeout';
         }
 
@@ -179,22 +210,18 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
         // RSI 반전 신호: 전략의 rsiExitThreshold 미만이면 숏 조기 청산
         const rsiThreshold = strategyThresholdMap.get(pos.strategyName) ?? null;
         if (!exitReason && rsiThreshold !== null) {
-          try {
-            const klines = await binance.getFuturesKlines(pos.symbol, '1h', 60);
-            if (klines.length >= 20) {
-              const ind = computeIndicators(klines, '1h');
-              if (ind.rsi14 < rsiThreshold) {
-                exitReason = 'signalReversal';
-                exitPrice  = price;
-              }
-            }
-          } catch { /* 개별 실패 무시 */ }
+          const rsi14 = await fetchRsi14(pos.symbol);
+          if (rsi14 !== null && rsi14 < rsiThreshold) {
+            exitReason = 'signalReversal';
+            exitPrice  = price;
+          }
         }
 
         if (exitReason) {
           const log = await closePaperPosition(userId, pos.id, exitPrice, exitReason as any);
           if (log) {
-            const emoji = exitReason === 'takeProfit' ? '✅' : exitReason === 'stopLoss' ? '❌' : exitReason === 'signalReversal' ? '🔄' : '⏰';
+            const emoji = exitReason === 'takeProfit' ? '✅' : exitReason === 'stopLoss' ? '❌'
+              : exitReason === 'signalReversal' ? '🔄' : exitReason === 'rsiOverheat' ? '🔥' : '⏰';
             addLog(userId,
               `${emoji} [청산] ${pos.symbol} (${exitReason}) ${log.pnlPct >= 0 ? '+' : ''}${log.pnlPct.toFixed(2)}% | $${log.pnlUsdt.toFixed(2)}`,
               'close'
