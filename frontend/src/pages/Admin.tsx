@@ -460,7 +460,7 @@ function PresetForm({
               {t.maxDurationHours === null && <span className="text-xs text-gray-500">타임아웃 없음</span>}
             </div>
           </F>
-          <F label="RSI 반전 청산">
+          <F label="RSI 반전 청산 (적당선 익절)">
             <div className="flex items-center gap-1">
               <input type="checkbox" checked={t.rsiExitThreshold != null}
                 onChange={e => st({ rsiExitThreshold: e.target.checked ? 40 : null })}
@@ -488,7 +488,7 @@ function PresetForm({
               {t.reEntryCooldownHours == null && <span className="text-xs text-gray-500">비활성</span>}
             </div>
           </F>
-          <F label="그리드 RSI 과열 포기">
+          <F label="그리드 RSI 과열 포기 (큰 손실 방지)">
             <div className="flex items-center gap-1">
               <input type="checkbox" checked={t.gridRsiSkipThreshold != null}
                 onChange={e => st({ gridRsiSkipThreshold: e.target.checked ? 90 : null })}

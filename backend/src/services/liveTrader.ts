@@ -185,13 +185,20 @@ async function getGridSkipThresholds(userId: string, strategyNames: string[]): P
   return new Map(rows.map(r => [r.name, (r.trade as any)?.gridRsiSkipThreshold ?? null]));
 }
 
+// 포지션의 strategyName 기준으로 rsiExitThreshold 조회 (동일하게 enabled 필터 없이 조회)
+async function getRsiExitThresholds(userId: string, strategyNames: string[]): Promise<Map<string, number | null>> {
+  if (strategyNames.length === 0) return new Map();
+  const rows = await prisma.strategy.findMany({ where: { userId, name: { in: strategyNames } } });
+  return new Map(rows.map(r => [r.name, (r.trade as any)?.rsiExitThreshold ?? null]));
+}
+
 // ── 청산 기록 ─────────────────────────────────────────────────
 
 async function recordClose(
   userId: string,
   posId: string,
   exitPrice: number,
-  exitReason: 'takeProfit' | 'stopLoss' | 'timeout' | 'manual' | 'rsiOverheat',
+  exitReason: 'takeProfit' | 'stopLoss' | 'timeout' | 'manual' | 'rsiOverheat' | 'signalReversal',
   broadcast: (data: unknown) => void
 ) {
   const pos = await prisma.livePosition.findUnique({ where: { id: posId } });
@@ -221,7 +228,7 @@ async function recordClose(
   gridFailureCooldown.delete(`${userId}:${posId}`);
 
   const emoji = exitReason === 'takeProfit' ? '✅' : exitReason === 'stopLoss' ? '❌'
-    : exitReason === 'rsiOverheat' ? '🔥' : '⏰';
+    : exitReason === 'rsiOverheat' ? '🔥' : exitReason === 'signalReversal' ? '🔄' : '⏰';
   addLog(userId,
     `${emoji} [청산] ${pos.symbol} (${exitReason}) ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}% | $${pnlUsdt.toFixed(2)}`,
     'close'
@@ -321,6 +328,46 @@ async function closeTimedOut(userId: string, broadcast: (data: unknown) => void)
       }
     } catch (e: any) {
       addLog(userId, `타임아웃 청산 오류 ${pos.symbol}: ${e.message}`, 'error');
+    }
+  }
+}
+
+// ── RSI 반전 조기청산 (익절 확정, 가상거래와 동일 로직) ─────────
+
+async function closeOnRsiReversal(userId: string, broadcast: (data: unknown) => void) {
+  const positions = await prisma.livePosition.findMany({ where: { userId } });
+  if (positions.length === 0) return;
+
+  const thresholdMap = await getRsiExitThresholds(userId, [...new Set(positions.map(p => p.strategyName))]);
+  const candidates = positions.filter(p => (thresholdMap.get(p.strategyName) ?? null) !== null);
+  if (candidates.length === 0) return;
+
+  const binanceSvc       = await getUserBinance(userId);
+  const isHedge          = await getHedgeMode(userId, binanceSvc);
+  const binancePositions = await binanceSvc.getPositions();
+
+  for (const pos of candidates) {
+    const threshold = thresholdMap.get(pos.strategyName)!;
+    const rsi14 = await fetchRsi14(pos.symbol);
+    if (rsi14 === null || rsi14 >= threshold) continue;
+
+    try {
+      await binanceSvc.cancelAllOrders(pos.symbol);
+      await binanceSvc.cancelAllAlgoOrders(pos.symbol).catch(() => {});
+      const binPos = (binancePositions as any[]).find(p => p.symbol === pos.symbol && parseFloat(p.positionAmt) < 0);
+
+      if (binPos) {
+        const exitPrice = await placeCloseOrderAndGetExitPrice(
+          binanceSvc, pos.symbol, pos.side as 'SHORT' | 'LONG',
+          Math.abs(parseFloat(binPos.positionAmt)).toString(), isHedge,
+          parseFloat(binPos.markPrice)
+        );
+        await recordClose(userId, pos.id, exitPrice, 'signalReversal', broadcast);
+      } else {
+        await prisma.livePosition.delete({ where: { id: pos.id } });
+      }
+    } catch (e: any) {
+      addLog(userId, `RSI 반전 청산 오류 ${pos.symbol}: ${e.message}`, 'error');
     }
   }
 }
@@ -706,6 +753,7 @@ async function runSync(userId: string, broadcast: (data: unknown) => void) {
   try {
     await syncClosed(userId, broadcast);
     await fillLiveGrids(userId, broadcast);
+    await closeOnRsiReversal(userId, broadcast);
     await closeTimedOut(userId, broadcast);
 
     // 중지 예정: 포지션이 모두 닫혔으면 완전 중지
