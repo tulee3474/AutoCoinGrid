@@ -25,16 +25,24 @@ export async function scanMarket(
 
   // 1단계: 전체 티커에서 유동성 + 선물 가능 여부 1차 필터
   // spot이 아닌 선물 API 사용 (spot rate-limit/IP 차단과 분리된 별도 weight 한도)
-  const [tickers, futuresSymbols] = await Promise.all([
+  const [tickers, futuresSymbols, onboardDates] = await Promise.all([
     binance.getFutures24hrTickers(),
-    binance.getFuturesSymbols()
+    binance.getFuturesSymbols(),
+    binance.getFuturesOnboardDates()
   ]);
+
+  const minListingMs = conditions.minListingDays ? conditions.minListingDays * 86_400_000 : 0;
 
   const candidates = (tickers as any[])
     .filter(t => {
       if (!t.symbol.endsWith('USDT') || EXCLUDE.has(t.symbol)) return false;
       if (!futuresSymbols.has(t.symbol)) return false;              // 선물 거래 가능 코인만
       if (parseFloat(t.quoteVolume) <= 200_000) return false;       // 하루 $200K 이상 거래
+      // 상장 초기 코인 제외 (변동성 과도 — 상장 빔 방지)
+      if (minListingMs > 0) {
+        const onboardDate = onboardDates.get(t.symbol);
+        if (onboardDate && Date.now() - onboardDate < minListingMs) return false;
+      }
       // 24h 모드에서만 가격 변화율로 사전 필터 (1h/4h는 kline 단계에서 체크)
       if (priceChangeTf === '24h') {
         const ch = parseFloat(t.priceChangePercent);

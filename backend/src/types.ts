@@ -17,6 +17,7 @@ export interface StrategyConditions {
   priceAboveMa20: boolean;   // MA20 위 조건
   priceAboveBB: boolean;     // 볼린저 상단 돌파
   btcDominanceMax: number;   // 현재 비활성 (주석 처리)
+  minListingDays?: number | null;  // null/0/미설정 = 비활성, 숫자 = 선물 상장일 기준 이 일수 미만이면 제외
   // 하위 호환성 유지
   priceAboveMa200?: boolean;
 }

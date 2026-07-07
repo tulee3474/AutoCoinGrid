@@ -178,6 +178,7 @@ function UserDetailPanel({ detail }: { detail: UserDetail }) {
                           <div><span className="text-gray-600">MA20 위 </span><span className="text-gray-300">{c?.priceAboveMa20 ? '✓' : '✗'}</span></div>
                           <div><span className="text-gray-600">볼린저 상단 </span><span className="text-gray-300">{c?.priceAboveBB ? '✓' : '✗'}</span></div>
                           <div><span className="text-gray-600">BTC 도미넌스 </span><span className="text-gray-300">&lt;{c?.btcDominanceMax}%</span></div>
+                          <div><span className="text-gray-600">상장 초기 제외 </span><span className="text-gray-300">{c?.minListingDays != null ? `${c.minListingDays}일 미만` : '비활성'}</span></div>
                         </div>
                       </div>
                       <div>
@@ -355,6 +356,7 @@ function PresetForm({
     priceChangeTimeframe: (initial.conditions as any).priceChangeTimeframe ?? DEFAULT_CONDITIONS.priceChangeTimeframe,
     priceAboveMa7:        (initial.conditions as any).priceAboveMa7        ?? DEFAULT_CONDITIONS.priceAboveMa7,
     priceAboveMa20:       (initial.conditions as any).priceAboveMa20       ?? DEFAULT_CONDITIONS.priceAboveMa20,
+    minListingDays:       (initial.conditions as any).minListingDays !== undefined ? (initial.conditions as any).minListingDays : null,
   });
   const [t, setT] = useState<TradeConfig>({
     ...DEFAULT_TRADE,
@@ -440,6 +442,20 @@ function PresetForm({
                 onChange={e => sc({ priceAboveBB: e.target.checked })}
                 className="w-4 h-4 accent-accent" />
               <label htmlFor="bb-form" className="text-xs text-gray-300 cursor-pointer">사용</label>
+            </div>
+          </F>
+          <F label="상장 초기 코인 제외">
+            <div className="flex items-center gap-1">
+              <input type="checkbox" checked={c.minListingDays != null}
+                onChange={e => sc({ minListingDays: e.target.checked ? 30 : null })}
+                className="w-4 h-4 accent-accent flex-shrink-0" />
+              {c.minListingDays != null && (
+                <input type="number" value={c.minListingDays}
+                  onChange={e => sc({ minListingDays: +e.target.value })}
+                  className="w-full bg-surface border border-border rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-accent" />
+              )}
+              {c.minListingDays != null && <span className="text-xs text-gray-500 flex-shrink-0">일 미만 제외</span>}
+              {c.minListingDays == null && <span className="text-xs text-gray-500">비활성</span>}
             </div>
           </F>
         </div>

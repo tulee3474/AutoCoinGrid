@@ -65,13 +65,22 @@ router.post('/validate', async (req, res) => {
 
   try {
     // 전체 USDT 페어 조회 — 선물 전용 상장 코인(스캐너/실거래 대상)도 포함되도록 선물 API 사용
-    const tickers = await binance.getFutures24hrTickers();
+    const [tickers, onboardDates] = await Promise.all([
+      binance.getFutures24hrTickers(),
+      binance.getFuturesOnboardDates()
+    ]);
+    const minListingMs = conditions.minListingDays ? conditions.minListingDays * 86_400_000 : 0;
     const allAlt = (tickers as any[])
-      .filter(t =>
-        t.symbol.endsWith('USDT') &&
-        !EXCLUDE.has(t.symbol) &&
-        parseFloat(t.quoteVolume) > 200_000   // 최소 유동성 (하루 $200K 이상)
-      )
+      .filter(t => {
+        if (!t.symbol.endsWith('USDT') || EXCLUDE.has(t.symbol)) return false;
+        if (parseFloat(t.quoteVolume) <= 200_000) return false;   // 최소 유동성 (하루 $200K 이상)
+        // 실제 스캐너와 동일하게 상장 초기 코인 제외 — 반영 안 하면 승률 통계가 실거래와 어긋남
+        if (minListingMs > 0) {
+          const onboardDate = onboardDates.get(t.symbol);
+          if (onboardDate && Date.now() - onboardDate < minListingMs) return false;
+        }
+        return true;
+      })
       .map(t => t.symbol);
 
     // 배치 처리 (40개씩, Binance rate limit 보호)

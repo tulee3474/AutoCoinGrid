@@ -17,6 +17,8 @@ export class BinanceService {
   private futuresClient: AxiosInstance;
   private futuresSymbolsCache: Set<string> | null = null;
   private futuresSymbolsCachedAt = 0;
+  private futuresOnboardDatesCache: Map<string, number> | null = null;
+  private futuresOnboardDatesCachedAt = 0;
   private klinesCache = new Map<string, { data: Kline[]; ts: number }>();
   private static readonly KLINES_CACHE_TTL = 50_000; // 스캔 사이클(60s)보다 짧게 — 같은 사이클 내 전략/유저 간 중복 요청 방지
   private futuresTickersCache: { data: any[]; ts: number } | null = null;
@@ -237,6 +239,19 @@ export class BinanceService {
     );
     this.futuresSymbolsCachedAt = Date.now();
     return this.futuresSymbolsCache;
+  }
+
+  // 심볼 → 선물 상장일(onboardDate, ms) — 상장 N일 미만 코인 제외 필터용
+  async getFuturesOnboardDates(): Promise<Map<string, number>> {
+    if (this.futuresOnboardDatesCache && Date.now() - this.futuresOnboardDatesCachedAt < 3_600_000) {
+      return this.futuresOnboardDatesCache;
+    }
+    const info = await this.getFuturesExchangeInfo();
+    this.futuresOnboardDatesCache = new Map(
+      (info.symbols as any[]).map((s: any) => [s.symbol, s.onboardDate as number])
+    );
+    this.futuresOnboardDatesCachedAt = Date.now();
+    return this.futuresOnboardDatesCache;
   }
 
   async getFuturesPremiumIndex(): Promise<any[]> {

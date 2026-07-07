@@ -686,6 +686,23 @@ export default function Strategy() {
               볼린저 상단 돌파 코인만 <span className="text-gray-500 text-xs">(BB 20 상단 돌파 확인)</span>
             </label>
           </div>
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <input type="checkbox" id="minListingDays" className="w-4 h-4 accent-accent"
+                checked={draftConditions.minListingDays != null}
+                onChange={e => setDraftConditions({ minListingDays: e.target.checked ? 30 : null })} />
+              <label htmlFor="minListingDays" className="text-sm text-gray-300 cursor-pointer">
+                상장 초기 코인 제외 <span className="text-gray-500 text-xs">(상장 빔 변동성 회피 — 선물 상장일 기준)</span>
+              </label>
+            </div>
+            {draftConditions.minListingDays != null && (
+              <div className="ml-7">
+                <NumberInput label="" value={draftConditions.minListingDays}
+                  onChange={v => setDraftConditions({ minListingDays: v })} min={1} max={365} unit="일 미만 상장 코인 제외"
+                  fieldId="min-listing-days" emptyTracker={emptyFields} />
+              </div>
+            )}
+          </div>
           {/* BTC 도미넌스 조건 — 비활성 (나중에 추가 예정)
           <div className="flex items-center gap-3 opacity-40 pointer-events-none">
             <input type="checkbox" className="w-4 h-4" disabled />
