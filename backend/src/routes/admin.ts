@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import prisma from '../lib/prisma';
 import { requireAdmin } from '../middleware/admin';
 import { isPaperRunning, startPaperScanner, stopPaperScanner, getRunningUserIds } from '../services/autoScanner';
-import { isLiveRunning, startLiveScanner, stopLiveScanner, getRunningLiveUserIds } from '../services/liveTrader';
+import { isLiveRunning, startLiveScanner, stopLiveScanner, getRunningLiveUserIds, getLiveAccountInfo } from '../services/liveTrader';
 import { binance } from '../services/binance';
 
 const noop = () => {};
@@ -102,8 +102,9 @@ router.get('/users/:userId', requireAdmin, async (req: Request, res: Response) =
 
     const livePositions = user.livePositions.map(p => {
       const markPrice = priceMap[p.symbol] ?? null;
-      // SHORT: 진입가 - 현재가 × 수량
-      const unrealizedPnlUsdt = markPrice !== null ? (p.entryPrice - markPrice) * p.qty : null;
+      const avgEntry  = p.avgEntryPrice > 0 ? p.avgEntryPrice : p.entryPrice;
+      // SHORT: 진입가 - 현재가 × 수량 (참고용 추정치 — 그리드 체결 후 실제 수량은 Binance 총 자산 값이 정확함)
+      const unrealizedPnlUsdt = markPrice !== null ? (avgEntry - markPrice) * p.qty : null;
       return {
         ...p,
         tpOrderId: p.tpOrderId?.toString() ?? null,
@@ -128,6 +129,11 @@ router.get('/users/:userId', requireAdmin, async (req: Request, res: Response) =
     const liveTrades       = user.liveTradeLogs.length;
     const paperTrades      = user.paperWallet?.tradeLogs.length ?? 0;
 
+    // 실거래 총 자산은 Binance 실계좌 값이 정확함 (그리드 체결분까지 반영된 authoritative 값)
+    const liveAccountBalance = (user.apiKey && user.apiSecret)
+      ? await getLiveAccountInfo(user.id).catch(() => null)
+      : null;
+
     const { passwordHash, apiKey, apiSecret, ...safe } = user;
     res.json({
       ...safe,
@@ -135,6 +141,7 @@ router.get('/users/:userId', requireAdmin, async (req: Request, res: Response) =
       livePositions,
       liveRealizedPnl,
       liveTrades,
+      liveAccountBalance,
       paperWallet: user.paperWallet
         ? { ...user.paperWallet, openPositions: paperPositions, tradeLogs: undefined }
         : null,

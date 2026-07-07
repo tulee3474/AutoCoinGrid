@@ -1,4 +1,4 @@
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, useEffect, useCallback, FormEvent } from 'react';
 import {
   adminLogin, getAdminStats, getAdminUsers, deleteAdminUser, getAdminUser,
   getAdminScanners,
@@ -26,8 +26,15 @@ interface UserDetail {
   }>;
   liveRealizedPnl: number;
   liveTrades: number;
+  liveAccountBalance: {
+    totalWalletBalance: number;
+    availableBalance: number;
+    totalUnrealizedProfit: number;
+    totalMarginBalance: number;
+  } | null;
   paperWallet: {
     balance: number;
+    initialBalance: number;
     openPositions: Array<{
       id: string; symbol: string; entryPrice: number; avgEntryPrice: number;
       totalEntryUsdt: number; gridsFilled: number; takeProfitPrice: number;
@@ -74,6 +81,12 @@ function UserDetailPanel({ detail }: { detail: UserDetail }) {
             {hasLiveActivity && (
               <div className="bg-card rounded-lg p-3 space-y-1.5">
                 <div className="text-xs text-yellow-400 font-semibold mb-1">실거래 ({detail.liveTrades}건)</div>
+                {detail.liveAccountBalance && (
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-500">총 자산 (Binance)</span>
+                    <span className="text-gray-200 font-semibold">${detail.liveAccountBalance.totalMarginBalance.toFixed(2)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-xs">
                   <span className="text-gray-500">실현 손익</span>
                   <span className={cls(detail.liveRealizedPnl)}>{fmt(detail.liveRealizedPnl)}</span>
@@ -95,6 +108,14 @@ function UserDetailPanel({ detail }: { detail: UserDetail }) {
             {hasPaperActivity && (
               <div className="bg-card rounded-lg p-3 space-y-1.5">
                 <div className="text-xs text-blue-400 font-semibold mb-1">가상 ({detail.paperTrades}건)</div>
+                {detail.paperWallet && (
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-500">총 자산 (Equity)</span>
+                    <span className={`font-semibold ${cls(detail.paperWallet.balance + paperUnrealizedTotal - detail.paperWallet.initialBalance)}`}>
+                      ${(detail.paperWallet.balance + paperUnrealizedTotal).toFixed(2)}
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between text-xs">
                   <span className="text-gray-500">실현 손익</span>
                   <span className={cls(detail.paperRealizedPnl)}>{fmt(detail.paperRealizedPnl)}</span>
@@ -528,6 +549,9 @@ function presetSummary(c: StrategyConditions) {
   return `RSI ${c.rsi.min}~${c.rsi.max} · 24h +${c.priceChange24h.min}% · 도미넌스 <${c.btcDominanceMax}%`;
 }
 
+const REFRESH_SEC = 15;
+const MANUAL_REFRESH_COOLDOWN_SEC = 5;
+
 // ── 메인 컴포넌트 ──────────────────────────────────────────────
 
 export default function Admin() {
@@ -558,6 +582,10 @@ export default function Admin() {
   const [showDefaultForm, setShowDefaultForm]   = useState(false);
   const [presetLoading, setPresetLoading]       = useState(false);
   const [presetMsg, setPresetMsg]               = useState('');
+
+  const [lastRefreshAt, setLastRefreshAt] = useState(Date.now());
+  const [lastManualAt, setLastManualAt]   = useState(0);
+  const [, setTick]                       = useState(0);
 
   async function handleLogin(e: FormEvent) {
     e.preventDefault();
@@ -598,6 +626,44 @@ export default function Admin() {
       .catch(() => handleLogout());
     loadPresets();
   }, [authed]);
+
+  // 통계/유저목록/스캐너 상태 + (펼쳐진 경우) 상세정보를 주기적으로 새로고침
+  const refreshDashboard = useCallback(async () => {
+    if (!authed) return;
+    try {
+      const [s, u, sc] = await Promise.all([getAdminStats(), getAdminUsers(), getAdminScanners()]);
+      setStats(s); setUsers(u);
+      setPaperIds(new Set(sc.paperUserIds));
+      setLiveIds(new Set(sc.liveUserIds));
+    } catch { /* 다음 주기에 재시도 */ }
+    if (expandedUserId) {
+      try {
+        const detail = await getAdminUser(expandedUserId);
+        setDetailCache(prev => new Map(prev).set(expandedUserId, detail));
+      } catch { /* 다음 주기에 재시도 */ }
+    }
+    setLastRefreshAt(Date.now());
+  }, [authed, expandedUserId]);
+
+  useEffect(() => {
+    if (!authed) return;
+    const id = setInterval(refreshDashboard, REFRESH_SEC * 1000);
+    return () => clearInterval(id);
+  }, [authed, refreshDashboard]);
+
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const secondsUntilRefresh = Math.max(0, REFRESH_SEC - Math.floor((Date.now() - lastRefreshAt) / 1000));
+  const manualCooldownLeft  = Math.max(0, MANUAL_REFRESH_COOLDOWN_SEC - Math.floor((Date.now() - lastManualAt) / 1000));
+
+  const handleManualRefresh = () => {
+    if (manualCooldownLeft > 0) return;
+    setLastManualAt(Date.now());
+    refreshDashboard();
+  };
 
   // ── 도미넌스 핸들러 ───────────────────────────────────────────
 
@@ -777,10 +843,22 @@ export default function Admin() {
           <h1 className="text-xl font-bold text-gray-100">관리자 대시보드</h1>
           <p className="text-sm text-gray-500 mt-0.5">AutoCoin</p>
         </div>
-        <button onClick={handleLogout}
-          className="text-sm text-gray-400 hover:text-gray-200 border border-border rounded-lg px-3 py-1.5">
-          로그아웃
-        </button>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 text-xs text-gray-500">
+            <span>{secondsUntilRefresh}초 후 갱신</span>
+            <button
+              onClick={handleManualRefresh}
+              disabled={manualCooldownLeft > 0}
+              className="px-2 py-1 rounded border border-border text-gray-400 hover:text-gray-200 hover:border-gray-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {manualCooldownLeft > 0 ? `${manualCooldownLeft}초 후 가능` : '↻ 새로고침'}
+            </button>
+          </div>
+          <button onClick={handleLogout}
+            className="text-sm text-gray-400 hover:text-gray-200 border border-border rounded-lg px-3 py-1.5">
+            로그아웃
+          </button>
+        </div>
       </div>
 
       {/* 통계 카드 */}

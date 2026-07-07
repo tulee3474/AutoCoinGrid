@@ -50,8 +50,11 @@ router.get('/wallet', requireAuth, async (req: AuthRequest, res: Response) => {
       wallet.openPositions.forEach(pos => {
         const price = priceMap.get(pos.symbol);
         if (price) {
-          const pnlPct = ((pos.entryPrice - price) / pos.entryPrice) * 100 * pos.leverage;
-          unrealizedPnl += pos.entryAmountUsdt * pnlPct / 100;
+          // 그리드 추가진입이 있으면 avgEntryPrice/totalEntryUsdt 기준으로 계산 (청산 시 계산과 동일)
+          const avgEntry  = pos.avgEntryPrice  > 0 ? pos.avgEntryPrice  : pos.entryPrice;
+          const totalUsdt = pos.totalEntryUsdt > 0 ? pos.totalEntryUsdt : pos.entryAmountUsdt;
+          const pnlPct = ((avgEntry - price) / avgEntry) * 100 * pos.leverage;
+          unrealizedPnl += totalUsdt * pnlPct / 100;
         }
       });
     } catch {}

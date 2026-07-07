@@ -268,10 +268,10 @@ export default function LiveTrading() {
           {account ? (
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {[
-                { label: '지갑 잔고',    value: `$${account.totalWalletBalance.toFixed(2)}`,    cls: 'text-gray-100' },
-                { label: '가용 잔고',    value: `$${account.availableBalance.toFixed(2)}`,      cls: account.availableBalance > 0 ? 'text-up' : 'text-gray-400' },
-                { label: '미실현 손익',  value: `${account.totalUnrealizedProfit >= 0 ? '+' : ''}$${account.totalUnrealizedProfit.toFixed(2)}`, cls: account.totalUnrealizedProfit >= 0 ? 'text-up' : 'text-down' },
-                { label: '마진 잔고',    value: `$${account.totalMarginBalance.toFixed(2)}`,    cls: 'text-gray-300' },
+                { label: '총 자산 (마진 잔고)', value: `$${account.totalMarginBalance.toFixed(2)}`,    cls: 'text-gray-100' },
+                { label: '지갑 잔고',           value: `$${account.totalWalletBalance.toFixed(2)}`,    cls: 'text-gray-300' },
+                { label: '가용 잔고',           value: `$${account.availableBalance.toFixed(2)}`,      cls: account.availableBalance > 0 ? 'text-up' : 'text-gray-400' },
+                { label: '미실현 손익',         value: `${account.totalUnrealizedProfit >= 0 ? '+' : ''}$${account.totalUnrealizedProfit.toFixed(2)}`, cls: account.totalUnrealizedProfit >= 0 ? 'text-up' : 'text-down' },
               ].map(({ label, value, cls }) => (
                 <div key={label} className="bg-surface rounded-lg p-3 text-center">
                   <div className="text-xs text-gray-500 mb-1">{label}</div>
