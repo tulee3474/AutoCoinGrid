@@ -792,7 +792,7 @@ export default function Strategy() {
               checked={draftTrade.gridRsiSkipThreshold != null}
               onChange={e => setDraftTrade({ gridRsiSkipThreshold: e.target.checked ? 90 : null })} />
             <label htmlFor="useGridRsiSkip" className="text-sm text-gray-300 cursor-pointer">
-              그리드 체결 시 RSI 과열이면 포기 <span className="text-gray-500 text-xs">(큰 손실 방지 — 과열 지속 시 물타기 대신 즉시 전체청산)</span>
+              그리드 체결 시 RSI 과열이면 포기 <span className="text-gray-500 text-xs">(큰 손실 방지 — 30분봉 RSI 기준, 과열 지속 시 물타기 대신 즉시 전체청산)</span>
             </label>
           </div>
           {draftTrade.gridRsiSkipThreshold != null && (

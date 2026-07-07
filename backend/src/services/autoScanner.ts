@@ -64,13 +64,13 @@ async function loadStrategies(userId: string): Promise<StrategyConfig[]> {
   }));
 }
 
-// ── RSI 조회 헬퍼 (1h 기준, getFuturesKlines 캐시 공유) ────────
+// ── RSI 조회 헬퍼 (기본 1h, getFuturesKlines 캐시 공유) ────────
 
-async function fetchRsi14(symbol: string): Promise<number | null> {
+async function fetchRsi14(symbol: string, interval: string = '1h'): Promise<number | null> {
   try {
-    const klines = await binance.getFuturesKlines(symbol, '1h', 60);
+    const klines = await binance.getFuturesKlines(symbol, interval, 60);
     if (klines.length < 20) return null;
-    return computeIndicators(klines, '1h').rsi14;
+    return computeIndicators(klines, interval).rsi14;
   } catch {
     return null;
   }
@@ -146,7 +146,7 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
             const gridSkipThreshold = strategyGridSkipMap.get(pos.strategyName) ?? null;
             let overheatRsi: number | null = null;
             if (gridSkipThreshold !== null) {
-              const rsi14 = await fetchRsi14(pos.symbol);
+              const rsi14 = await fetchRsi14(pos.symbol, '30m');
               if (rsi14 !== null && rsi14 >= gridSkipThreshold) overheatRsi = rsi14;
             }
 
