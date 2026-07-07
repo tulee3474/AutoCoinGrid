@@ -36,11 +36,13 @@ router.post('/run', async (req, res) => {
     return res.status(400).json({ error: 'symbol, conditions, trade 필요' });
   }
   try {
-    const klines = await binance.getKlines(symbol, interval, limit);
+    // 선물 전용 상장 코인(예: TAIKO)은 스팟에 없어 getKlines(스팟) 호출 시 400 Invalid symbol —
+    // 스캐너/실거래와 동일하게 선물 캔들 사용
+    const klines = await binance.getFuturesKlines(symbol, interval, limit);
     const result = runBacktest(klines, { conditions, trade, interval }, symbol);
     res.json(result);
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.response?.data?.msg ?? e.message });
   }
 });
 
@@ -62,8 +64,8 @@ router.post('/validate', async (req, res) => {
   ]);
 
   try {
-    // 전체 USDT 페어 조회
-    const tickers = await binance.get24hrTickers();
+    // 전체 USDT 페어 조회 — 선물 전용 상장 코인(스캐너/실거래 대상)도 포함되도록 선물 API 사용
+    const tickers = await binance.getFutures24hrTickers();
     const allAlt = (tickers as any[])
       .filter(t =>
         t.symbol.endsWith('USDT') &&
@@ -78,7 +80,7 @@ router.post('/validate', async (req, res) => {
     const allResults = await batchSettled(
       allAlt,
       async (symbol) => {
-        const klines = await binance.getKlines(symbol, interval, 1500);
+        const klines = await binance.getFuturesKlines(symbol, interval, 1500);
         return runBacktest(klines, { conditions, trade, interval }, symbol);
       },
       40,
