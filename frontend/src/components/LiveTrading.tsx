@@ -15,6 +15,7 @@ const EXIT_LABEL: Record<string, { text: string; cls: string }> = {
   timeout:        { text: '타임아웃', cls: 'bg-border text-gray-400' },
   manual:         { text: '수동청산', cls: 'bg-accent/15 text-accent' },
   signalReversal: { text: 'RSI반전', cls: 'bg-yellow-500/15 text-yellow-400' },
+  rsiOverheat:    { text: 'RSI과열', cls: 'bg-red-500/15 text-red-400' },
 };
 
 function StatCard({ label, value, sub, valueClass }: { label: string; value: string; sub?: string; valueClass?: string }) {
@@ -450,7 +451,10 @@ export default function LiveTrading() {
                         )}
                       </td>
                       <td className="py-2 pr-3 text-gray-500 truncate max-w-[80px]">{pos.strategyName}</td>
-                      <td className="py-2 pr-3 text-gray-400 num">${pos.entryPrice.toPrecision(5)}</td>
+                      <td className="py-2 pr-3 text-gray-400 num" title={pos.gridsFilled > 0 ? `최초 진입가 $${pos.entryPrice.toPrecision(5)} (그리드 ${pos.gridsFilled}차 반영 평균)` : undefined}>
+                        ${(pos.avgEntryPrice > 0 ? pos.avgEntryPrice : pos.entryPrice).toPrecision(5)}
+                        {pos.gridsFilled > 0 && <span className="text-gray-600 ml-0.5">({pos.gridsFilled}차)</span>}
+                      </td>
                       <td className="py-2 pr-3 text-gray-300 num">${pos.currentPrice.toPrecision(5)}</td>
                       <td className="py-2 pr-3">
                         <span className={`font-bold num ${pos.pnlUsdt >= 0 ? 'text-up' : 'text-down'}`}>

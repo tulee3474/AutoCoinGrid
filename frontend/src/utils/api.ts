@@ -258,6 +258,8 @@ export interface LivePosition {
   side: string;
   qty: number;
   entryPrice: number;
+  avgEntryPrice: number;
+  gridsFilled: number;
   currentPrice: number;
   takeProfitPrice: number;
   stopLossPrice: number;
@@ -282,7 +284,7 @@ export interface LiveTradeLog {
   exitPrice: number;
   pnlPct: number;
   pnlUsdt: number;
-  exitReason: 'takeProfit' | 'stopLoss' | 'timeout' | 'manual';
+  exitReason: 'takeProfit' | 'stopLoss' | 'timeout' | 'manual' | 'signalReversal' | 'rsiOverheat';
   entryAmountUsdt: number;
   leverage: number;
   strategyName: string;

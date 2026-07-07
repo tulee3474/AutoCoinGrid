@@ -79,8 +79,11 @@ router.get('/positions', requireAuth, async (req: AuthRequest, res: Response) =>
     const priceMap = new Map<string, number>(indices.map((m: any) => [m.symbol, parseFloat(m.markPrice)]));
     const positions = wallet.openPositions.map(pos => {
       const currentPrice = priceMap.get(pos.symbol) ?? pos.entryPrice;
-      const pnlPct  = ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100 * pos.leverage;
-      const pnlUsdt = pos.entryAmountUsdt * pnlPct / 100;
+      // 그리드 추가진입이 있으면 avgEntryPrice/totalEntryUsdt 기준으로 미실현 PnL 계산 (청산 시 계산과 동일)
+      const avgEntry  = pos.avgEntryPrice  > 0 ? pos.avgEntryPrice  : pos.entryPrice;
+      const totalUsdt = pos.totalEntryUsdt > 0 ? pos.totalEntryUsdt : pos.entryAmountUsdt;
+      const pnlPct  = ((avgEntry - currentPrice) / avgEntry) * 100 * pos.leverage;
+      const pnlUsdt = totalUsdt * pnlPct / 100;
       return { ...pos, currentPrice, pnlPct, pnlUsdt };
     });
     res.json(positions);
