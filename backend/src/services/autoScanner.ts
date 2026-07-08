@@ -2,6 +2,7 @@ import { binance } from './binance';
 import { scanMarket } from './scanner';
 import { openPaperPosition, closePaperPosition, getOrCreateWallet } from './paperWallet';
 import { computeIndicators } from './indicator';
+import { calcPdfStopLoss } from './gridUtils';
 import { StrategyConfig, StrategyConditions, TradeConfig } from '../types';
 import prisma from '../lib/prisma';
 
@@ -87,13 +88,9 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
     loadStrategies(userId)
   ]);
 
-  // 전략명 → rsiExitThreshold 맵 (포지션별 임계값 조회용)
-  const strategyThresholdMap = new Map<string, number | null>(
-    strategies.map(s => [s.name, s.trade.rsiExitThreshold ?? null])
-  );
-  // 전략명 → gridRsiSkipThreshold 맵 (그리드 체결 시점 RSI 과열 판단용)
-  const strategyGridSkipMap = new Map<string, number | null>(
-    strategies.map(s => [s.name, s.trade.gridRsiSkipThreshold ?? null])
+  // 전략명 → trade 설정 맵 (rsiExitThreshold, gridRsiSkipThreshold, 그리드 체결 후 TP/SL 재계산에 사용)
+  const strategyTradeMap = new Map<string, TradeConfig>(
+    strategies.map(s => [s.name, s.trade])
   );
 
   if (wallet.openPositions.length > 0) {
@@ -143,7 +140,7 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
           if (gridsToFill > 0) {
             // 1100%/500%급 급등처럼 그리드를 계속 태우면 크게 잃는 상황 방지 —
             // 이번 그리드 체결 시점 RSI가 임계값 이상이면 추가진입 포기하고 즉시 전체 청산
-            const gridSkipThreshold = strategyGridSkipMap.get(pos.strategyName) ?? null;
+            const gridSkipThreshold = strategyTradeMap.get(pos.strategyName)?.gridRsiSkipThreshold ?? null;
             let overheatRsi: number | null = null;
             if (gridSkipThreshold !== null) {
               const rsi14 = await fetchRsi14(pos.symbol, '30m');
@@ -168,6 +165,19 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
                 }
 
                 const newGridsFilled = currentGridsFilled + gridsToFill;
+
+                // 그리드 체결로 평균단가가 올라간 만큼 TP/SL도 재계산 (실거래와 동일 로직)
+                // — 안 하면 SL이 최초 진입가 기준 캡에 고정돼 남은 그리드가 그 캡보다 먼 가격에
+                //   있을 경우 절대 채워질 수 없는 문제가 생김
+                let newTpPrice = pos.takeProfitPrice;
+                let newSlPrice = pos.stopLossPrice;
+                const tradeCfg = strategyTradeMap.get(pos.strategyName);
+                if (tradeCfg) {
+                  const remainingLevels = gridPrices.length - newGridsFilled;
+                  newTpPrice = newAvgEntry * (1 - tradeCfg.takeProfitPct / 100);
+                  newSlPrice = calcPdfStopLoss(newAvgEntry, pos.leverage, remainingLevels, tradeCfg.gridSpacing);
+                }
+
                 await prisma.$transaction([
                   prisma.paperWallet.update({
                     where: { id: freshWallet.id },
@@ -175,15 +185,22 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
                   }),
                   prisma.paperPosition.update({
                     where: { id: pos.id },
-                    data:  { gridsFilled: newGridsFilled, avgEntryPrice: newAvgEntry, totalEntryUsdt: newTotalUsdt }
+                    data:  {
+                      gridsFilled: newGridsFilled, avgEntryPrice: newAvgEntry, totalEntryUsdt: newTotalUsdt,
+                      takeProfitPrice: newTpPrice, stopLossPrice: newSlPrice
+                    }
                   })
                 ]);
 
                 addLog(userId,
-                  `📈 [그리드] ${pos.symbol} ${newGridsFilled}차 추가진입 | 평균진입가: $${newAvgEntry.toPrecision(5)}`,
+                  `📈 [그리드] ${pos.symbol} ${newGridsFilled}차 추가진입 | 평균진입가: $${newAvgEntry.toPrecision(5)} | TP $${newTpPrice.toPrecision(4)} | SL $${newSlPrice.toPrecision(4)}`,
                   'signal'
                 );
-                broadcast({ type: 'paper_grid_fill', data: { symbol: pos.symbol, gridsFilled: newGridsFilled, avgEntryPrice: newAvgEntry } });
+                broadcast({ type: 'paper_grid_fill', data: { symbol: pos.symbol, gridsFilled: newGridsFilled, avgEntryPrice: newAvgEntry, takeProfitPrice: newTpPrice, stopLossPrice: newSlPrice } });
+
+                // 이번 사이클의 아래 TP/SL 체크에도 갱신된 값을 바로 반영
+                pos.takeProfitPrice = newTpPrice;
+                pos.stopLossPrice   = newSlPrice;
               }
             }
           }
@@ -208,7 +225,7 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
         }
 
         // RSI 반전 신호: 전략의 rsiExitThreshold 미만이면 숏 조기 청산
-        const rsiThreshold = strategyThresholdMap.get(pos.strategyName) ?? null;
+        const rsiThreshold = strategyTradeMap.get(pos.strategyName)?.rsiExitThreshold ?? null;
         if (!exitReason && rsiThreshold !== null) {
           const rsi14 = await fetchRsi14(pos.symbol);
           if (rsi14 !== null && rsi14 < rsiThreshold) {

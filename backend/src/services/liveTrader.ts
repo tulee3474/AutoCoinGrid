@@ -177,19 +177,12 @@ async function fetchRsi14(symbol: string, interval: string = '1h'): Promise<numb
   }
 }
 
-// 포지션의 strategyName 기준으로 gridRsiSkipThreshold 조회 — 전략이 이후 비활성화돼도
-// 이미 열린 포지션의 안전장치(RSI 과열 시 그리드 포기)는 그대로 유지되도록 enabled 필터 없이 조회
-async function getGridSkipThresholds(userId: string, strategyNames: string[]): Promise<Map<string, number | null>> {
+// 포지션의 strategyName 기준으로 trade 설정 조회 — 전략이 이후 비활성화/수정돼도
+// 이미 열린 포지션의 안전장치(RSI 과열 그리드 포기, RSI 반전 익절 등)는 그대로 유지되도록 enabled 필터 없이 조회
+async function getStrategyTrades(userId: string, strategyNames: string[]): Promise<Map<string, TradeConfig>> {
   if (strategyNames.length === 0) return new Map();
   const rows = await prisma.strategy.findMany({ where: { userId, name: { in: strategyNames } } });
-  return new Map(rows.map(r => [r.name, (r.trade as any)?.gridRsiSkipThreshold ?? null]));
-}
-
-// 포지션의 strategyName 기준으로 rsiExitThreshold 조회 (동일하게 enabled 필터 없이 조회)
-async function getRsiExitThresholds(userId: string, strategyNames: string[]): Promise<Map<string, number | null>> {
-  if (strategyNames.length === 0) return new Map();
-  const rows = await prisma.strategy.findMany({ where: { userId, name: { in: strategyNames } } });
-  return new Map(rows.map(r => [r.name, (r.trade as any)?.rsiExitThreshold ?? null]));
+  return new Map(rows.map(r => [r.name, r.trade as unknown as TradeConfig]));
 }
 
 // ── 청산 기록 ─────────────────────────────────────────────────
@@ -338,8 +331,8 @@ async function closeOnRsiReversal(userId: string, broadcast: (data: unknown) => 
   const positions = await prisma.livePosition.findMany({ where: { userId } });
   if (positions.length === 0) return;
 
-  const thresholdMap = await getRsiExitThresholds(userId, [...new Set(positions.map(p => p.strategyName))]);
-  const candidates = positions.filter(p => (thresholdMap.get(p.strategyName) ?? null) !== null);
+  const tradeMap = await getStrategyTrades(userId, [...new Set(positions.map(p => p.strategyName))]);
+  const candidates = positions.filter(p => (tradeMap.get(p.strategyName)?.rsiExitThreshold ?? null) !== null);
   if (candidates.length === 0) return;
 
   const binanceSvc       = await getUserBinance(userId);
@@ -347,7 +340,7 @@ async function closeOnRsiReversal(userId: string, broadcast: (data: unknown) => 
   const binancePositions = await binanceSvc.getPositions();
 
   for (const pos of candidates) {
-    const threshold = thresholdMap.get(pos.strategyName)!;
+    const threshold = tradeMap.get(pos.strategyName)!.rsiExitThreshold!;
     const rsi14 = await fetchRsi14(pos.symbol);
     if (rsi14 === null || rsi14 >= threshold) continue;
 
@@ -638,7 +631,7 @@ async function fillLiveGrids(userId: string, broadcast: (data: unknown) => void)
   );
   // 같은 사이클 내 여러 포지션/그리드가 순차로 마진을 소비하므로 실제 체결마다 차감해가며 추적
   let availableBalance = parseFloat(accountInfo.availableBalance ?? '0');
-  const gridSkipMap = await getGridSkipThresholds(userId, [...new Set(gridPositions.map(p => p.strategyName))]);
+  const tradeMap = await getStrategyTrades(userId, [...new Set(gridPositions.map(p => p.strategyName))]);
 
   for (const pos of gridPositions) {
     const price = priceMap.get(pos.symbol);
@@ -661,7 +654,7 @@ async function fillLiveGrids(userId: string, broadcast: (data: unknown) => void)
 
     // 1100%/500%급 급등처럼 그리드를 계속 태우면 크게 잃는 상황 방지 —
     // 이번 그리드 체결 시점 RSI가 임계값 이상이면 추가진입 포기하고 즉시 전체 청산 (가상거래와 동일 로직)
-    const gridSkipThreshold = gridSkipMap.get(pos.strategyName) ?? null;
+    const gridSkipThreshold = tradeMap.get(pos.strategyName)?.gridRsiSkipThreshold ?? null;
     if (gridSkipThreshold !== null) {
       const rsi14 = await fetchRsi14(pos.symbol, '30m');
       if (rsi14 !== null && rsi14 >= gridSkipThreshold) {
@@ -687,6 +680,7 @@ async function fillLiveGrids(userId: string, broadcast: (data: unknown) => void)
 
     const symbolInfo = (exchInfo.symbols as any[]).find((s: any) => s.symbol === pos.symbol);
     const qtyPrec    = symbolInfo?.quantityPrecision ?? 2;
+    const pricePrec  = symbolInfo?.pricePrecision    ?? 2;
 
     let newAvgEntry  = pos.avgEntryPrice  > 0 ? pos.avgEntryPrice  : pos.entryPrice;
     let newTotalUsdt = pos.totalEntryUsdt > 0 ? pos.totalEntryUsdt : pos.entryAmountUsdt;
@@ -732,15 +726,62 @@ async function fillLiveGrids(userId: string, broadcast: (data: unknown) => void)
     if (actualFilled === 0) continue;
 
     const newGridsFilled = currentGridsFilled + actualFilled;
+
+    // 그리드 체결로 평균단가가 올라간 만큼 TP/SL도 새 평균단가 기준으로 재계산 + 재등록
+    // (안 하면 SL이 최초 진입가 기준 ISOLATED 99% 캡에 고정돼 있어, 남은 그리드가
+    //  안전캡보다 먼 가격에 있으면 절대 채워질 수 없는 문제가 생김)
+    let newTpPrice = pos.takeProfitPrice;
+    let newSlPrice = pos.stopLossPrice;
+    let newTpOrderId = pos.tpOrderId;
+    let newSlOrderId = pos.slOrderId;
+
+    const tradeCfg = tradeMap.get(pos.strategyName);
+    if (tradeCfg) {
+      const remainingLevels = gridPrices.length - newGridsFilled;
+      newTpPrice = newAvgEntry * (1 - tradeCfg.takeProfitPct / 100);
+      newSlPrice = calcPdfStopLoss(newAvgEntry, pos.leverage, remainingLevels, tradeCfg.gridSpacing);
+
+      if (pos.tpOrderId !== null && pos.slOrderId !== null) {
+        try {
+          await binanceSvc.cancelAllAlgoOrders(pos.symbol);
+          const tpOrder = await binanceSvc.placeAlgoOrder({
+            symbol: pos.symbol, side: 'BUY', type: 'TAKE_PROFIT_MARKET',
+            triggerPrice: newTpPrice.toFixed(pricePrec), closePosition: true,
+            ...(isHedge ? { positionSide: 'SHORT' } : {})
+          });
+          const slOrder = await binanceSvc.placeAlgoOrder({
+            symbol: pos.symbol, side: 'BUY', type: 'STOP_MARKET',
+            triggerPrice: newSlPrice.toFixed(pricePrec), closePosition: true,
+            ...(isHedge ? { positionSide: 'SHORT' } : {})
+          });
+          newTpOrderId = BigInt(tpOrder.algoId);
+          newSlOrderId = BigInt(slOrder.algoId);
+        } catch (e: any) {
+          // 재등록 실패 시 dangling 방지 위해 취소 시도 + 스캐너 모니터링으로 전환
+          await binanceSvc.cancelAllAlgoOrders(pos.symbol).catch(() => {});
+          newTpOrderId = null;
+          newSlOrderId = null;
+          addLog(userId,
+            `${pos.symbol} 그리드 체결 후 TP/SL 재등록 실패 (${e.response?.data?.msg ?? e.message}) — 스캐너 모니터링 전환`,
+            'error'
+          );
+        }
+      }
+    }
+
     await prisma.livePosition.update({
       where: { id: pos.id },
-      data:  { gridsFilled: newGridsFilled, avgEntryPrice: newAvgEntry, totalEntryUsdt: newTotalUsdt }
+      data: {
+        gridsFilled: newGridsFilled, avgEntryPrice: newAvgEntry, totalEntryUsdt: newTotalUsdt,
+        takeProfitPrice: newTpPrice, stopLossPrice: newSlPrice,
+        tpOrderId: newTpOrderId, slOrderId: newSlOrderId
+      }
     });
     addLog(userId,
-      `📈 [그리드] ${pos.symbol} ${newGridsFilled}차 추가진입 | 평균진입가: $${newAvgEntry.toPrecision(5)}`,
+      `📈 [그리드] ${pos.symbol} ${newGridsFilled}차 추가진입 | 평균진입가: $${newAvgEntry.toPrecision(5)} | TP $${newTpPrice.toPrecision(4)} | SL $${newSlPrice.toPrecision(4)}`,
       'signal'
     );
-    broadcast({ type: 'live_grid_fill', data: { symbol: pos.symbol, gridsFilled: newGridsFilled, avgEntryPrice: newAvgEntry } });
+    broadcast({ type: 'live_grid_fill', data: { symbol: pos.symbol, gridsFilled: newGridsFilled, avgEntryPrice: newAvgEntry, takeProfitPrice: newTpPrice, stopLossPrice: newSlPrice } });
   }
 }
 

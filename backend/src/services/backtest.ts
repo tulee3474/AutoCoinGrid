@@ -87,9 +87,11 @@ function simulateTrade(
   const maxEndIdx = Math.min(entryIdx + 1 + maxCandles, klines.length - 1);
 
   const gridEnabled = trade.gridEnabled !== false;
-  const gridPrices      = gridEnabled ? calcPdfGridPrices(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing) : [];
-  const takeProfitPrice = entryPrice * (1 - trade.takeProfitPct / 100);
-  const stopLossPrice   = gridEnabled
+  const gridPrices  = gridEnabled ? calcPdfGridPrices(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing) : [];
+
+  let avgEntryPrice    = entryPrice;
+  let takeProfitPrice  = entryPrice * (1 - trade.takeProfitPct / 100);
+  let stopLossPrice    = gridEnabled
     ? calcPdfStopLoss(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing)
     : entryPrice * (1 + trade.stopLossPct / 100);
 
@@ -101,7 +103,17 @@ function simulateTrade(
   for (let j = entryIdx + 2; j <= maxEndIdx; j++) {
     const candle = klines[j];
     const filledNow = gridPrices.filter(p => candle.high >= p).length;
-    gridsFilled = Math.max(gridsFilled, filledNow);
+
+    // 그리드 체결로 평균단가가 오른 만큼 TP/SL도 재계산 (실거래/가상거래와 동일 로직) —
+    // 안 하면 SL이 최초 진입가 기준 캡에 고정돼 남은 그리드가 그 캡보다 먼 가격에 있으면
+    // 절대 채워질 수 없는 문제가 생겨 실제 동작과 백테스트 결과가 어긋남
+    if (filledNow > gridsFilled) {
+      gridsFilled     = filledNow;
+      avgEntryPrice   = calcPdfAvgEntry(entryPrice, gridPrices.slice(0, gridsFilled));
+      const remainingLevels = gridPrices.length - gridsFilled;
+      takeProfitPrice = avgEntryPrice * (1 - trade.takeProfitPct / 100);
+      stopLossPrice   = calcPdfStopLoss(avgEntryPrice, trade.leverage, remainingLevels, trade.gridSpacing);
+    }
 
     if (candle.high >= stopLossPrice) {
       exitPrice  = stopLossPrice;
@@ -124,10 +136,8 @@ function simulateTrade(
 
   if (exitPrice === 0) return null;
 
-  const filledGridPrices = gridPrices.slice(0, gridsFilled);
-  const avgEntryPrice    = calcPdfAvgEntry(entryPrice, filledGridPrices);
-  const pnlPct           = ((avgEntryPrice - exitPrice) / avgEntryPrice) * 100 * trade.leverage;
-  const pnlUsdt          = (trade.entryAmountUsdt * (1 + gridsFilled)) * (pnlPct / 100);
+  const pnlPct  = ((avgEntryPrice - exitPrice) / avgEntryPrice) * 100 * trade.leverage;
+  const pnlUsdt = (trade.entryAmountUsdt * (1 + gridsFilled)) * (pnlPct / 100);
 
   return {
     entryTime: klines[entryIdx + 1].openTime,
