@@ -523,9 +523,6 @@ export default function LiveTrading() {
                     <div className="flex items-center gap-2 p-2">
                       <span className="text-gray-300 font-semibold w-12 flex-shrink-0">{log.symbol.replace('USDT', '')}</span>
                       <span className="text-gray-600 truncate w-16 flex-shrink-0" title={log.strategyName}>{log.strategyName}</span>
-                      <span className="text-gray-500 num w-16 flex-shrink-0">${log.entryPrice.toPrecision(4)}</span>
-                      <span className="text-gray-400">→</span>
-                      <span className="text-gray-500 num w-16 flex-shrink-0">${log.exitPrice.toPrecision(4)}</span>
                       <span className={`font-bold num flex-1 ${log.pnlUsdt >= 0 ? 'text-up' : 'text-down'}`}>
                         {log.pnlUsdt >= 0 ? '+' : ''}{log.pnlPct.toFixed(2)}%
                         <span className="font-normal opacity-70">({log.pnlUsdt >= 0 ? '+' : ''}{(log.pnlPct / log.leverage).toFixed(2)}%)</span>
@@ -537,8 +534,8 @@ export default function LiveTrading() {
                     </div>
                     {expanded && (
                       <div className="px-2 pb-2 pt-0 text-gray-500 border-t border-border/40 space-y-0.5">
-                        <div>진입: <span className="text-gray-300">{fmtDt(log.entryTime)}</span></div>
-                        <div>청산: <span className="text-gray-300">{fmtDt(log.exitTime)}</span></div>
+                        <div>진입: <span className="text-gray-300 num">${log.entryPrice.toPrecision(4)}</span> @ <span className="text-gray-300">{fmtDt(log.entryTime)}</span></div>
+                        <div>청산: <span className="text-gray-300 num">${log.exitPrice.toPrecision(4)}</span> @ <span className="text-gray-300">{fmtDt(log.exitTime)}</span></div>
                       </div>
                     )}
                   </div>
