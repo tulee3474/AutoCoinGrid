@@ -222,8 +222,16 @@ export class BinanceService {
     }
   }
 
+  // 심볼 정밀도/상장일 등 메타데이터라 자주 안 바뀜 — 매 사이클(15초)마다 재조회하던 걸 1시간 캐시로 흡수
+  private futuresExchangeInfoCache: { data: any; ts: number } | null = null;
+  private static readonly EXCHANGE_INFO_CACHE_TTL = 3_600_000;
+
   async getFuturesExchangeInfo(): Promise<any> {
+    if (this.futuresExchangeInfoCache && Date.now() - this.futuresExchangeInfoCache.ts < BinanceService.EXCHANGE_INFO_CACHE_TTL) {
+      return this.futuresExchangeInfoCache.data;
+    }
     const { data } = await this.futuresClient.get('/fapi/v1/exchangeInfo');
+    this.futuresExchangeInfoCache = { data, ts: Date.now() };
     return data;
   }
 
@@ -274,19 +282,33 @@ export class BinanceService {
   }
 
   // ── 인증 필요 API ────────────────────────────────────────────
+  // 실거래 sync 루프(15초)에서 syncClosed/fillLiveGrids/closeOnRsiReversal 등 여러 함수가
+  // 같은 사이클 내에서 각자 조회하면서 IP weight를 불필요하게 반복 소모 — 짧은 TTL로 흡수
+  private static readonly ACCOUNT_CACHE_TTL = 5_000;
+  private accountInfoCache: { data: any; ts: number } | null = null;
+  private positionsCache: { data: any[]; ts: number } | null = null;
 
   async getAccountInfo(): Promise<any> {
+    if (this.accountInfoCache && Date.now() - this.accountInfoCache.ts < BinanceService.ACCOUNT_CACHE_TTL) {
+      return this.accountInfoCache.data;
+    }
     const { data } = await this.futuresClient.get('/fapi/v2/account', {
       params: this.signedParams()
     });
+    this.accountInfoCache = { data, ts: Date.now() };
     return data;
   }
 
   async getPositions(): Promise<any[]> {
+    if (this.positionsCache && Date.now() - this.positionsCache.ts < BinanceService.ACCOUNT_CACHE_TTL) {
+      return this.positionsCache.data;
+    }
     const { data } = await this.futuresClient.get('/fapi/v2/positionRisk', {
       params: this.signedParams()
     });
-    return (data as any[]).filter(p => parseFloat(p.positionAmt) !== 0);
+    const filtered = (data as any[]).filter(p => parseFloat(p.positionAmt) !== 0);
+    this.positionsCache = { data: filtered, ts: Date.now() };
+    return filtered;
   }
 
   async getOpenOrders(symbol?: string): Promise<any[]> {

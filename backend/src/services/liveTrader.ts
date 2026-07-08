@@ -232,11 +232,10 @@ async function recordClose(
 
 // ── TP/SL 자동 체결 동기화 ────────────────────────────────────
 
-async function syncClosed(userId: string, broadcast: (data: unknown) => void) {
+async function syncClosed(userId: string, binanceSvc: BinanceService, broadcast: (data: unknown) => void) {
   const positions = await prisma.livePosition.findMany({ where: { userId } });
   if (positions.length === 0) return;
 
-  const binanceSvc  = await getUserBinance(userId);
   const binancePos  = await binanceSvc.getPositions();
   // positionAmt < 0 인 숏 포지션만 추적 — 헤지 모드에서 롱과 혼동 방지
   const activeShortSymbols = new Set(
@@ -293,12 +292,11 @@ async function syncClosed(userId: string, broadcast: (data: unknown) => void) {
 
 // ── 타임아웃 청산 ─────────────────────────────────────────────
 
-async function closeTimedOut(userId: string, broadcast: (data: unknown) => void) {
+async function closeTimedOut(userId: string, binanceSvc: BinanceService, broadcast: (data: unknown) => void) {
   const positions = await prisma.livePosition.findMany({ where: { userId } });
   const expired   = positions.filter(p => Date.now() >= p.expiresAt.getTime());
   if (expired.length === 0) return;
 
-  const binanceSvc = await getUserBinance(userId);
   const isHedge = await getHedgeMode(userId, binanceSvc);
 
   for (const pos of expired) {
@@ -327,7 +325,7 @@ async function closeTimedOut(userId: string, broadcast: (data: unknown) => void)
 
 // ── RSI 반전 조기청산 (익절 확정, 가상거래와 동일 로직) ─────────
 
-async function closeOnRsiReversal(userId: string, broadcast: (data: unknown) => void) {
+async function closeOnRsiReversal(userId: string, binanceSvc: BinanceService, broadcast: (data: unknown) => void) {
   const positions = await prisma.livePosition.findMany({ where: { userId } });
   if (positions.length === 0) return;
 
@@ -335,7 +333,6 @@ async function closeOnRsiReversal(userId: string, broadcast: (data: unknown) => 
   const candidates = positions.filter(p => (tradeMap.get(p.strategyName)?.rsiExitThreshold ?? null) !== null);
   if (candidates.length === 0) return;
 
-  const binanceSvc       = await getUserBinance(userId);
   const isHedge          = await getHedgeMode(userId, binanceSvc);
   const binancePositions = await binanceSvc.getPositions();
 
@@ -611,7 +608,7 @@ async function monitorNonOrderPositions(userId: string, broadcast: (data: unknow
 
 // ── 그리드 추가진입 (라이브) ──────────────────────────────────
 
-async function fillLiveGrids(userId: string, broadcast: (data: unknown) => void) {
+async function fillLiveGrids(userId: string, binanceSvc: BinanceService, broadcast: (data: unknown) => void) {
   const positions = await prisma.livePosition.findMany({ where: { userId } });
   const gridPositions = positions.filter(pos => {
     const gp = Array.isArray(pos.gridPrices) ? pos.gridPrices as number[] : [];
@@ -619,7 +616,6 @@ async function fillLiveGrids(userId: string, broadcast: (data: unknown) => void)
   });
   if (gridPositions.length === 0) return;
 
-  const binanceSvc = await getUserBinance(userId);
   const [binancePos, isHedge, exchInfo, accountInfo] = await Promise.all([
     binanceSvc.getPositions(),
     getHedgeMode(userId, binanceSvc),
@@ -792,10 +788,16 @@ async function runSync(userId: string, broadcast: (data: unknown) => void) {
   if (!state || state.isSyncing) return;
   state.isSyncing = true;
   try {
-    await syncClosed(userId, broadcast);
-    await fillLiveGrids(userId, broadcast);
-    await closeOnRsiReversal(userId, broadcast);
-    await closeTimedOut(userId, broadcast);
+    const hasPositions = await prisma.livePosition.count({ where: { userId } });
+    if (hasPositions > 0) {
+      // 4개 하위 함수가 각자 인스턴스를 새로 만들면 인스턴스별 캐시(getPositions/getAccountInfo 등)가
+      // 매번 무효화돼 15초 사이클 안에서도 Binance를 반복 호출하게 됨 — 하나로 공유해서 캐시 재사용
+      const binanceSvc = await getUserBinance(userId);
+      await syncClosed(userId, binanceSvc, broadcast);
+      await fillLiveGrids(userId, binanceSvc, broadcast);
+      await closeOnRsiReversal(userId, binanceSvc, broadcast);
+      await closeTimedOut(userId, binanceSvc, broadcast);
+    }
 
     // 중지 예정: 포지션이 모두 닫혔으면 완전 중지
     if (state.isStopping) {
