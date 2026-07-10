@@ -187,14 +187,30 @@ export class BinanceService {
   }
 
   // 선물 전용 상장 코인은 스팟에 존재하지 않아 getKlinesSince(스팟)로는 캔들을 못 가져옴 — 포지션 모니터링(그리드/SL/TP 소급 감지)은 반드시 선물 캔들 사용
+  // startTime(포지션 오픈 시각)이 고정값이라 캐시 키로 안전 — 가상거래 스캔 사이클(60초)마다
+  // 유저별로 반복 호출되며 매번 weight 10(limit>1000)짜리 요청을 새로 보내던 걸 캐시로 흡수
   async getFuturesKlinesSince(symbol: string, interval: string, startTime: number): Promise<Kline[]> {
+    const cacheKey = `${symbol}|${interval}|since:${startTime}`;
+    const cached = this.klinesCache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < BinanceService.KLINES_CACHE_TTL) return cached.data;
+
+    // 필요한 캔들 수만 요청 (경과 시간 기반, 최대 1500) — 매번 최대치로 요청하던 weight 낭비 제거
+    const minsPerCandle: Record<string, number> = {
+      '1m': 1, '5m': 5, '15m': 15, '30m': 30, '1h': 60, '4h': 240, '1d': 1440
+    };
+    const elapsedMs = Math.max(0, Date.now() - startTime);
+    const neededCandles = Math.ceil(elapsedMs / ((minsPerCandle[interval] ?? 60) * 60_000)) + 2;
+    const limit = Math.min(1500, Math.max(2, neededCandles));
+
     const { data } = await this.futuresClient.get('/fapi/v1/klines', {
-      params: { symbol, interval, startTime, limit: 1500 }
+      params: { symbol, interval, startTime, limit }
     });
-    return data.map((k: any[]) => ({
+    const result: Kline[] = data.map((k: any[]) => ({
       openTime: k[0], open: +k[1], high: +k[2], low: +k[3],
       close: +k[4], volume: +k[5], closeTime: k[6]
     }));
+    this.klinesCache.set(cacheKey, { data: result, ts: Date.now() });
+    return result;
   }
 
   async get24hrTickers(): Promise<any[]> {
