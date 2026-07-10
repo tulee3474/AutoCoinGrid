@@ -21,6 +21,14 @@ export class BinanceService {
   private futuresOnboardDatesCachedAt = 0;
   private klinesCache = new Map<string, { data: Kline[]; ts: number }>();
   private static readonly KLINES_CACHE_TTL = 50_000; // 스캔 사이클(60s)보다 짧게 — 같은 사이클 내 전략/유저 간 중복 요청 방지
+
+  // 1d/4h처럼 느리게 바뀌는 캔들은 매 스캔 사이클(60s)마다 새로 받을 필요가 없음 —
+  // 50초 캐시로는 다음 사이클 전에 항상 만료돼 매번 재호출되므로, 긴 타임프레임은 캐시를 길게 유지
+  private static klinesCacheTtlFor(interval: string): number {
+    if (interval === '1d') return 600_000;
+    if (interval === '4h') return 300_000;
+    return BinanceService.KLINES_CACHE_TTL;
+  }
   private futuresTickersCache: { data: any[]; ts: number } | null = null;
   private static readonly TICKERS_CACHE_TTL = 50_000;
   private futuresKlinesInflight = new Map<string, Promise<Kline[]>>();
@@ -152,7 +160,7 @@ export class BinanceService {
   async getFuturesKlines(symbol: string, interval: string, limit = 500): Promise<Kline[]> {
     const cacheKey = `${symbol}|${interval}|${limit}`;
     const cached = this.klinesCache.get(cacheKey);
-    if (cached && Date.now() - cached.ts < BinanceService.KLINES_CACHE_TTL) return cached.data;
+    if (cached && Date.now() - cached.ts < BinanceService.klinesCacheTtlFor(interval)) return cached.data;
 
     // 동시에 여러 전략/유저가 같은 심볼을 요청해도 실제 HTTP 호출은 1회만 — 진행 중인 요청을 공유
     const inflight = this.futuresKlinesInflight.get(cacheKey);
