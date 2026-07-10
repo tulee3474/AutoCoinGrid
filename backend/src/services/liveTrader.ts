@@ -568,12 +568,15 @@ async function monitorNonOrderPositions(userId: string, broadcast: (data: unknow
   });
   if (positions.length === 0) return;
 
-  const binanceSvc      = await getUserBinance(userId);
-  const isHedge         = await getHedgeMode(userId, binanceSvc);
-  const binancePositions = await binanceSvc.getPositions();
-  const priceMap        = new Map<string, number>(
-    binancePositions.map((p: any) => [p.symbol, parseFloat(p.markPrice)])
+  const binanceSvc = await getUserBinance(userId);
+  const isHedge    = await getHedgeMode(userId, binanceSvc);
+  const premiumIndex = await binance.getFuturesPremiumIndex();
+  const priceMap   = new Map<string, number>(
+    (premiumIndex as any[]).map(p => [p.symbol, parseFloat(p.markPrice)])
   );
+  // 실제 청산 트리거된 포지션이 있을 때만 지연 호출 (계정별 인증 weight 절감)
+  let binancePositionsCache: any[] | null = null;
+  const getBinancePositions = async () => binancePositionsCache ?? (binancePositionsCache = await binanceSvc.getPositions());
 
   for (const pos of positions) {
     const price = priceMap.get(pos.symbol);
@@ -591,7 +594,7 @@ async function monitorNonOrderPositions(userId: string, broadcast: (data: unknow
     if (!exitReason) continue;
 
     try {
-      const binPos = binancePositions.find((p: any) => p.symbol === pos.symbol);
+      const binPos = (await getBinancePositions()).find((p: any) => p.symbol === pos.symbol);
       if (binPos) {
         exitPrice = await placeCloseOrderAndGetExitPrice(
           binanceSvc, pos.symbol, pos.side as 'SHORT' | 'LONG',
@@ -616,15 +619,19 @@ async function fillLiveGrids(userId: string, binanceSvc: BinanceService, broadca
   });
   if (gridPositions.length === 0) return;
 
-  const [binancePos, isHedge, exchInfo, accountInfo] = await Promise.all([
-    binanceSvc.getPositions(),
+  // 가격은 공유 마크가격 스트림(계정별 인증 호출이 아닌 공개 데이터)에서 조회 —
+  // getPositions()는 실제 포지션 수량이 필요한 순간(과열 청산 시)에만 지연 호출해 weight 절감
+  const [premiumIndex, isHedge, exchInfo, accountInfo] = await Promise.all([
+    binance.getFuturesPremiumIndex(),
     getHedgeMode(userId, binanceSvc),
     binanceSvc.getFuturesExchangeInfo(),
     binanceSvc.getAccountInfo()
   ]);
   const priceMap = new Map<string, number>(
-    (binancePos as any[]).map(p => [p.symbol, parseFloat(p.markPrice)])
+    (premiumIndex as any[]).map(p => [p.symbol, parseFloat(p.markPrice)])
   );
+  let binancePosCache: any[] | null = null;
+  const getBinancePos = async () => binancePosCache ?? (binancePosCache = await binanceSvc.getPositions());
   // 같은 사이클 내 여러 포지션/그리드가 순차로 마진을 소비하므로 실제 체결마다 차감해가며 추적
   let availableBalance = parseFloat(accountInfo.availableBalance ?? '0');
   const tradeMap = await getStrategyTrades(userId, [...new Set(gridPositions.map(p => p.strategyName))]);
@@ -658,7 +665,7 @@ async function fillLiveGrids(userId: string, binanceSvc: BinanceService, broadca
         try {
           await binanceSvc.cancelAllOrders(pos.symbol);
           await binanceSvc.cancelAllAlgoOrders(pos.symbol).catch(() => {});
-          const binPosMatch = (binancePos as any[]).find((p: any) => p.symbol === pos.symbol);
+          const binPosMatch = (await getBinancePos()).find((p: any) => p.symbol === pos.symbol);
           let exitPriceFinal = price;
           if (binPosMatch) {
             exitPriceFinal = await placeCloseOrderAndGetExitPrice(

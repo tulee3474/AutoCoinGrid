@@ -1,6 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
 import crypto from 'crypto';
 import { Kline } from '../types';
+import { getAllMarkPrices, isMarkPriceStreamHealthy } from './binanceMarketStream';
 
 const SPOT_BASE = 'https://api.binance.com';
 const FUTURES_BASE = 'https://fapi.binance.com';
@@ -287,6 +288,12 @@ export class BinanceService {
   }
 
   async getFuturesPremiumIndex(): Promise<any[]> {
+    // 마크 가격 웹소켓 스트림이 살아있으면 REST 폴링 없이 그 캐시를 REST와 동일한 모양으로 반환.
+    // 스트림이 끊기면 아래 기존 REST(+캐시) 경로로 자동 폴백.
+    if (isMarkPriceStreamHealthy()) {
+      return Array.from(getAllMarkPrices(), ([symbol, markPrice]) => ({ symbol, markPrice: markPrice.toString() }));
+    }
+
     if (this.futuresPremiumIndexCache && Date.now() - this.futuresPremiumIndexCache.ts < BinanceService.PREMIUM_INDEX_CACHE_TTL) {
       return this.futuresPremiumIndexCache.data;
     }

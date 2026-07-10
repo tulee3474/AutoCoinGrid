@@ -16,6 +16,7 @@ import presetRoutes from './routes/presets';
 import { fetchFromCoinGecko } from './services/btcDominanceHistory';
 import { restoreScanners } from './services/autoScanner';
 import { restoreLiveScanners } from './services/liveTrader';
+import { startMarkPriceStream } from './services/binanceMarketStream';
 
 const app = express();
 app.set('trust proxy', 1); // Docker/nginx 뒤에서 X-Forwarded-For 신뢰
@@ -82,6 +83,7 @@ server.listen(PORT, () => {
   console.log(`AutoCoin backend running on http://localhost:${PORT}`);
   setPaperBroadcast(broadcast);
   setLiveBroadcast(broadcast);
+  startMarkPriceStream();
   scheduleDailyDomUpdate();
   restoreScanners();
   restoreLiveScanners(broadcast);
