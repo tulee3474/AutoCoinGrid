@@ -69,6 +69,20 @@ export async function scanMarket(
     while (queue.length > 0) {
       const ticker = queue.shift()!;
       try {
+        // 최근 N일 내 일봉 기준 큰 폭 급락 이력이 있으면 제외 — 이미 한 번 급락한 코인의
+        // 반등(되돌림)을 급등 추세로 오인해 진입하는 것을 방지
+        if (conditions.noRecentCrash) {
+          const { days, dropPct } = conditions.noRecentCrash;
+          const dailyKlines = await binance.getFuturesKlines(ticker.symbol, '1d', days + 1);
+          const dailyCloses = dailyKlines.map(k => k.close);
+          let crashed = false;
+          for (let i = 1; i < dailyCloses.length; i++) {
+            const dayChange = ((dailyCloses[i] - dailyCloses[i - 1]) / dailyCloses[i - 1]) * 100;
+            if (dayChange <= -dropPct) { crashed = true; break; }
+          }
+          if (crashed) continue;
+        }
+
         const klines = await binance.getFuturesKlines(ticker.symbol, conditions.rsi.timeframe, 250);
         if (klines.length < 20) continue;
 

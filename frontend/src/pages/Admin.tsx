@@ -179,6 +179,7 @@ function UserDetailPanel({ detail }: { detail: UserDetail }) {
                           <div><span className="text-gray-600">볼린저 상단 </span><span className="text-gray-300">{c?.priceAboveBB ? '✓' : '✗'}</span></div>
                           <div><span className="text-gray-600">BTC 도미넌스 </span><span className="text-gray-300">&lt;{c?.btcDominanceMax}%</span></div>
                           <div><span className="text-gray-600">상장 초기 제외 </span><span className="text-gray-300">{c?.minListingDays != null ? `${c.minListingDays}일 미만` : '비활성'}</span></div>
+                          <div><span className="text-gray-600">최근 급락 제외 </span><span className="text-gray-300">{c?.noRecentCrash != null ? `${c.noRecentCrash.days}일 내 -${c.noRecentCrash.dropPct}%` : '비활성'}</span></div>
                         </div>
                       </div>
                       <div>
@@ -357,6 +358,7 @@ function PresetForm({
     priceAboveMa7:        (initial.conditions as any).priceAboveMa7        ?? DEFAULT_CONDITIONS.priceAboveMa7,
     priceAboveMa20:       (initial.conditions as any).priceAboveMa20       ?? DEFAULT_CONDITIONS.priceAboveMa20,
     minListingDays:       (initial.conditions as any).minListingDays !== undefined ? (initial.conditions as any).minListingDays : null,
+    noRecentCrash:        (initial.conditions as any).noRecentCrash !== undefined ? (initial.conditions as any).noRecentCrash : null,
   });
   const [t, setT] = useState<TradeConfig>({
     ...DEFAULT_TRADE,
@@ -456,6 +458,26 @@ function PresetForm({
               )}
               {c.minListingDays != null && <span className="text-xs text-gray-500 flex-shrink-0">일 미만 제외</span>}
               {c.minListingDays == null && <span className="text-xs text-gray-500">비활성</span>}
+            </div>
+          </F>
+          <F label="최근 급락 이력 제외">
+            <div className="flex items-center gap-1">
+              <input type="checkbox" checked={c.noRecentCrash != null}
+                onChange={e => sc({ noRecentCrash: e.target.checked ? { days: 7, dropPct: 50 } : null })}
+                className="w-4 h-4 accent-accent flex-shrink-0" />
+              {c.noRecentCrash != null && (
+                <>
+                  <input type="number" value={c.noRecentCrash.days}
+                    onChange={e => sc({ noRecentCrash: { ...c.noRecentCrash!, days: +e.target.value } })}
+                    className="w-full bg-surface border border-border rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-accent" />
+                  <span className="text-xs text-gray-500 flex-shrink-0">일 내</span>
+                  <input type="number" value={c.noRecentCrash.dropPct}
+                    onChange={e => sc({ noRecentCrash: { ...c.noRecentCrash!, dropPct: +e.target.value } })}
+                    className="w-full bg-surface border border-border rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-accent" />
+                  <span className="text-xs text-gray-500 flex-shrink-0">% 급락 제외</span>
+                </>
+              )}
+              {c.noRecentCrash == null && <span className="text-xs text-gray-500">비활성</span>}
             </div>
           </F>
         </div>

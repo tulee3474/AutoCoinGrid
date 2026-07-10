@@ -703,6 +703,26 @@ export default function Strategy() {
               </div>
             )}
           </div>
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <input type="checkbox" id="noRecentCrash" className="w-4 h-4 accent-accent"
+                checked={draftConditions.noRecentCrash != null}
+                onChange={e => setDraftConditions({ noRecentCrash: e.target.checked ? { days: 7, dropPct: 50 } : null })} />
+              <label htmlFor="noRecentCrash" className="text-sm text-gray-300 cursor-pointer">
+                최근 급락 이력 있으면 제외 <span className="text-gray-500 text-xs">(이미 크게 떨어진 코인의 반등을 급등으로 오인 방지)</span>
+              </label>
+            </div>
+            {draftConditions.noRecentCrash != null && (
+              <div className="ml-7 flex items-center gap-2">
+                <NumberInput label="" value={draftConditions.noRecentCrash.days}
+                  onChange={v => setDraftConditions({ noRecentCrash: { ...draftConditions.noRecentCrash!, days: v } })}
+                  min={1} max={30} unit="일 이내" fieldId="crash-days" emptyTracker={emptyFields} />
+                <NumberInput label="" value={draftConditions.noRecentCrash.dropPct}
+                  onChange={v => setDraftConditions({ noRecentCrash: { ...draftConditions.noRecentCrash!, dropPct: v } })}
+                  min={10} max={90} unit="% 이상 급락 시 제외" fieldId="crash-pct" emptyTracker={emptyFields} />
+              </div>
+            )}
+          </div>
           {/* BTC 도미넌스 조건 — 비활성 (나중에 추가 예정)
           <div className="flex items-center gap-3 opacity-40 pointer-events-none">
             <input type="checkbox" className="w-4 h-4" disabled />

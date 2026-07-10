@@ -18,6 +18,7 @@ export interface StrategyConditions {
   priceAboveBB: boolean;     // 볼린저 상단 돌파
   btcDominanceMax: number;   // 현재 비활성 (주석 처리)
   minListingDays?: number | null;  // null/0/미설정 = 비활성, 숫자 = 선물 상장일 기준 이 일수 미만이면 제외
+  noRecentCrash?: { days: number; dropPct: number } | null;  // null/미설정 = 비활성. 최근 days일 내 일봉 기준 dropPct% 이상 급락한 적 있으면 제외
   // 하위 호환성 유지
   priceAboveMa200?: boolean;
 }
