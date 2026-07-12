@@ -42,6 +42,9 @@ export class BinanceService {
   // IP 차단은 인스턴스가 아니라 실제 서버 IP 단위로 걸리므로 static으로 전체 인스턴스(유저별 거래용 + 스캐너용 싱글톤) 공유
   private static spotBannedUntil = 0;
   private static futuresBannedUntil = 0;
+  // 로그에서 완전 차단(418)과 일시 제한(429)을 구분해 보여주기 위한 사유 기록
+  private static spotBanReason: '418' | '429' | null = null;
+  private static futuresBanReason: '418' | '429' | null = null;
 
   constructor(apiKey?: string, apiSecret?: string) {
     this.apiKey    = apiKey    ?? '';
@@ -65,8 +68,10 @@ export class BinanceService {
     client.interceptors.request.use(config => {
       const bannedUntil = kind === 'spot' ? BinanceService.spotBannedUntil : BinanceService.futuresBannedUntil;
       if (Date.now() < bannedUntil) {
+        const reason = (kind === 'spot' ? BinanceService.spotBanReason : BinanceService.futuresBanReason);
+        const label  = reason === '429' ? '일시 제한' : 'IP 차단';
         return Promise.reject(new Error(
-          `Binance ${kind === 'spot' ? 'Spot' : 'Futures'} IP 차단 중 — 해제 예정: ${new Date(bannedUntil).toLocaleTimeString('ko')}`
+          `Binance ${kind === 'spot' ? 'Spot' : 'Futures'} ${label} 중 — 해제 예정: ${new Date(bannedUntil).toLocaleTimeString('ko')}`
         ));
       }
       return config;
@@ -74,12 +79,26 @@ export class BinanceService {
     client.interceptors.response.use(
       res => res,
       err => {
+        const status = err.response?.status;
         const msg = err.response?.data?.msg as string | undefined;
         const match = msg && BAN_UNTIL_RE.exec(msg);
+
         if (match) {
+          // 418: 완전 차단 — 응답에 명시된 해제 시각을 그대로 사용
           const until = parseInt(match[1], 10);
-          if (kind === 'spot') BinanceService.spotBannedUntil = until;
-          else BinanceService.futuresBannedUntil = until;
+          if (kind === 'spot') { BinanceService.spotBannedUntil = until; BinanceService.spotBanReason = '418'; }
+          else { BinanceService.futuresBannedUntil = until; BinanceService.futuresBanReason = '418'; }
+        } else if (status === 429) {
+          // 429: 완전 차단 전 단계 경고 — 무시하고 계속 요청하면 418 완전 차단으로 악화됨.
+          // Retry-After 헤더(초) 만큼, 없으면 기본 10초 동안 이 IP의 후속 요청을 스스로 멈춤
+          const retryAfterSec = parseInt(err.response?.headers?.['retry-after'] ?? '', 10);
+          const throttleMs = (Number.isFinite(retryAfterSec) && retryAfterSec > 0 ? retryAfterSec : 10) * 1000;
+          const until = Date.now() + throttleMs;
+          if (kind === 'spot') {
+            if (until > BinanceService.spotBannedUntil) { BinanceService.spotBannedUntil = until; BinanceService.spotBanReason = '429'; }
+          } else {
+            if (until > BinanceService.futuresBannedUntil) { BinanceService.futuresBannedUntil = until; BinanceService.futuresBanReason = '429'; }
+          }
         }
         return Promise.reject(err);
       }
