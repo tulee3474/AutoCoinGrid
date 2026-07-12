@@ -113,6 +113,15 @@ function extractFillPrice(order: any, fallback: number): number {
   return parseFloat(order?.avgPrice) || fallback;
 }
 
+// 우리 SL 계산식(calcPdfStopLoss의 ISOLATED 99% 캡)은 펀딩비/수수료/실제 유지증거금률을
+// 반영하지 않는 단순 근사치라 실제 Binance 청산가보다 낙관적으로(더 멀게) 잡힐 수 있음 —
+// 실제 청산가를 안전 캡으로 반영해 그보다 먼저(90% 지점) 우리 SL이 걸리도록 보정
+function capSlWithLiquidation(slPrice: number, avgEntry: number, liquidationPrice: number): number {
+  if (!liquidationPrice || liquidationPrice <= avgEntry) return slPrice;
+  const safeCap = avgEntry + (liquidationPrice - avgEntry) * 0.9;
+  return Math.min(slPrice, safeCap);
+}
+
 // 알고 주문(TP/SL) 체결가 추출: algoOrder 응답의 actualPrice보다 실제 체결주문(actualOrderId)을
 // 재조회한 cumQuote/executedQty 기반 값이 더 정확 — entry/일반청산과 동일한 정확도 기준 적용
 async function extractAlgoExitPrice(
@@ -426,14 +435,7 @@ export async function openLivePosition(
       return null;
     }
 
-    const tpPrice     = entryPrice * (1 - trade.takeProfitPct / 100);
     const gridEnabled = trade.gridEnabled !== false;
-    const slPrice     = gridEnabled
-      ? calcPdfStopLoss(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing)
-      : entryPrice * (1 + trade.stopLossPct / 100);
-    const gridPrices  = gridEnabled
-      ? calcPdfGridPrices(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing)
-      : [];
 
     isHedge = await getHedgeMode(userId, binanceSvc);
     let entryOrder  = await binanceSvc.placeOrder({
@@ -447,6 +449,23 @@ export async function openLivePosition(
     }
     const filledQty   = parseFloat(entryOrder.executedQty || '0') || qty;
     const actualEntry = extractFillPrice(entryOrder, entryPrice);
+
+    // TP/SL/그리드는 신호 가격이 아니라 실제 체결가(actualEntry) 기준으로 계산
+    const tpPrice    = actualEntry * (1 - trade.takeProfitPct / 100);
+    let slPrice       = gridEnabled
+      ? calcPdfStopLoss(actualEntry, trade.leverage, trade.gridLevels, trade.gridSpacing)
+      : actualEntry * (1 + trade.stopLossPct / 100);
+    const gridPrices  = gridEnabled
+      ? calcPdfGridPrices(actualEntry, trade.leverage, trade.gridLevels, trade.gridSpacing)
+      : [];
+
+    // 우리 SL 계산식(펀딩비/수수료/실제 유지증거금률 미반영)이 Binance 실제 청산가보다
+    // 낙관적일 수 있어 — 실제 청산가를 조회해 그보다 먼저 손절되도록 안전 캡 적용
+    try {
+      const posAfterEntry = (await binanceSvc.getPositions()).find((p: any) => p.symbol === symbol);
+      const liqPrice = posAfterEntry ? parseFloat(posAfterEntry.liquidationPrice) : 0;
+      slPrice = capSlWithLiquidation(slPrice, actualEntry, liqPrice);
+    } catch { /* 조회 실패 시 기존 계산값 유지 */ }
 
     let tpOrderId: bigint | null = null;
     let slOrderId: bigint | null = null;
@@ -743,6 +762,13 @@ async function fillLiveGrids(userId: string, binanceSvc: BinanceService, broadca
       const remainingLevels = gridPrices.length - newGridsFilled;
       newTpPrice = newAvgEntry * (1 - tradeCfg.takeProfitPct / 100);
       newSlPrice = calcPdfStopLoss(newAvgEntry, pos.leverage, remainingLevels, tradeCfg.gridSpacing);
+
+      // 그리드 체결로 마진/평균단가가 바뀌었으니 실제 청산가도 새로 조회해 안전 캡 재적용
+      try {
+        const freshPos = (await binanceSvc.getPositions()).find((p: any) => p.symbol === pos.symbol);
+        const liqPrice = freshPos ? parseFloat(freshPos.liquidationPrice) : 0;
+        newSlPrice = capSlWithLiquidation(newSlPrice, newAvgEntry, liqPrice);
+      } catch { /* 조회 실패 시 기존 계산값 유지 */ }
 
       if (pos.tpOrderId !== null && pos.slOrderId !== null) {
         try {
