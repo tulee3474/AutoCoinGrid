@@ -21,10 +21,13 @@ export class BinanceService {
   private futuresOnboardDatesCache: Map<string, number> | null = null;
   private futuresOnboardDatesCachedAt = 0;
   private klinesCache = new Map<string, { data: Kline[]; ts: number }>();
-  private static readonly KLINES_CACHE_TTL = 50_000; // 스캔 사이클(60s)보다 짧게 — 같은 사이클 내 전략/유저 간 중복 요청 방지
+  // 기존 50초(스캔 사이클 60초보다 짧음)는 사이클마다 항상 캐시가 만료돼 매번 재호출되는
+  // 결과를 낳았음 — 후보 코인이 수백 개인 전략이 여러 개면 이 재호출만으로 weight가 크게 소모됨.
+  // 60초보다 살짝 길게 잡아 최소한 인접 사이클끼리는 캐시를 재사용하도록 함
+  private static readonly KLINES_CACHE_TTL = 90_000;
 
   // 1d/4h처럼 느리게 바뀌는 캔들은 매 스캔 사이클(60s)마다 새로 받을 필요가 없음 —
-  // 50초 캐시로는 다음 사이클 전에 항상 만료돼 매번 재호출되므로, 긴 타임프레임은 캐시를 길게 유지
+  // 짧은 캐시로는 다음 사이클 전에 항상 만료돼 매번 재호출되므로, 긴 타임프레임은 캐시를 더 길게 유지
   private static klinesCacheTtlFor(interval: string): number {
     if (interval === '1d') return 600_000;
     if (interval === '4h') return 300_000;
