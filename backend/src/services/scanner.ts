@@ -17,6 +17,15 @@ function candlesForPeriod(period: '1h' | '4h' | '24h', klineInterval: string): n
   return Math.max(1, Math.round(targetMins[period] / (minsPerCandle[klineInterval] ?? 60)));
 }
 
+// 1h/4h 모드는 유동성 통과 후보 전부(시장 전체에 가까움)의 캔들을 매 사이클 받아와야 해서
+// weight 소모가 큼 — 짝수 사이클에서만 24h 변화율로 느슨하게 사전 필터링해 후보를 크게 줄이고,
+// 홀수 사이클엔 원래대로 전체를 훑어서 "24h로는 평범해 보이지만 최근 4h에 크게 움직인" 코인을
+// 최소 2사이클(약 2분)에 한 번은 놓치지 않도록 함
+const SCAN_CYCLE_WINDOW_MS = 60_000;
+function isPrefilterCycle(): boolean {
+  return Math.floor(Date.now() / SCAN_CYCLE_WINDOW_MS) % 2 === 0;
+}
+
 export async function scanMarket(
   conditions: StrategyConditions,
   _btcDominance: number
@@ -32,6 +41,7 @@ export async function scanMarket(
   ]);
 
   const minListingMs = conditions.minListingDays ? conditions.minListingDays * 86_400_000 : 0;
+  const prefilterActive = priceChangeTf !== '24h' && isPrefilterCycle();
 
   const candidates = (tickers as any[])
     .filter(t => {
@@ -43,10 +53,16 @@ export async function scanMarket(
         const onboardDate = onboardDates.get(t.symbol);
         if (onboardDate && Date.now() - onboardDate < minListingMs) return false;
       }
-      // 24h 모드에서만 가격 변화율로 사전 필터 (1h/4h는 kline 단계에서 체크)
+      // 24h 모드는 가격 변화율로 바로 필터 (weight 추가 소모 없음, 이미 받은 티커 데이터)
       if (priceChangeTf === '24h') {
         const ch = parseFloat(t.priceChangePercent);
         return ch >= conditions.priceChange24h.min && ch <= conditions.priceChange24h.max;
+      }
+      // 1h/4h 모드: 짝수 사이클에서만 24h 변화율로 느슨하게(목표치의 30%, 최소 5%) 사전 필터 —
+      // 후보가 시장 전체에 가까워 캔들 요청 weight가 큰 걸 줄임. 홀수 사이클은 원래대로 전체 스캔
+      if (prefilterActive) {
+        const loosePct = Math.max(5, conditions.priceChange24h.min * 0.3);
+        if (parseFloat(t.priceChangePercent) < loosePct) return false;
       }
       return true;
     })
