@@ -4,9 +4,12 @@ import WebSocket from 'ws';
 // 계정별 상태가 전혀 없는 공개 데이터라 프로세스당 연결 1개만 유지하면 됨 —
 // 이게 healthy한 동안은 binance.ts의 getFuturesPremiumIndex()가 REST 폴링 대신 이 캐시를 씀.
 
+// 2026-04-23 Binance WS 마이그레이션으로 markPrice는 /market 라우팅 경로 필수 —
+// 라우팅 없는 구 경로(/ws/...)로는 핸드셰이크는 성공하지만 /market 소속 스트림(markPrice 포함)
+// 데이터가 전혀 오지 않음 (공개 /public 스트림만 수신됨). 인증/과금과 무관한 순수 URL 문제.
 const STREAM_URL = process.env.USE_TESTNET === 'true'
-  ? 'wss://stream.binancefuture.com/ws/!markPrice@arr@1s'
-  : 'wss://fstream.binance.com/ws/!markPrice@arr@1s';
+  ? 'wss://stream.binancefuture.com/market/ws/!markPrice@arr@1s'
+  : 'wss://fstream.binance.com/market/ws/!markPrice@arr@1s';
 
 const STALE_AFTER_MS = 15_000;      // 이 시간 동안 메시지 없으면 죽은 연결로 간주하고 강제 재연결
 const WATCHDOG_INTERVAL_MS = 5_000;
