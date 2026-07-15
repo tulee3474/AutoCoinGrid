@@ -601,6 +601,8 @@ export default function Admin() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [search, setSearch] = useState('');
+  const [sortKey, setSortKey] = useState<'email' | 'paperTotalAssets' | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [paperIds, setPaperIds] = useState(new Set<string>());
   const [liveIds, setLiveIds]   = useState(new Set<string>());
   const [scannerLoading, setScannerLoading] = useState<string | null>(null);
@@ -871,7 +873,29 @@ export default function Admin() {
     );
   }
 
-  const filtered = users.filter(u => u.email.toLowerCase().includes(search.toLowerCase()));
+  const handleSort = (key: 'email' | 'paperTotalAssets') => {
+    if (sortKey === key) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  };
+
+  const filtered = users
+    .filter(u => u.email.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => {
+      if (!sortKey) return 0;
+      let cmp = 0;
+      if (sortKey === 'email') {
+        cmp = a.email.localeCompare(b.email);
+      } else {
+        const av = a.paperTotalAssets ?? -Infinity;
+        const bv = b.paperTotalAssets ?? -Infinity;
+        cmp = av - bv;
+      }
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
 
   return (
     <div className="min-h-screen bg-surface p-6">
@@ -1090,12 +1114,16 @@ export default function Admin() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-xs text-gray-500 border-b border-border">
-                <th className="text-left py-2 pr-4">이메일</th>
+                <th className="text-left py-2 pr-4 cursor-pointer select-none hover:text-gray-300" onClick={() => handleSort('email')}>
+                  이메일{sortKey === 'email' ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                </th>
                 <th className="text-left py-2 pr-4">가입일</th>
                 <th className="text-center py-2 pr-4">API키</th>
                 <th className="text-center py-2 pr-4">전략</th>
                 <th className="text-center py-2 pr-4">실거래</th>
-                <th className="text-right py-2 pr-4">가상자산(미실현 포함)</th>
+                <th className="text-right py-2 pr-4 cursor-pointer select-none hover:text-gray-300" onClick={() => handleSort('paperTotalAssets')}>
+                  가상자산(미실현 포함){sortKey === 'paperTotalAssets' ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                </th>
                 <th className="text-center py-2 pr-4">가상 스캐너</th>
                 <th className="text-center py-2 pr-4">실거래 스캐너</th>
                 <th className="text-right py-2">액션</th>
