@@ -1095,7 +1095,7 @@ export default function Admin() {
                 <th className="text-center py-2 pr-4">API키</th>
                 <th className="text-center py-2 pr-4">전략</th>
                 <th className="text-center py-2 pr-4">실거래</th>
-                <th className="text-right py-2 pr-4">가상잔고</th>
+                <th className="text-right py-2 pr-4">가상자산(미실현 포함)</th>
                 <th className="text-center py-2 pr-4">가상 스캐너</th>
                 <th className="text-center py-2 pr-4">실거래 스캐너</th>
                 <th className="text-right py-2">액션</th>
@@ -1133,7 +1133,7 @@ export default function Admin() {
                       <td className="py-3 pr-4 text-center text-gray-300">{u.strategies}</td>
                       <td className="py-3 pr-4 text-center text-gray-300">{u.liveTrades}</td>
                       <td className="py-3 pr-4 text-right text-gray-300">
-                        {u.paperBalance != null ? `$${u.paperBalance.toFixed(0)}` : '-'}
+                        {u.paperTotalAssets != null ? `$${u.paperTotalAssets.toFixed(0)}` : '-'}
                       </td>
                       <td className="py-3 pr-4 text-center">
                         <button

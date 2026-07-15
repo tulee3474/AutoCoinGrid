@@ -96,6 +96,7 @@ export interface AdminUser {
   livePositions: number;
   liveTrades: number;
   paperBalance: number | null;
+  paperTotalAssets: number | null;
 }
 
 // ── 마켓 ──────────────────────────────────────────────────────

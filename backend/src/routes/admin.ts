@@ -50,21 +50,52 @@ router.get('/users', requireAdmin, async (req: Request, res: Response) => {
         _count: {
           select: { strategies: true, livePositions: true, liveTradeLogs: true }
         },
-        paperWallet: { select: { balance: true, initialBalance: true } }
+        paperWallet: {
+          select: {
+            balance: true, initialBalance: true,
+            openPositions: {
+              select: { symbol: true, avgEntryPrice: true, entryPrice: true, totalEntryUsdt: true, entryAmountUsdt: true, leverage: true }
+            }
+          }
+        }
       },
       orderBy: { createdAt: 'desc' }
     });
 
-    res.json(users.map(u => ({
-      id:             u.id,
-      email:          u.email,
-      createdAt:      u.createdAt,
-      hasApiKeys:     !!u.apiKey,
-      strategies:     u._count.strategies,
-      livePositions:  u._count.livePositions,
-      liveTrades:     u._count.liveTradeLogs,
-      paperBalance:   u.paperWallet?.balance ?? null,
-    })));
+    // 미실현 손익 포함 총 자산 계산용 — 전체 유저 오픈 포지션 심볼을 모아 한 번만 시세 조회
+    const allSymbols = [...new Set(users.flatMap(u => u.paperWallet?.openPositions.map(p => p.symbol) ?? []))];
+    const priceMap: Record<string, number> = {};
+    if (allSymbols.length > 0) {
+      try {
+        const indices = await binance.getFuturesPremiumIndex() as any[];
+        for (const m of indices) {
+          if (allSymbols.includes(m.symbol)) priceMap[m.symbol] = parseFloat(m.markPrice);
+        }
+      } catch {}
+    }
+
+    res.json(users.map(u => {
+      const paperUnrealizedPnl = (u.paperWallet?.openPositions ?? []).reduce((sum, p) => {
+        const markPrice = priceMap[p.symbol];
+        if (markPrice == null) return sum;
+        const avgEntry   = p.avgEntryPrice > 0 ? p.avgEntryPrice : p.entryPrice;
+        const totalUsdt  = p.totalEntryUsdt  > 0 ? p.totalEntryUsdt  : p.entryAmountUsdt;
+        const impliedQty = totalUsdt * p.leverage / avgEntry;
+        return sum + (avgEntry - markPrice) * impliedQty; // SHORT
+      }, 0);
+      const paperBalance = u.paperWallet?.balance ?? null;
+      return {
+        id:                 u.id,
+        email:              u.email,
+        createdAt:          u.createdAt,
+        hasApiKeys:         !!u.apiKey,
+        strategies:         u._count.strategies,
+        livePositions:      u._count.livePositions,
+        liveTrades:         u._count.liveTradeLogs,
+        paperBalance,
+        paperTotalAssets:   paperBalance != null ? paperBalance + paperUnrealizedPnl : null,
+      };
+    }));
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
