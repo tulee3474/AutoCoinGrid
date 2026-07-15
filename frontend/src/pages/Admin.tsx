@@ -9,6 +9,7 @@ import {
   AdminUser, AdminPreset
 } from '../utils/api';
 import { StrategyConditions, TradeConfig, DEFAULT_CONDITIONS, DEFAULT_TRADE } from '../types';
+import { fmtDate } from '../utils/datetime';
 
 interface UserDetail {
   id: string;
@@ -1153,7 +1154,7 @@ export default function Admin() {
                         </button>
                       </td>
                       <td className="py-3 pr-4 text-gray-400 whitespace-nowrap">
-                        {new Date(u.createdAt).toLocaleDateString('ko')}
+                        {fmtDate(u.createdAt)}
                       </td>
                       <td className="py-3 pr-4 text-center">
                         <span className={`text-xs px-2 py-0.5 rounded-full ${

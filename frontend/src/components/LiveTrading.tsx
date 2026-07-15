@@ -8,6 +8,7 @@ import {
   LivePosition, LiveTradeLog, ScanLogEntry, LiveAccountInfo
 } from '../utils/api';
 import { StrategyConfig } from '../types';
+import { fmtDateTime, fmtTime } from '../utils/datetime';
 
 const EXIT_LABEL: Record<string, { text: string; cls: string }> = {
   takeProfit:     { text: '익절',    cls: 'bg-up/15 text-up' },
@@ -28,11 +29,7 @@ function StatCard({ label, value, sub, valueClass }: { label: string; value: str
   );
 }
 
-const DT_OPTS: Intl.DateTimeFormatOptions = {
-  year: 'numeric', month: '2-digit', day: '2-digit',
-  hour: '2-digit', minute: '2-digit', second: '2-digit'
-};
-const fmtDt = (ts: string) => new Date(ts).toLocaleString('ko-KR', DT_OPTS);
+const fmtDt = fmtDateTime;
 
 const REFRESH_SEC = 10;
 const MANUAL_REFRESH_COOLDOWN_SEC = 5;
@@ -41,7 +38,7 @@ function ScanLogLine({ entry }: { entry: ScanLogEntry }) {
   const cls = { info: 'text-gray-400', signal: 'text-up', close: 'text-accent', error: 'text-down' }[entry.type];
   return (
     <div className={`text-xs font-mono ${cls} py-0.5`}>
-      <span className="text-gray-600 mr-2">{new Date(entry.time).toLocaleTimeString('ko')}</span>
+      <span className="text-gray-600 mr-2">{fmtTime(entry.time)}</span>
       {entry.message}
     </div>
   );

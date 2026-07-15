@@ -80,8 +80,6 @@ async function fetchRsi14(symbol: string, interval: string = '1h'): Promise<numb
 // ── 스캔 사이클 ───────────────────────────────────────────────
 
 async function runScanCycle(userId: string, broadcast: (data: unknown) => void) {
-  const now = new Date().toLocaleTimeString('ko');
-
   // 1. 오픈 포지션 TP/SL/타임아웃 체크
   const [wallet, strategies] = await Promise.all([
     getOrCreateWallet(userId),
@@ -254,7 +252,7 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
 
   // 2. 활성 전략으로 신호 스캔 → 신규 진입 (위에서 이미 로드됨)
   if (strategies.length === 0) {
-    addLog(userId, `[${now}] 활성 전략 없음`);
+    addLog(userId, '활성 전략 없음');
     broadcast({ type: 'paper_scan', data: { signals: [], message: '활성 전략 없음' } });
     return;
   }
@@ -266,7 +264,7 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
       const signals     = await scanMarket(strategy.conditions, btcDom);
       const fullSignals = signals.filter(s => s.signalScore >= 100);
 
-      addLog(userId, `[${now}] 전략 "${strategy.name}": 후보 ${signals.length}개, 충족 ${fullSignals.length}개`);
+      addLog(userId, `전략 "${strategy.name}": 후보 ${signals.length}개, 충족 ${fullSignals.length}개`);
 
       for (const signal of fullSignals) {
         const pos = await openPaperPosition(userId, signal.symbol, signal.price, strategy.trade, strategy.name);

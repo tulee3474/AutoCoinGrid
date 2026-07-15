@@ -3,6 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
 import { createStrategy, updateStrategy, getStrategies, deleteStrategy, toggleStrategy, validateStrategy, runBacktest, getPresets, AdminPreset } from '../utils/api';
 import { ValidationResult, BacktestResult, StrategyConditions, TradeConfig } from '../types';
+import { fmtDate } from '../utils/datetime';
 
 // ── 공통 입력 ────────────────────────────────────────────────
 
@@ -209,7 +210,7 @@ function CoinDetailModal({
                     {result.trades.map((t, i) => (
                       <div key={i} className="text-xs p-2 bg-surface rounded-lg space-y-1">
                         <div className="flex items-center justify-between">
-                          <span className="text-gray-400">{new Date(t.entryTime).toLocaleDateString('ko')}</span>
+                          <span className="text-gray-400">{fmtDate(t.entryTime)}</span>
                           <span className={`font-semibold num ${t.pnlPct > 0 ? 'text-up' : 'text-down'}`}>
                             {t.pnlPct > 0 ? '+' : ''}{t.pnlPct.toFixed(2)}%
                           </span>

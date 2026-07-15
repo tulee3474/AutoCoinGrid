@@ -74,7 +74,7 @@ export class BinanceService {
         const reason = (kind === 'spot' ? BinanceService.spotBanReason : BinanceService.futuresBanReason);
         const label  = reason === '429' ? '일시 제한' : 'IP 차단';
         return Promise.reject(new Error(
-          `Binance ${kind === 'spot' ? 'Spot' : 'Futures'} ${label} 중 — 해제 예정: ${new Date(bannedUntil).toLocaleTimeString('ko')}`
+          `Binance ${kind === 'spot' ? 'Spot' : 'Futures'} ${label} 중 — 해제 예정: ${new Date(bannedUntil).toLocaleTimeString('ko-KR', { hour12: false, timeZone: 'Asia/Seoul' })}`
         ));
       }
       return config;

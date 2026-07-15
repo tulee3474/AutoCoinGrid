@@ -855,7 +855,6 @@ async function runSync(userId: string, broadcast: (data: unknown) => void) {
 async function runLiveScanCycle(userId: string, broadcast: (data: unknown) => void) {
   const state = traders.get(userId);
   if (!state) return;
-  const now = new Date().toLocaleTimeString('ko');
 
   // runSync는 isSyncing 플래그로 중복 실행 방지 — 15s sync 인터벌과 동시 실행 시 자동 skip
   await runSync(userId, broadcast);
@@ -865,14 +864,14 @@ async function runLiveScanCycle(userId: string, broadcast: (data: unknown) => vo
 
   // 신호 스캔 → 신규 진입
   const strategies = await loadStrategies(userId);
-  if (strategies.length === 0) { addLog(userId, `[${now}] 활성 전략 없음`); return; }
+  if (strategies.length === 0) { addLog(userId, '활성 전략 없음'); return; }
 
   const btcDom = await getBtcDominance();
   for (const strategy of strategies) {
     try {
       const signals     = await scanMarket(strategy.conditions, btcDom);
       const fullSignals = signals.filter(s => s.signalScore >= 100);
-      addLog(userId, `[${now}] 전략 "${strategy.name}": 후보 ${signals.length}개, 충족 ${fullSignals.length}개`);
+      addLog(userId, `전략 "${strategy.name}": 후보 ${signals.length}개, 충족 ${fullSignals.length}개`);
       for (const signal of fullSignals) {
         await openLivePosition(userId, signal.symbol, signal.price, strategy.name, strategy.trade, broadcast);
       }

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useStore } from '../store';
 import { runBacktest } from '../utils/api';
 import { BacktestResult } from '../types';
+import { fmtDate } from '../utils/datetime';
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   ReferenceLine, CartesianGrid
@@ -28,8 +29,8 @@ function TradeRow({ trade, idx }: { trade: BacktestResult['trades'][0]; idx: num
   return (
     <tr className="border-b border-border/40 text-xs hover:bg-white/3">
       <td className="py-2 text-gray-500 num">{idx + 1}</td>
-      <td className="py-2 text-gray-400">{new Date(trade.entryTime).toLocaleDateString('ko')}</td>
-      <td className="py-2 text-gray-400">{new Date(trade.exitTime).toLocaleDateString('ko')}</td>
+      <td className="py-2 text-gray-400">{fmtDate(trade.entryTime)}</td>
+      <td className="py-2 text-gray-400">{fmtDate(trade.exitTime)}</td>
       <td className="py-2 text-gray-300 num">${trade.entryPrice.toFixed(5)}</td>
       <td className="py-2 text-yellow-400 num">${trade.avgEntryPrice.toFixed(5)}</td>
       <td className="py-2 text-gray-300 num">${trade.exitPrice.toFixed(5)}</td>
@@ -250,7 +251,7 @@ export default function Backtest() {
               <h2 className="section-title mb-4">에퀴티 커브 (누적 손익 USDT)</h2>
               <ResponsiveContainer width="100%" height={200}>
                 <LineChart data={backtestResult.equityCurve.map(p => ({
-                  time: new Date(p.time).toLocaleDateString('ko'),
+                  time: fmtDate(p.time),
                   equity: +p.equity.toFixed(2)
                 }))}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#2a2d3a" />

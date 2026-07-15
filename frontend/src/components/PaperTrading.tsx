@@ -8,6 +8,7 @@ import {
   getStrategies, toggleStrategy, deleteStrategy, getPaperStrategyStats
 } from '../utils/api';
 import { StrategyConfig } from '../types';
+import { fmtDate, fmtDateTime, fmtTime } from '../utils/datetime';
 
 interface WalletSummary {
   balance: number;
@@ -87,17 +88,13 @@ function ScanLogLine({ entry }: { entry: ScanLog }) {
   }[entry.type];
   return (
     <div className={`text-xs font-mono ${cls} py-0.5`}>
-      <span className="text-gray-600 mr-2">{new Date(entry.time).toLocaleTimeString('ko')}</span>
+      <span className="text-gray-600 mr-2">{fmtTime(entry.time)}</span>
       {entry.message}
     </div>
   );
 }
 
-const DT_OPTS: Intl.DateTimeFormatOptions = {
-  year: 'numeric', month: '2-digit', day: '2-digit',
-  hour: '2-digit', minute: '2-digit', second: '2-digit'
-};
-const fmtDt = (ts: number) => new Date(ts).toLocaleString('ko-KR', DT_OPTS);
+const fmtDt = fmtDateTime;
 
 const REFRESH_SEC = 10;
 const MANUAL_REFRESH_COOLDOWN_SEC = 5;
@@ -434,7 +431,7 @@ export default function PaperTrading() {
                     <td className="py-2 pr-3 text-up num">${pos.takeProfitPrice.toPrecision(4)}</td>
                     <td className="py-2 pr-3 text-down num">${pos.stopLossPrice.toPrecision(4)}</td>
                     <td className="py-2 pr-3 text-gray-500">
-                      {new Date(pos.expiresAt).toLocaleDateString('ko')}
+                      {fmtDate(pos.expiresAt)}
                     </td>
                     <td className="py-2">
                       <button
