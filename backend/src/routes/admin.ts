@@ -75,14 +75,19 @@ router.get('/users', requireAdmin, async (req: Request, res: Response) => {
     }
 
     res.json(users.map(u => {
-      const paperUnrealizedPnl = (u.paperWallet?.openPositions ?? []).reduce((sum, p) => {
-        const markPrice = priceMap[p.symbol];
-        if (markPrice == null) return sum;
+      // wallet.balance는 오픈 포지션 증거금이 이미 차감된 "가용 현금"이라
+      // 총 자산 계산 시엔 물려 있는 증거금(marginLocked)을 다시 더해줘야 함
+      let paperUnrealizedPnl = 0;
+      let paperMarginLocked  = 0;
+      for (const p of u.paperWallet?.openPositions ?? []) {
         const avgEntry   = p.avgEntryPrice > 0 ? p.avgEntryPrice : p.entryPrice;
         const totalUsdt  = p.totalEntryUsdt  > 0 ? p.totalEntryUsdt  : p.entryAmountUsdt;
+        paperMarginLocked += totalUsdt;
+        const markPrice = priceMap[p.symbol];
+        if (markPrice == null) continue;
         const impliedQty = totalUsdt * p.leverage / avgEntry;
-        return sum + (avgEntry - markPrice) * impliedQty; // SHORT
-      }, 0);
+        paperUnrealizedPnl += (avgEntry - markPrice) * impliedQty; // SHORT
+      }
       const paperBalance = u.paperWallet?.balance ?? null;
       return {
         id:                 u.id,
@@ -93,7 +98,7 @@ router.get('/users', requireAdmin, async (req: Request, res: Response) => {
         livePositions:      u._count.livePositions,
         liveTrades:         u._count.liveTradeLogs,
         paperBalance,
-        paperTotalAssets:   paperBalance != null ? paperBalance + paperUnrealizedPnl : null,
+        paperTotalAssets:   paperBalance != null ? paperBalance + paperMarginLocked + paperUnrealizedPnl : null,
       };
     }));
   } catch (e: any) {

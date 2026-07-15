@@ -63,6 +63,8 @@ function UserDetailPanel({ detail }: { detail: UserDetail }) {
 
   const liveUnrealizedTotal  = livePositions.reduce((s, p)  => s + (p.unrealizedPnlUsdt  ?? 0), 0);
   const paperUnrealizedTotal = paperPositions.reduce((s, p) => s + (p.unrealizedPnlUsdt ?? 0), 0);
+  // paperWallet.balance는 오픈 포지션에 물린 증거금이 빠진 "가용 현금"이라 Equity 계산 시 따로 더해줘야 함
+  const paperMarginLocked = paperPositions.reduce((s, p) => s + (p.totalEntryUsdt > 0 ? p.totalEntryUsdt : p.entryAmountUsdt), 0);
 
   const fmt = (v: number) => `${v >= 0 ? '+' : '-'}$${Math.abs(v).toFixed(2)}`;
   const cls = (v: number) => v >= 0 ? 'text-up' : 'text-down';
@@ -111,8 +113,8 @@ function UserDetailPanel({ detail }: { detail: UserDetail }) {
                 {detail.paperWallet && (
                   <div className="flex justify-between text-xs">
                     <span className="text-gray-500">총 자산 (Equity)</span>
-                    <span className={`font-semibold ${cls(detail.paperWallet.balance + paperUnrealizedTotal - detail.paperWallet.initialBalance)}`}>
-                      ${(detail.paperWallet.balance + paperUnrealizedTotal).toFixed(2)}
+                    <span className={`font-semibold ${cls(detail.paperWallet.balance + paperMarginLocked + paperUnrealizedTotal - detail.paperWallet.initialBalance)}`}>
+                      ${(detail.paperWallet.balance + paperMarginLocked + paperUnrealizedTotal).toFixed(2)}
                     </span>
                   </div>
                 )}

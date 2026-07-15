@@ -42,17 +42,21 @@ router.get('/wallet', requireAuth, async (req: AuthRequest, res: Response) => {
   const winRate          = groupedWinRate(wallet.tradeLogs);
 
   let unrealizedPnl = 0;
+  // wallet.balance는 오픈 포지션 진입 시 증거금이 이미 차감된 "가용 현금"이라
+  // Equity(총 자산) 계산 시엔 각 포지션에 물려 있는 증거금을 다시 더해줘야 함
+  let marginLocked  = 0;
   if (wallet.openPositions.length > 0) {
     try {
       // 마지막 체결가(lastPrice)가 아니라 Binance가 PnL/ROE 계산에 쓰는 markPrice 기준으로 맞춤
       const indices  = await binance.getFuturesPremiumIndex() as any[];
       const priceMap = new Map<string, number>(indices.map((m: any) => [m.symbol, parseFloat(m.markPrice)]));
       wallet.openPositions.forEach(pos => {
+        // 그리드 추가진입이 있으면 avgEntryPrice/totalEntryUsdt 기준으로 계산 (청산 시 계산과 동일)
+        const avgEntry  = pos.avgEntryPrice  > 0 ? pos.avgEntryPrice  : pos.entryPrice;
+        const totalUsdt = pos.totalEntryUsdt > 0 ? pos.totalEntryUsdt : pos.entryAmountUsdt;
+        marginLocked += totalUsdt;
         const price = priceMap.get(pos.symbol);
         if (price) {
-          // 그리드 추가진입이 있으면 avgEntryPrice/totalEntryUsdt 기준으로 계산 (청산 시 계산과 동일)
-          const avgEntry  = pos.avgEntryPrice  > 0 ? pos.avgEntryPrice  : pos.entryPrice;
-          const totalUsdt = pos.totalEntryUsdt > 0 ? pos.totalEntryUsdt : pos.entryAmountUsdt;
           const pnlPct = ((avgEntry - price) / avgEntry) * 100 * pos.leverage;
           unrealizedPnl += totalUsdt * pnlPct / 100;
         }
@@ -67,7 +71,7 @@ router.get('/wallet', requireAuth, async (req: AuthRequest, res: Response) => {
     totalTradesCount:   wallet.tradeLogs.length,
     realizedPnlUsdt:    totalRealizedPnl,
     unrealizedPnlUsdt:  unrealizedPnl,
-    totalEquity:        wallet.balance + unrealizedPnl,
+    totalEquity:        wallet.balance + marginLocked + unrealizedPnl,
     winRate
   });
 });
