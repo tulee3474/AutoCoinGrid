@@ -480,8 +480,6 @@ export default function Strategy() {
 
   const setChange = (key: 'min' | 'max', v: number) =>
     setDraftConditions({ priceChange24h: { ...draftConditions.priceChange24h, [key]: v } });
-  const setVol = (key: 'min' | 'max', v: number) =>
-    setDraftConditions({ volumeMultiplier: { ...draftConditions.volumeMultiplier, [key]: v } });
 
   const checkEmpty = () => {
     if (emptyFields.current.size > 0) {
@@ -655,38 +653,8 @@ export default function Strategy() {
           </div>
         </div>
 
-        {/* 볼륨 배수 */}
-        <RangeInput label="볼륨 배수 (20일 평균 대비)" unit="x"
-          minVal={draftConditions.volumeMultiplier.min} maxVal={draftConditions.volumeMultiplier.max}
-          onMinChange={v => setVol('min', v)} onMaxChange={v => setVol('max', v)}
-          fieldIdMin="vol-min" fieldIdMax="vol-max" emptyTracker={emptyFields} />
-
         {/* 체크박스 조건들 */}
         <div className="space-y-3">
-          <div className="flex items-center gap-3">
-            <input type="checkbox" id="ma7" className="w-4 h-4 accent-accent"
-              checked={draftConditions.priceAboveMa7 ?? false}
-              onChange={e => setDraftConditions({ priceAboveMa7: e.target.checked })} />
-            <label htmlFor="ma7" className="text-sm text-gray-300 cursor-pointer">
-              MA7 위 코인만 <span className="text-gray-500 text-xs">(7일 단순이동평균 위)</span>
-            </label>
-          </div>
-          <div className="flex items-center gap-3">
-            <input type="checkbox" id="ma20" className="w-4 h-4 accent-accent"
-              checked={draftConditions.priceAboveMa20 ?? false}
-              onChange={e => setDraftConditions({ priceAboveMa20: e.target.checked })} />
-            <label htmlFor="ma20" className="text-sm text-gray-300 cursor-pointer">
-              MA20 위 코인만 <span className="text-gray-500 text-xs">(20일 단순이동평균 위)</span>
-            </label>
-          </div>
-          <div className="flex items-center gap-3">
-            <input type="checkbox" id="bb" className="w-4 h-4 accent-accent"
-              checked={draftConditions.priceAboveBB}
-              onChange={e => setDraftConditions({ priceAboveBB: e.target.checked })} />
-            <label htmlFor="bb" className="text-sm text-gray-300 cursor-pointer">
-              볼린저 상단 돌파 코인만 <span className="text-gray-500 text-xs">(BB 20 상단 돌파 확인)</span>
-            </label>
-          </div>
           <div className="space-y-2">
             <div className="flex items-center gap-3">
               <input type="checkbox" id="minListingDays" className="w-4 h-4 accent-accent"

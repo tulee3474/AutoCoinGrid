@@ -307,7 +307,6 @@ export default function PaperTrading() {
                   <div className="text-xs text-gray-500 mt-0.5">
                     RSI {s.conditions.rsi.min}~{s.conditions.rsi.max} ·{' '}
                     24h +{s.conditions.priceChange24h.min}% 이상 ·{' '}
-                    볼륨 {s.conditions.volumeMultiplier.min}x 이상 ·{' '}
                     {s.conditions.rsi.timeframe}봉 ·{' '}
                     레버리지 {s.trade.leverage}x
                   </div>

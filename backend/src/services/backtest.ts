@@ -1,5 +1,5 @@
 import { Kline, StrategyConditions, TradeConfig, BacktestResult, BacktestTrade } from '../types';
-import { calcRSI, calcSMA, calcVolumeRatio, calc24hChange, candlesPerDay, calcBollingerBand } from './indicator';
+import { calcRSI, calc24hChange, candlesPerDay } from './indicator';
 import { calcPdfGridPrices, calcPdfAvgEntry, calcPdfStopLoss } from './gridUtils';
 
 interface BacktestOptions {
@@ -28,20 +28,11 @@ function checkConditions(
   interval: string
 ): boolean {
   const closes  = klines.slice(0, idx + 1).map(k => k.close);
-  const volumes = klines.slice(0, idx + 1).map(k => k.volume);
   const cpd = candlesPerDay(interval);
 
   if (closes.length < 20) return false;
 
-  const rsi         = calcRSI(closes, conditions.rsi.period ?? 14);
-  const ma7         = calcSMA(closes, 7);
-  const ma20        = calcSMA(closes, 20);
-  const volumeRatio = calcVolumeRatio(volumes, 20);
-  const last        = closes[closes.length - 1];
-  const aboveMa7    = last > ma7;
-  const aboveMa20   = last > ma20;
-  const bb          = calcBollingerBand(closes);
-  const aboveBB     = last > bb.upper;
+  const rsi = calcRSI(closes, conditions.rsi.period ?? 14);
 
   // 가격 변화: 지정된 타임프레임 기준
   const priceChangeTf = conditions.priceChangeTimeframe ?? '24h';
@@ -58,12 +49,7 @@ function checkConditions(
     rsi >= conditions.rsi.min &&
     rsi <= (conditions.rsi.max ?? 100) &&
     priceChange >= conditions.priceChange24h.min &&
-    priceChange <= conditions.priceChange24h.max &&
-    volumeRatio >= conditions.volumeMultiplier.min &&
-    volumeRatio <= conditions.volumeMultiplier.max &&
-    (!conditions.priceAboveMa7  || aboveMa7) &&
-    (!conditions.priceAboveMa20 || aboveMa20) &&
-    (!conditions.priceAboveBB   || aboveBB)
+    priceChange <= conditions.priceChange24h.max
     // && btcDomPass
   );
 }

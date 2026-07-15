@@ -95,7 +95,6 @@ export default function Backtest() {
           {[
             { label: 'RSI',         value: `${draftConditions.rsi.min} ~ ${draftConditions.rsi.max}` },
             { label: '24h 상승률',  value: `+${draftConditions.priceChange24h.min}% ~ +${draftConditions.priceChange24h.max}%` },
-            { label: '볼륨 배수',   value: `${draftConditions.volumeMultiplier.min}x 이상` },
             { label: '레버리지',    value: `${draftTrade.leverage}x` },
             { label: '그리드',      value: `${draftTrade.gridLevels}개 × +${draftTrade.gridSpacing}%` },
             { label: 'TP / SL',     value: `${draftTrade.takeProfitPct}% / ${draftTrade.stopLossPct}%` },

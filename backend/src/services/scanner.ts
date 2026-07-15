@@ -121,14 +121,10 @@ export async function scanMarket(
                            actualChange <= conditions.priceChange24h.max;
 
         const scores = [
-          (ind.rsi14 >= conditions.rsi.min)                            ? 30 : 0, // RSI min만 (max 제거)
-          changePass                                                    ? 25 : 0, // 가격 변화
-          (ind.volumeRatio >= conditions.volumeMultiplier.min)         ? 20 : 0, // 볼륨
-          (!conditions.priceAboveMa7  || ind.aboveMa7)                ? 5  : 0, // MA7
-          (!conditions.priceAboveMa20 || ind.aboveMa20)               ? 5  : 0, // MA20
+          (ind.rsi14 >= conditions.rsi.min) ? 50 : 0, // RSI min만 (max 제거)
+          changePass                        ? 50 : 0, // 가격 변화
           // BTC 도미넌스 조건 비활성화 (나중에 추가할 수 있음)
-          // (btcDominance <= conditions.btcDominanceMax)              ? 10 : 0,
-          (!conditions.priceAboveBB   || ind.aboveBB)                 ? 15 : 0, // 볼린저 상단
+          // (btcDominance <= conditions.btcDominanceMax) ? 10 : 0,
         ];
         const signalScore = scores.reduce((a, b) => a + b, 0);
 

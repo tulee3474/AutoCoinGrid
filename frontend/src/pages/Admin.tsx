@@ -175,11 +175,7 @@ function UserDetailPanel({ detail }: { detail: UserDetail }) {
                         <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
                           <div><span className="text-gray-600">RSI </span><span className="text-gray-300">{c?.rsi?.min}~{c?.rsi?.max} ({c?.rsi?.period}일, {c?.rsi?.timeframe}봉)</span></div>
                           <div><span className="text-gray-600">24h 상승률 </span><span className="text-gray-300">+{c?.priceChange24h?.min}%~+{c?.priceChange24h?.max}%</span></div>
-                          <div><span className="text-gray-600">볼륨 배수 </span><span className="text-gray-300">{c?.volumeMultiplier?.min}x~{c?.volumeMultiplier?.max}x</span></div>
                           <div><span className="text-gray-600">가격변화 기준 </span><span className="text-gray-300">{c?.priceChangeTimeframe}</span></div>
-                          <div><span className="text-gray-600">MA7 위 </span><span className="text-gray-300">{c?.priceAboveMa7 ? '✓' : '✗'}</span></div>
-                          <div><span className="text-gray-600">MA20 위 </span><span className="text-gray-300">{c?.priceAboveMa20 ? '✓' : '✗'}</span></div>
-                          <div><span className="text-gray-600">볼린저 상단 </span><span className="text-gray-300">{c?.priceAboveBB ? '✓' : '✗'}</span></div>
                           <div><span className="text-gray-600">BTC 도미넌스 </span><span className="text-gray-300">&lt;{c?.btcDominanceMax}%</span></div>
                           <div><span className="text-gray-600">상장 초기 제외 </span><span className="text-gray-300">{c?.minListingDays != null ? `${c.minListingDays}일 미만` : '비활성'}</span></div>
                           <div><span className="text-gray-600">최근 급락 제외 </span><span className="text-gray-300">{c?.noRecentCrash != null ? `${c.noRecentCrash.days}일 내 -${c.noRecentCrash.dropPct}%` : '비활성'}</span></div>
@@ -358,8 +354,6 @@ function PresetForm({
     ...DEFAULT_CONDITIONS,
     ...initial.conditions,
     priceChangeTimeframe: (initial.conditions as any).priceChangeTimeframe ?? DEFAULT_CONDITIONS.priceChangeTimeframe,
-    priceAboveMa7:        (initial.conditions as any).priceAboveMa7        ?? DEFAULT_CONDITIONS.priceAboveMa7,
-    priceAboveMa20:       (initial.conditions as any).priceAboveMa20       ?? DEFAULT_CONDITIONS.priceAboveMa20,
     minListingDays:       (initial.conditions as any).minListingDays !== undefined ? (initial.conditions as any).minListingDays : null,
     noRecentCrash:        (initial.conditions as any).noRecentCrash !== undefined ? (initial.conditions as any).noRecentCrash : null,
   });
@@ -391,9 +385,6 @@ function PresetForm({
           <Range label="24h 상승률" unit="%" min={c.priceChange24h.min} max={c.priceChange24h.max}
             onMin={v => sc({ priceChange24h: { ...c.priceChange24h, min: v } })}
             onMax={v => sc({ priceChange24h: { ...c.priceChange24h, max: v } })} />
-          <Range label="볼륨 배수" unit="x" min={c.volumeMultiplier.min} max={c.volumeMultiplier.max}
-            onMin={v => sc({ volumeMultiplier: { ...c.volumeMultiplier, min: v } })}
-            onMax={v => sc({ volumeMultiplier: { ...c.volumeMultiplier, max: v } })} />
           <Num label="BTC 도미넌스 최대" unit="%" value={c.btcDominanceMax}
             onChange={v => sc({ btcDominanceMax: v })} />
           <F label="RSI 기간">
@@ -423,30 +414,6 @@ function PresetForm({
                       : 'border-border text-gray-400 hover:border-gray-500'
                   }`}>{tf}</button>
               ))}
-            </div>
-          </F>
-          <F label="MA7 위 코인만">
-            <div className="flex items-center gap-2 mt-1">
-              <input type="checkbox" checked={c.priceAboveMa7 ?? false}
-                onChange={e => sc({ priceAboveMa7: e.target.checked })}
-                className="w-4 h-4 accent-accent" />
-              <span className="text-xs text-gray-300">사용</span>
-            </div>
-          </F>
-          <F label="MA20 위 코인만">
-            <div className="flex items-center gap-2 mt-1">
-              <input type="checkbox" checked={c.priceAboveMa20 ?? false}
-                onChange={e => sc({ priceAboveMa20: e.target.checked })}
-                className="w-4 h-4 accent-accent" />
-              <span className="text-xs text-gray-300">사용</span>
-            </div>
-          </F>
-          <F label="볼린저 상단 돌파만">
-            <div className="flex items-center gap-2 mt-1">
-              <input type="checkbox" id="bb-form" checked={c.priceAboveBB}
-                onChange={e => sc({ priceAboveBB: e.target.checked })}
-                className="w-4 h-4 accent-accent" />
-              <label htmlFor="bb-form" className="text-xs text-gray-300 cursor-pointer">사용</label>
             </div>
           </F>
           <F label="상장 초기 코인 제외">

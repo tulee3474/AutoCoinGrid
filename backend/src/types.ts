@@ -12,10 +12,6 @@ export interface StrategyConditions {
   rsi: { min: number; max: number; period: number; timeframe: string };
   priceChange24h: { min: number; max: number };
   priceChangeTimeframe: '1h' | '4h' | '24h';   // 가격 변화 기준 시간
-  volumeMultiplier: { min: number; max: number };
-  priceAboveMa7: boolean;    // MA7 위 조건
-  priceAboveMa20: boolean;   // MA20 위 조건
-  priceAboveBB: boolean;     // 볼린저 상단 돌파
   btcDominanceMax: number;   // 현재 비활성 (주석 처리)
   minListingDays?: number | null;  // null/0/미설정 = 비활성, 숫자 = 선물 상장일 기준 이 일수 미만이면 제외
   noRecentCrash?: { days: number; dropPct: number } | null;  // null/미설정 = 비활성. 최근 days일 내 일봉 기준 dropPct% 이상 급락한 적 있으면 제외

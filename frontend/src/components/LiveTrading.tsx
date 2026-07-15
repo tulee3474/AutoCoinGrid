@@ -334,7 +334,6 @@ export default function LiveTrading() {
                   <div className="text-xs text-gray-500 mt-0.5">
                     RSI {s.conditions.rsi.min}~{s.conditions.rsi.max} ·{' '}
                     24h +{s.conditions.priceChange24h.min}% 이상 ·{' '}
-                    볼륨 {s.conditions.volumeMultiplier.min}x 이상 ·{' '}
                     레버리지 {s.trade.leverage}x · 진입 ${s.trade.entryAmountUsdt}
                   </div>
                 </div>
