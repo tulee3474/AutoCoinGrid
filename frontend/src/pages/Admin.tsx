@@ -191,6 +191,7 @@ function UserDetailPanel({ detail }: { detail: UserDetail }) {
                             ? <>
                                 <div><span className="text-gray-600">그리드 레벨 </span><span className="text-gray-300">{t?.gridLevels}단계</span></div>
                                 <div><span className="text-gray-600">물타기 간격 </span><span className="text-gray-300">{t?.gridSpacing}% (PDF)</span></div>
+                                <div><span className="text-gray-600">청산가 안전마진 </span><span className="text-gray-300">{t?.liquidationSafetyPct ?? 90}%</span></div>
                               </>
                             : <div><span className="text-gray-600">손절 </span><span className="text-gray-300">+{t?.stopLossPct}% 상승시</span></div>
                           }
@@ -470,6 +471,7 @@ function PresetForm({
             <>
               <Num label="그리드 레벨" value={t.gridLevels} onChange={v => st({ gridLevels: v })} />
               <Num label="물타기 간격 (PDF)" value={t.gridSpacing} onChange={v => st({ gridSpacing: v })} />
+              <Num label="청산가 안전마진" unit="%" value={t.liquidationSafetyPct ?? 90} onChange={v => st({ liquidationSafetyPct: v })} />
             </>
           ) : (
             <Num label="손절 %" unit="% 상승시" value={t.stopLossPct} onChange={v => st({ stopLossPct: v })} />
@@ -534,7 +536,7 @@ function PresetForm({
         </div>
         <div className="text-xs text-gray-500 p-2 bg-card rounded-lg">
           {t.gridEnabled !== false
-            ? `자동 손절(ISOLATED): 진입가 대비 ${Math.min(t.gridSpacing / t.leverage, 99 / t.leverage).toFixed(1)}% 상승시 (레버리지 반영)`
+            ? `이론상 자동 손절: 진입가 대비 ${Math.min(t.gridSpacing / t.leverage, 99 / t.leverage).toFixed(1)}% 상승시 (레버리지 반영, 코인별 실제 청산가 안전마진 ${t.liquidationSafetyPct ?? 90}%가 이보다 타이트하면 우선 적용)`
             : `손절: 진입가 대비 +${t.stopLossPct}% 상승시 청산`}
         </div>
       </div>

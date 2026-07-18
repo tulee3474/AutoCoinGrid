@@ -4,7 +4,7 @@ import { computeIndicators } from './indicator';
 import { StrategyConfig, StrategyConditions, TradeConfig } from '../types';
 import prisma from '../lib/prisma';
 import { decrypt } from '../lib/crypto';
-import { calcPdfStopLoss, calcPdfGridPrices } from './gridUtils';
+import { calcPdfStopLoss, calcPdfGridPrices, capSlWithLiquidation, truncateGridsToSafeZone } from './gridUtils';
 
 const SCAN_INTERVAL_MS = 60_000;
 const SYNC_INTERVAL_MS = 15_000;   // TP/SL 체결 감지 전용 빠른 인터벌
@@ -116,12 +116,6 @@ function extractFillPrice(order: any, fallback: number): number {
 // 우리 SL 계산식(calcPdfStopLoss의 ISOLATED 99% 캡)은 펀딩비/수수료/실제 유지증거금률을
 // 반영하지 않는 단순 근사치라 실제 Binance 청산가보다 낙관적으로(더 멀게) 잡힐 수 있음 —
 // 실제 청산가를 안전 캡으로 반영해 그보다 먼저(90% 지점) 우리 SL이 걸리도록 보정
-function capSlWithLiquidation(slPrice: number, avgEntry: number, liquidationPrice: number): number {
-  if (!liquidationPrice || liquidationPrice <= avgEntry) return slPrice;
-  const safeCap = avgEntry + (liquidationPrice - avgEntry) * 0.9;
-  return Math.min(slPrice, safeCap);
-}
-
 // 알고 주문(TP/SL) 체결가 추출: algoOrder 응답의 actualPrice보다 실제 체결주문(actualOrderId)을
 // 재조회한 cumQuote/executedQty 기반 값이 더 정확 — entry/일반청산과 동일한 정확도 기준 적용
 async function extractAlgoExitPrice(
@@ -451,21 +445,36 @@ export async function openLivePosition(
     const actualEntry = extractFillPrice(entryOrder, entryPrice);
 
     // TP/SL/그리드는 신호 가격이 아니라 실제 체결가(actualEntry) 기준으로 계산
-    const tpPrice    = actualEntry * (1 - trade.takeProfitPct / 100);
-    let slPrice       = gridEnabled
-      ? calcPdfStopLoss(actualEntry, trade.leverage, trade.gridLevels, trade.gridSpacing)
-      : actualEntry * (1 + trade.stopLossPct / 100);
-    const gridPrices  = gridEnabled
-      ? calcPdfGridPrices(actualEntry, trade.leverage, trade.gridLevels, trade.gridSpacing)
-      : [];
+    const tpPrice  = actualEntry * (1 - trade.takeProfitPct / 100);
+    const safetyPct = trade.liquidationSafetyPct ?? 90;
 
-    // 우리 SL 계산식(펀딩비/수수료/실제 유지증거금률 미반영)이 Binance 실제 청산가보다
-    // 낙관적일 수 있어 — 실제 청산가를 조회해 그보다 먼저 손절되도록 안전 캡 적용
+    // 실제 청산가를 먼저 조회 — 우리 그리드/SL 계산식(펀딩비/수수료/실제 유지증거금률 미반영)이
+    // Binance 실제 청산가보다 낙관적일 수 있어, 안전마진 밖에 있는 그리드 레벨은 애초에 등록하지 않음
+    // (등록해봤자 그 전에 손절이 먼저 발동해 채워질 기회가 없음)
+    let liqPrice = 0;
     try {
       const posAfterEntry = (await binanceSvc.getPositions()).find((p: any) => p.symbol === symbol);
-      const liqPrice = posAfterEntry ? parseFloat(posAfterEntry.liquidationPrice) : 0;
-      slPrice = capSlWithLiquidation(slPrice, actualEntry, liqPrice);
-    } catch { /* 조회 실패 시 기존 계산값 유지 */ }
+      liqPrice = posAfterEntry ? parseFloat(posAfterEntry.liquidationPrice) : 0;
+    } catch { /* 조회 실패 시 안전캡 미적용 */ }
+
+    let gridPrices = gridEnabled
+      ? calcPdfGridPrices(actualEntry, trade.leverage, trade.gridLevels, trade.gridSpacing)
+      : [];
+    if (gridEnabled) {
+      const before = gridPrices.length;
+      gridPrices = truncateGridsToSafeZone(gridPrices, actualEntry, liqPrice, safetyPct);
+      if (gridPrices.length < before) {
+        addLog(userId,
+          `⚠️ ${symbol} 청산가 안전마진(${safetyPct}%) 내에 그리드 ${gridPrices.length}/${before}차까지만 여유 있음`,
+          'info'
+        );
+      }
+    }
+
+    let slPrice = gridEnabled
+      ? calcPdfStopLoss(actualEntry, trade.leverage, gridPrices.length, trade.gridSpacing)
+      : actualEntry * (1 + trade.stopLossPct / 100);
+    slPrice = capSlWithLiquidation(slPrice, actualEntry, liqPrice, safetyPct);
 
     let tpOrderId: bigint | null = null;
     let slOrderId: bigint | null = null;
@@ -767,7 +776,7 @@ async function fillLiveGrids(userId: string, binanceSvc: BinanceService, broadca
       try {
         const freshPos = (await binanceSvc.getPositions()).find((p: any) => p.symbol === pos.symbol);
         const liqPrice = freshPos ? parseFloat(freshPos.liquidationPrice) : 0;
-        newSlPrice = capSlWithLiquidation(newSlPrice, newAvgEntry, liqPrice);
+        newSlPrice = capSlWithLiquidation(newSlPrice, newAvgEntry, liqPrice, tradeCfg.liquidationSafetyPct ?? 90);
       } catch { /* 조회 실패 시 기존 계산값 유지 */ }
 
       if (pos.tpOrderId !== null && pos.slOrderId !== null) {
@@ -1062,16 +1071,17 @@ export async function getLivePositionsEnriched(userId: string) {
     );
     return positions.map(pos => {
       const bp = shortPosMap.get(pos.symbol);
-      if (!bp) return { ...pos, currentPrice: pos.entryPrice, pnlPct: 0, pnlUsdt: 0 };
+      if (!bp) return { ...pos, currentPrice: pos.entryPrice, pnlPct: 0, pnlUsdt: 0, liquidationPrice: null };
       const currentPrice   = parseFloat(bp.markPrice);
       const pnlUsdt        = parseFloat(bp.unRealizedProfit);
       const isolatedWallet = parseFloat(bp.isolatedWallet);
       // Binance ROE% = unrealizedProfit / isolatedWallet (펀딩 피 포함)
       const pnlPct = isolatedWallet > 0 ? (pnlUsdt / isolatedWallet) * 100 : 0;
-      return { ...pos, currentPrice, pnlPct, pnlUsdt };
+      const liquidationPrice = parseFloat(bp.liquidationPrice) || null;
+      return { ...pos, currentPrice, pnlPct, pnlUsdt, liquidationPrice };
     });
   } catch {
-    // 폴백: markPrice 기반 계산 (펀딩 피 미반영)
+    // 폴백: markPrice 기반 계산 (펀딩 피 미반영, 청산가는 실제 포지션 조회 실패라 알 수 없음)
     try {
       const indices  = await binance.getFuturesPremiumIndex() as any[];
       const priceMap = new Map<string, number>(indices.map((m: any) => [m.symbol, parseFloat(m.markPrice)]));
@@ -1079,10 +1089,10 @@ export async function getLivePositionsEnriched(userId: string) {
         const currentPrice = priceMap.get(pos.symbol) ?? pos.entryPrice;
         const pnlPct  = ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100 * pos.leverage;
         const pnlUsdt = pos.entryAmountUsdt * pnlPct / 100;
-        return { ...pos, currentPrice, pnlPct, pnlUsdt };
+        return { ...pos, currentPrice, pnlPct, pnlUsdt, liquidationPrice: null };
       });
     } catch {
-      return positions.map(pos => ({ ...pos, currentPrice: pos.entryPrice, pnlPct: 0, pnlUsdt: 0 }));
+      return positions.map(pos => ({ ...pos, currentPrice: pos.entryPrice, pnlPct: 0, pnlUsdt: 0, liquidationPrice: null }));
     }
   }
 }

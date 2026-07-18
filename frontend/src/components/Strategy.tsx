@@ -726,6 +726,7 @@ export default function Strategy() {
             <>
               <NumberInput label="그리드 레벨 수"    value={draftTrade.gridLevels}  onChange={v => setDraftTrade({ gridLevels: v })}  min={1} max={20}               fieldId="grid-levels"  emptyTracker={emptyFields} />
               <NumberInput label="물타기 간격 (PDF)" value={draftTrade.gridSpacing} onChange={v => setDraftTrade({ gridSpacing: v })} min={1} max={200}              fieldId="grid-spacing" emptyTracker={emptyFields} />
+              <NumberInput label="청산가 안전마진"   value={draftTrade.liquidationSafetyPct ?? 90} onChange={v => setDraftTrade({ liquidationSafetyPct: v })} min={50} max={99} unit="%" fieldId="liq-safety" emptyTracker={emptyFields} />
             </>
           )}
           {draftTrade.gridEnabled === false && (
@@ -814,7 +815,8 @@ export default function Strategy() {
           {draftTrade.gridEnabled !== false ? (
             <>
               <p>PDF 방식: 평균 진입가 기준 <span className="text-gray-300 font-semibold">{(draftTrade.gridSpacing / draftTrade.leverage).toFixed(1)}%</span> 간격으로 숏 {draftTrade.gridLevels}개 추가 (레버리지 분할)</p>
-              <p>자동 손절: 진입가 대비 약 <span className="text-down font-semibold">+{calcPdfSlPct(draftTrade.leverage, draftTrade.gridLevels, draftTrade.gridSpacing).toFixed(1)}%</span> 상승시 청산 (ISOLATED)</p>
+              <p>이론상 자동 손절: 진입가 대비 약 <span className="text-down font-semibold">+{calcPdfSlPct(draftTrade.leverage, draftTrade.gridLevels, draftTrade.gridSpacing).toFixed(1)}%</span> 상승시 청산 (레버리지 기준 추정치)</p>
+              <p className="text-gray-500">※ 실제 진입 시엔 코인별 실제(또는 추정) 청산가까지 거리의 <span className="text-gray-300 font-semibold">{draftTrade.liquidationSafetyPct ?? 90}%</span> 지점에 손절이 설정되고, 그 밖에 있는 그리드 레벨은 채워질 기회가 없어 자동으로 등록에서 제외됩니다 — 코인마다 실제 유지증거금률이 달라 위 이론치보다 타이트해질 수 있습니다.</p>
               <p>총 최대 노출: <span className="text-gray-300 num">${draftTrade.entryAmountUsdt * (draftTrade.gridLevels + 1)}</span> USDT × {draftTrade.leverage}x</p>
             </>
           ) : (

@@ -2,6 +2,16 @@ import axios, { AxiosInstance } from 'axios';
 import crypto from 'crypto';
 import { Kline } from '../types';
 import { getAllMarkPrices, isMarkPriceStreamHealthy } from './binanceMarketStream';
+import { calcIsolatedLiquidationPrice } from './gridUtils';
+
+export interface LeverageBracket {
+  bracket: number;
+  initialLeverage: number;
+  notionalCap: number;
+  notionalFloor: number;
+  maintMarginRatio: number;
+  cum: number;
+}
 
 const SPOT_BASE = 'https://api.binance.com';
 const FUTURES_BASE = 'https://fapi.binance.com';
@@ -503,6 +513,58 @@ export class BinanceService {
       params: this.signedParams(params)
     });
     return data;
+  }
+
+  // 심볼별 유지증거금률(MMR) 구간표 — 계좌별로 다르지 않고(표준 티어 기준) 자주 안 바뀌므로 24시간 캐시
+  private static leverageBracketCache = new Map<string, { data: LeverageBracket[]; ts: number }>();
+  private static readonly LEVERAGE_BRACKET_CACHE_TTL = 24 * 3_600_000;
+
+  async getLeverageBracket(symbol: string): Promise<LeverageBracket[]> {
+    const cached = BinanceService.leverageBracketCache.get(symbol);
+    if (cached && Date.now() - cached.ts < BinanceService.LEVERAGE_BRACKET_CACHE_TTL) return cached.data;
+
+    const { data } = await this.futuresClient.get('/fapi/v1/leverageBracket', {
+      params: this.signedParams({ symbol })
+    });
+    const brackets: LeverageBracket[] = ((data[0]?.brackets ?? []) as any[]).map(b => ({
+      bracket: b.bracket, initialLeverage: b.initialLeverage,
+      notionalCap: b.notionalCap, notionalFloor: b.notionalFloor,
+      maintMarginRatio: b.maintMarginRatio, cum: b.cum
+    }));
+    BinanceService.leverageBracketCache.set(symbol, { data: brackets, ts: Date.now() });
+    return brackets;
+  }
+}
+
+// 백테스트/가상거래는 실제 계좌 포지션이 없어 Binance가 실시간 청산가를 안 줌 —
+// 거래 권한 없는 조회 전용 공용 키(BINANCE_API_KEY/SECRET, .env)로 유지증거금률 구간표를 조회해
+// 청산가를 추정하는 용도로만 사용. 키가 없으면 getLeverageBracket 호출 시 인증 에러로 실패하고,
+// 호출부는 이를 잡아 기존 방식(레버리지 기반 단순 추정)으로 폴백함
+export const binanceMaster = new BinanceService(process.env.BINANCE_API_KEY, process.env.BINANCE_API_SECRET);
+
+// notional(포지션 규모)에 맞는 유지증거금률 구간 선택 — 백테스트처럼 브라켓을 심볼당 한 번만
+// 조회해두고 캔들 루프 안에서는 네트워크 호출 없이 반복 재사용할 때 씀
+export function pickLeverageBracket(brackets: LeverageBracket[], notionalUsdt: number): { mmr: number; cum: number } {
+  if (brackets.length === 0) return { mmr: 0, cum: 0 };
+  const b = brackets.find(x => notionalUsdt > x.notionalFloor && notionalUsdt <= x.notionalCap) ?? brackets[brackets.length - 1];
+  return { mmr: b.maintMarginRatio, cum: b.cum };
+}
+
+// 심볼의 실제(마스터 키 있을 때) 또는 추정 청산가 — 실거래처럼 Binance가 직접 주는 liquidationPrice가
+// 없는 상황(가상거래/신규 진입 전 미리보기)에서 사용
+export async function estimateLiquidationPrice(
+  symbol: string,
+  marginUsdt: number,
+  qty: number,
+  avgEntryPrice: number
+): Promise<number | null> {
+  try {
+    const brackets = await binanceMaster.getLeverageBracket(symbol);
+    if (brackets.length === 0) return null;
+    const { mmr, cum } = pickLeverageBracket(brackets, qty * avgEntryPrice);
+    return calcIsolatedLiquidationPrice(marginUsdt, qty, avgEntryPrice, mmr, cum);
+  } catch {
+    return null;
   }
 }
 

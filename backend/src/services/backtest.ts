@@ -1,6 +1,7 @@
 import { Kline, StrategyConditions, TradeConfig, BacktestResult, BacktestTrade } from '../types';
 import { calcRSI, calc24hChange, candlesPerDay } from './indicator';
-import { calcPdfGridPrices, calcPdfAvgEntry, calcPdfStopLoss } from './gridUtils';
+import { calcPdfGridPrices, calcPdfAvgEntry, calcPdfStopLoss, calcIsolatedLiquidationPrice, capSlWithLiquidation, truncateGridsToSafeZone } from './gridUtils';
+import { binanceMaster, pickLeverageBracket, LeverageBracket } from './binance';
 
 interface BacktestOptions {
   conditions: StrategyConditions;
@@ -60,7 +61,8 @@ function simulateTrade(
   klines: Kline[],
   entryIdx: number,
   trade: TradeConfig,
-  interval: string
+  interval: string,
+  brackets: LeverageBracket[]
 ): BacktestTrade | null {
   if (entryIdx + 1 >= klines.length) return null;
 
@@ -73,13 +75,29 @@ function simulateTrade(
   const maxEndIdx = Math.min(entryIdx + 1 + maxCandles, klines.length - 1);
 
   const gridEnabled = trade.gridEnabled !== false;
-  const gridPrices  = gridEnabled ? calcPdfGridPrices(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing) : [];
+  const safetyPct = trade.liquidationSafetyPct ?? 90;
 
-  let avgEntryPrice    = entryPrice;
-  let takeProfitPrice  = entryPrice * (1 - trade.takeProfitPct / 100);
-  let stopLossPrice    = gridEnabled
-    ? calcPdfStopLoss(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing)
-    : entryPrice * (1 + trade.stopLossPct / 100);
+  // 유지증거금률 구간표(심볼당 1회 조회해 넘겨받음)로 청산가를 추정해, 안전마진 밖의
+  // 그리드 레벨은 실거래/가상거래와 동일하게 애초에 채워질 기회가 없는 것으로 취급
+  const estimateLiq = (marginUsdt: number, qty: number, avgEntry: number): number => {
+    if (brackets.length === 0) return 0;
+    const { mmr, cum } = pickLeverageBracket(brackets, qty * avgEntry);
+    return calcIsolatedLiquidationPrice(marginUsdt, qty, avgEntry, mmr, cum);
+  };
+
+  let gridPrices = gridEnabled ? calcPdfGridPrices(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing) : [];
+  let avgEntryPrice   = entryPrice;
+  let takeProfitPrice = entryPrice * (1 - trade.takeProfitPct / 100);
+  let stopLossPrice: number;
+  if (gridEnabled) {
+    const qty = trade.entryAmountUsdt * trade.leverage / entryPrice;
+    const liqPrice = estimateLiq(trade.entryAmountUsdt, qty, entryPrice);
+    gridPrices = truncateGridsToSafeZone(gridPrices, entryPrice, liqPrice, safetyPct);
+    stopLossPrice = calcPdfStopLoss(entryPrice, trade.leverage, gridPrices.length, trade.gridSpacing);
+    stopLossPrice = capSlWithLiquidation(stopLossPrice, entryPrice, liqPrice, safetyPct);
+  } else {
+    stopLossPrice = entryPrice * (1 + trade.stopLossPct / 100);
+  }
 
   let exitPrice = 0;
   let exitTime  = 0;
@@ -99,6 +117,11 @@ function simulateTrade(
       const remainingLevels = gridPrices.length - gridsFilled;
       takeProfitPrice = avgEntryPrice * (1 - trade.takeProfitPct / 100);
       stopLossPrice   = calcPdfStopLoss(avgEntryPrice, trade.leverage, remainingLevels, trade.gridSpacing);
+
+      const newTotalUsdt = trade.entryAmountUsdt * (1 + gridsFilled);
+      const newQty = newTotalUsdt * trade.leverage / avgEntryPrice;
+      const liqPrice = estimateLiq(newTotalUsdt, newQty, avgEntryPrice);
+      stopLossPrice = capSlWithLiquidation(stopLossPrice, avgEntryPrice, liqPrice, safetyPct);
     }
 
     if (candle.high >= stopLossPrice) {
@@ -140,18 +163,24 @@ function simulateTrade(
 
 // ── 메인 백테스트 함수 ──────────────────────────────────────
 
-export function runBacktest(
+export async function runBacktest(
   klines: Kline[],
   options: BacktestOptions,
   symbol: string
-): BacktestResult {
+): Promise<BacktestResult> {
   const { conditions, trade, interval } = options;
   const trades: BacktestTrade[] = [];
+
+  // 유지증거금률 구간표는 심볼당 하나(포지션 규모별 상수)라 캔들 루프 전에 한 번만 조회 —
+  // 마스터 키 미설정/조회 실패 시 빈 배열 → 안전마진 로직은 자동으로 no-op(기존 동작 유지)
+  const brackets = trade.gridEnabled !== false
+    ? await binanceMaster.getLeverageBracket(symbol).catch(() => [])
+    : [];
 
   let i = 20; // MA20 기준으로 워밍업
   while (i < klines.length - 1) {
     if (checkConditions(klines, i, conditions, interval)) {
-      const tradeSim = simulateTrade(klines, i, trade, interval);
+      const tradeSim = simulateTrade(klines, i, trade, interval, brackets);
       if (tradeSim) {
         trades.push(tradeSim);
         console.log(

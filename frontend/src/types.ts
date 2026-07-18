@@ -31,6 +31,7 @@ export interface TradeConfig {
   rsiExitThreshold: number | null;  // null = 비활성, 숫자 = RSI 반전 청산 임계값
   reEntryCooldownHours?: number | null;  // null/0/미설정 = 비활성, 숫자 = 청산 후 해당 심볼 재진입 금지 시간
   gridRsiSkipThreshold?: number | null;  // null/미설정 = 비활성, 숫자 = 그리드 체결 시점 RSI가 이 값 이상이면 그리드 포기 + 즉시 전체 청산
+  liquidationSafetyPct?: number | null;  // null/미설정 = 기본 90 사용. 실제(또는 추정) 청산가까지 거리의 이 %지점에 안전 손절 설정, 이보다 먼 그리드 레벨은 등록하지 않음
 }
 
 export interface StrategyConfig {
@@ -149,5 +150,6 @@ export const DEFAULT_TRADE: TradeConfig = {
   maxDurationHours: null,
   rsiExitThreshold: 40,
   reEntryCooldownHours: 24,
-  gridRsiSkipThreshold: 90
+  gridRsiSkipThreshold: 90,
+  liquidationSafetyPct: 90
 };

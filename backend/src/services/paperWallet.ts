@@ -1,6 +1,7 @@
 import { TradeConfig } from '../types';
 import prisma from '../lib/prisma';
-import { calcPdfStopLoss, calcPdfGridPrices } from './gridUtils';
+import { calcPdfStopLoss, calcPdfGridPrices, capSlWithLiquidation, truncateGridsToSafeZone } from './gridUtils';
+import { estimateLiquidationPrice } from './binance';
 
 export async function getOrCreateWallet(userId: string) {
   return prisma.paperWallet.upsert({
@@ -38,12 +39,23 @@ export async function openPaperPosition(
 
   const gridEnabled = trade.gridEnabled !== false;
   const takeProfitPrice = entryPrice * (1 - trade.takeProfitPct / 100);
-  const stopLossPrice = gridEnabled
-    ? calcPdfStopLoss(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing)
-    : entryPrice * (1 + trade.stopLossPct / 100);
-  const gridPrices = gridEnabled
+  const safetyPct = trade.liquidationSafetyPct ?? 90;
+
+  let gridPrices = gridEnabled
     ? calcPdfGridPrices(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing)
     : [];
+  let stopLossPrice: number;
+  if (gridEnabled) {
+    // 실거래 계좌 포지션이 없어 실시간 청산가를 못 받으므로, 유지증거금률 구간표로 추정
+    // (조회 실패 시 0 반환 → truncate/cap 모두 no-op, 기존 방식과 동일하게 동작)
+    const qty = trade.entryAmountUsdt * trade.leverage / entryPrice;
+    const liqPrice = (await estimateLiquidationPrice(symbol, trade.entryAmountUsdt, qty, entryPrice)) ?? 0;
+    gridPrices = truncateGridsToSafeZone(gridPrices, entryPrice, liqPrice, safetyPct);
+    stopLossPrice = calcPdfStopLoss(entryPrice, trade.leverage, gridPrices.length, trade.gridSpacing);
+    stopLossPrice = capSlWithLiquidation(stopLossPrice, entryPrice, liqPrice, safetyPct);
+  } else {
+    stopLossPrice = entryPrice * (1 + trade.stopLossPct / 100);
+  }
   const expiresAt = trade.maxDurationHours != null
     ? new Date(Date.now() + trade.maxDurationHours * 3_600_000)
     : new Date(Date.now() + 365 * 24 * 3_600_000);

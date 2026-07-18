@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
 import { requireAuth, AuthRequest } from '../middleware/auth';
-import { binance } from '../services/binance';
+import { binance, estimateLiquidationPrice } from '../services/binance';
 import { getOrCreateWallet, resetPaperWallet, closePaperPosition } from '../services/paperWallet';
 import { isPaperRunning, startPaperScanner, stopPaperScanner, getPaperLog } from '../services/autoScanner';
 import prisma from '../lib/prisma';
@@ -84,15 +84,18 @@ router.get('/positions', requireAuth, async (req: AuthRequest, res: Response) =>
   try {
     const indices  = await binance.getFuturesPremiumIndex() as any[];
     const priceMap = new Map<string, number>(indices.map((m: any) => [m.symbol, parseFloat(m.markPrice)]));
-    const positions = wallet.openPositions.map(pos => {
+    const positions = await Promise.all(wallet.openPositions.map(async pos => {
       const currentPrice = priceMap.get(pos.symbol) ?? pos.entryPrice;
       // 그리드 추가진입이 있으면 avgEntryPrice/totalEntryUsdt 기준으로 미실현 PnL 계산 (청산 시 계산과 동일)
       const avgEntry  = pos.avgEntryPrice  > 0 ? pos.avgEntryPrice  : pos.entryPrice;
       const totalUsdt = pos.totalEntryUsdt > 0 ? pos.totalEntryUsdt : pos.entryAmountUsdt;
       const pnlPct  = ((avgEntry - currentPrice) / avgEntry) * 100 * pos.leverage;
       const pnlUsdt = totalUsdt * pnlPct / 100;
-      return { ...pos, currentPrice, pnlPct, pnlUsdt };
-    });
+      // 실거래 계좌 포지션이 없어 실시간 청산가가 없으므로 유지증거금률 구간표로 추정 (마스터 키 없으면 null)
+      const qty = totalUsdt * pos.leverage / avgEntry;
+      const liquidationPrice = await estimateLiquidationPrice(pos.symbol, totalUsdt, qty, avgEntry);
+      return { ...pos, currentPrice, pnlPct, pnlUsdt, liquidationPrice };
+    }));
     res.json(positions);
   } catch (e: any) {
     res.status(500).json({ error: e.message });

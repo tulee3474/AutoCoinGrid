@@ -1,8 +1,8 @@
-import { binance } from './binance';
+import { binance, estimateLiquidationPrice } from './binance';
 import { scanMarket } from './scanner';
 import { openPaperPosition, closePaperPosition, getOrCreateWallet } from './paperWallet';
 import { computeIndicators } from './indicator';
-import { calcPdfStopLoss } from './gridUtils';
+import { calcPdfStopLoss, capSlWithLiquidation } from './gridUtils';
 import { StrategyConfig, StrategyConditions, TradeConfig } from '../types';
 import prisma from '../lib/prisma';
 
@@ -174,6 +174,11 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
                   const remainingLevels = gridPrices.length - newGridsFilled;
                   newTpPrice = newAvgEntry * (1 - tradeCfg.takeProfitPct / 100);
                   newSlPrice = calcPdfStopLoss(newAvgEntry, pos.leverage, remainingLevels, tradeCfg.gridSpacing);
+
+                  // 그리드 체결로 마진/평균단가가 바뀌었으니 추정 청산가도 새로 조회해 안전 캡 재적용 (실거래와 동일 로직)
+                  const newQty = newTotalUsdt * pos.leverage / newAvgEntry;
+                  const liqPrice = (await estimateLiquidationPrice(pos.symbol, newTotalUsdt, newQty, newAvgEntry)) ?? 0;
+                  newSlPrice = capSlWithLiquidation(newSlPrice, newAvgEntry, liqPrice, tradeCfg.liquidationSafetyPct ?? 90);
                 }
 
                 await prisma.$transaction([

@@ -39,7 +39,7 @@ router.post('/run', async (req, res) => {
     // 선물 전용 상장 코인(예: TAIKO)은 스팟에 없어 getKlines(스팟) 호출 시 400 Invalid symbol —
     // 스캐너/실거래와 동일하게 선물 캔들 사용
     const klines = await binance.getFuturesKlines(symbol, interval, limit);
-    const result = runBacktest(klines, { conditions, trade, interval }, symbol);
+    const result = await runBacktest(klines, { conditions, trade, interval }, symbol);
     res.json(result);
   } catch (e: any) {
     res.status(500).json({ error: e.response?.data?.msg ?? e.message });
@@ -90,7 +90,7 @@ router.post('/validate', async (req, res) => {
       allAlt,
       async (symbol) => {
         const klines = await binance.getFuturesKlines(symbol, interval, 1500);
-        return runBacktest(klines, { conditions, trade, interval }, symbol);
+        return await runBacktest(klines, { conditions, trade, interval }, symbol);
       },
       40,
       300

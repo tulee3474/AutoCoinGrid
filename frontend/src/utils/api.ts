@@ -261,6 +261,7 @@ export interface LivePosition {
   entryPrice: number;
   avgEntryPrice: number;
   gridsFilled: number;
+  gridPrices: number[];
   currentPrice: number;
   takeProfitPrice: number;
   stopLossPrice: number;
@@ -270,6 +271,7 @@ export interface LivePosition {
   leverage: number;
   pnlPct: number;
   pnlUsdt: number;
+  liquidationPrice: number | null;
   openedAt: string;
   expiresAt: string;
   strategyName: string;
