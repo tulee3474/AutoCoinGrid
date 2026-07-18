@@ -85,7 +85,7 @@ export function capSlWithLiquidation(
   slPrice: number,
   avgEntry: number,
   liquidationPrice: number,
-  safetyPct = 90
+  safetyPct = 99
 ): number {
   if (!liquidationPrice || liquidationPrice <= avgEntry) return slPrice;
   const safeCap = avgEntry + (liquidationPrice - avgEntry) * (safetyPct / 100);
@@ -100,7 +100,7 @@ export function truncateGridsToSafeZone(
   gridPrices: number[],
   avgEntry: number,
   liquidationPrice: number,
-  safetyPct = 90
+  safetyPct = 99
 ): number[] {
   if (!liquidationPrice || liquidationPrice <= avgEntry) return gridPrices;
   const safeCap = avgEntry + (liquidationPrice - avgEntry) * (safetyPct / 100);

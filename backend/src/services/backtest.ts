@@ -75,7 +75,7 @@ function simulateTrade(
   const maxEndIdx = Math.min(entryIdx + 1 + maxCandles, klines.length - 1);
 
   const gridEnabled = trade.gridEnabled !== false;
-  const safetyPct = trade.liquidationSafetyPct ?? 90;
+  const safetyPct = trade.liquidationSafetyPct ?? 99;
 
   // 유지증거금률 구간표(심볼당 1회 조회해 넘겨받음)로 청산가를 추정해, 안전마진 밖의
   // 그리드 레벨은 실거래/가상거래와 동일하게 애초에 채워질 기회가 없는 것으로 취급

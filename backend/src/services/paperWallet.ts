@@ -39,7 +39,7 @@ export async function openPaperPosition(
 
   const gridEnabled = trade.gridEnabled !== false;
   const takeProfitPrice = entryPrice * (1 - trade.takeProfitPct / 100);
-  const safetyPct = trade.liquidationSafetyPct ?? 90;
+  const safetyPct = trade.liquidationSafetyPct ?? 99;
 
   let gridPrices = gridEnabled
     ? calcPdfGridPrices(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing)

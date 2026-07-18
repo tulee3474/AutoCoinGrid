@@ -418,6 +418,9 @@ export default function PaperTrading() {
                     <td className="py-2 pr-3 text-gray-400 num" title={pos.gridPrices.length > 0 ? `최초 진입가 $${pos.entryPrice.toPrecision(5)} · 그리드 ${pos.gridsFilled}/${pos.gridPrices.length}차 (청산가 안전마진 내 등록 가능한 최대치)` : undefined}>
                       ${(pos.avgEntryPrice > 0 ? pos.avgEntryPrice : pos.entryPrice).toPrecision(5)}
                       {pos.gridPrices.length > 0 && <span className="text-gray-600 ml-0.5">({pos.gridsFilled}/{pos.gridPrices.length}차)</span>}
+                      {pos.gridsFilled < pos.gridPrices.length && (
+                        <div className="text-[10px] text-gray-600">다음 그리드 ${pos.gridPrices[pos.gridsFilled].toPrecision(4)}</div>
+                      )}
                     </td>
                     <td className="py-2 pr-3 text-gray-300 num">${pos.currentPrice.toPrecision(5)}</td>
                     <td className="py-2 pr-3">

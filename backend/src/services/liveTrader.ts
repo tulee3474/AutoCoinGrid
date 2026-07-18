@@ -446,7 +446,7 @@ export async function openLivePosition(
 
     // TP/SL/그리드는 신호 가격이 아니라 실제 체결가(actualEntry) 기준으로 계산
     const tpPrice  = actualEntry * (1 - trade.takeProfitPct / 100);
-    const safetyPct = trade.liquidationSafetyPct ?? 90;
+    const safetyPct = trade.liquidationSafetyPct ?? 99;
 
     // 실제 청산가를 먼저 조회 — 우리 그리드/SL 계산식(펀딩비/수수료/실제 유지증거금률 미반영)이
     // Binance 실제 청산가보다 낙관적일 수 있어, 안전마진 밖에 있는 그리드 레벨은 애초에 등록하지 않음
@@ -776,7 +776,7 @@ async function fillLiveGrids(userId: string, binanceSvc: BinanceService, broadca
       try {
         const freshPos = (await binanceSvc.getPositions()).find((p: any) => p.symbol === pos.symbol);
         const liqPrice = freshPos ? parseFloat(freshPos.liquidationPrice) : 0;
-        newSlPrice = capSlWithLiquidation(newSlPrice, newAvgEntry, liqPrice, tradeCfg.liquidationSafetyPct ?? 90);
+        newSlPrice = capSlWithLiquidation(newSlPrice, newAvgEntry, liqPrice, tradeCfg.liquidationSafetyPct ?? 99);
       } catch { /* 조회 실패 시 기존 계산값 유지 */ }
 
       if (pos.tpOrderId !== null && pos.slOrderId !== null) {
