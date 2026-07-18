@@ -515,24 +515,49 @@ export class BinanceService {
     return data;
   }
 
-  // 심볼별 유지증거금률(MMR) 구간표 — 계좌별로 다르지 않고(표준 티어 기준) 자주 안 바뀌므로 24시간 캐시
-  private static leverageBracketCache = new Map<string, { data: LeverageBracket[]; ts: number }>();
+  // 전체 심볼 유지증거금률(MMR) 구간표를 한 번에 캐시 — 심볼 지정 호출도 weight 1이지만
+  // 심볼 없이 호출하면 전체 심볼을 단 1번(weight 1)으로 받아올 수 있어 이 방식 사용
+  // (승률검증처럼 후보 코인 수백 개를 백테스트할 때도 조회는 총 1번). 계좌별로 다르지 않고
+  // (표준 티어 기준) 자주 안 바뀌므로 24시간 캐시.
+  private static allBracketsCache: { data: Map<string, LeverageBracket[]>; ts: number } | null = null;
   private static readonly LEVERAGE_BRACKET_CACHE_TTL = 24 * 3_600_000;
+  private static allBracketsInflight: Promise<Map<string, LeverageBracket[]>> | null = null;
+
+  private async fetchAllLeverageBrackets(): Promise<Map<string, LeverageBracket[]>> {
+    if (BinanceService.allBracketsCache && Date.now() - BinanceService.allBracketsCache.ts < BinanceService.LEVERAGE_BRACKET_CACHE_TTL) {
+      return BinanceService.allBracketsCache.data;
+    }
+    // 캐시 만료 직후 여러 백테스트 워커가 동시에 걸리는 상황(40개 동시 실행) 대비 — 진행 중인 요청 공유
+    if (BinanceService.allBracketsInflight) return BinanceService.allBracketsInflight;
+
+    BinanceService.allBracketsInflight = (async () => {
+      const { data } = await this.futuresClient.get('/fapi/v1/leverageBracket', {
+        params: this.signedParams()
+      });
+      const map = new Map<string, LeverageBracket[]>(
+        (data as any[]).map(entry => [
+          entry.symbol,
+          ((entry.brackets ?? []) as any[]).map(b => ({
+            bracket: b.bracket, initialLeverage: b.initialLeverage,
+            notionalCap: b.notionalCap, notionalFloor: b.notionalFloor,
+            maintMarginRatio: b.maintMarginRatio, cum: b.cum
+          }))
+        ])
+      );
+      BinanceService.allBracketsCache = { data: map, ts: Date.now() };
+      return map;
+    })();
+
+    try {
+      return await BinanceService.allBracketsInflight;
+    } finally {
+      BinanceService.allBracketsInflight = null;
+    }
+  }
 
   async getLeverageBracket(symbol: string): Promise<LeverageBracket[]> {
-    const cached = BinanceService.leverageBracketCache.get(symbol);
-    if (cached && Date.now() - cached.ts < BinanceService.LEVERAGE_BRACKET_CACHE_TTL) return cached.data;
-
-    const { data } = await this.futuresClient.get('/fapi/v1/leverageBracket', {
-      params: this.signedParams({ symbol })
-    });
-    const brackets: LeverageBracket[] = ((data[0]?.brackets ?? []) as any[]).map(b => ({
-      bracket: b.bracket, initialLeverage: b.initialLeverage,
-      notionalCap: b.notionalCap, notionalFloor: b.notionalFloor,
-      maintMarginRatio: b.maintMarginRatio, cum: b.cum
-    }));
-    BinanceService.leverageBracketCache.set(symbol, { data: brackets, ts: Date.now() });
-    return brackets;
+    const all = await this.fetchAllLeverageBrackets();
+    return all.get(symbol) ?? [];
   }
 }
 
