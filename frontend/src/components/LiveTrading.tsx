@@ -466,9 +466,13 @@ export default function LiveTrading() {
                       </td>
                       <td className="py-2 pr-3 num" title={pos.liquidationPrice ? `실제 청산가 $${pos.liquidationPrice.toPrecision(5)}` : undefined}>
                         <span className={isMonitored ? 'text-yellow-400' : 'text-down'}>${pos.stopLossPrice.toPrecision(4)}</span>
-                        {pos.liquidationPrice != null && (
-                          <div className="text-[10px] text-gray-600">청산 ${pos.liquidationPrice.toPrecision(4)}</div>
-                        )}
+                        {pos.liquidationPrice != null && (() => {
+                          const avgEntry = pos.avgEntryPrice > 0 ? pos.avgEntryPrice : pos.entryPrice;
+                          const liqPct = ((pos.liquidationPrice - avgEntry) / avgEntry) * 100;
+                          return (
+                            <div className="text-[10px] text-gray-600">청산 ${pos.liquidationPrice.toPrecision(4)} (+{liqPct.toFixed(1)}%)</div>
+                          );
+                        })()}
                       </td>
                       <td className={`py-2 pr-3 num ${hoursLeft < 2 ? 'text-warn' : 'text-gray-500'}`}>
                         {hoursLeft}h 후
