@@ -784,12 +784,41 @@ export default function Strategy() {
             </label>
           </div>
           {draftTrade.reEntryCooldownHours != null && (
-            <div className="ml-7">
+            <div className="ml-7 space-y-2">
               <NumberInput label="" value={draftTrade.reEntryCooldownHours}
-                onChange={v => setDraftTrade({ reEntryCooldownHours: v })} min={1} max={168} unit="시간 동안 재진입 금지"
+                onChange={v => setDraftTrade({ reEntryCooldownHours: v })} min={1} max={168} unit="시간 동안 재진입 금지 (기본값)"
                 fieldId="reentry-cooldown" emptyTracker={emptyFields} />
+
+              <div className="flex items-center gap-3">
+                <input type="checkbox" id="useSplitCooldown" className="w-4 h-4 accent-accent"
+                  checked={draftTrade.reEntryCooldownWinHours != null || draftTrade.reEntryCooldownLossHours != null}
+                  onChange={e => setDraftTrade(e.target.checked
+                    ? { reEntryCooldownWinHours: draftTrade.reEntryCooldownHours, reEntryCooldownLossHours: draftTrade.reEntryCooldownHours }
+                    : { reEntryCooldownWinHours: null, reEntryCooldownLossHours: null })} />
+                <label htmlFor="useSplitCooldown" className="text-sm text-gray-300 cursor-pointer">
+                  익절/손절 재진입 시간 별도 설정
+                </label>
+              </div>
+              {(draftTrade.reEntryCooldownWinHours != null || draftTrade.reEntryCooldownLossHours != null) && (
+                <div className="grid grid-cols-2 gap-3">
+                  <NumberInput label="익절 후" value={draftTrade.reEntryCooldownWinHours ?? draftTrade.reEntryCooldownHours}
+                    onChange={v => setDraftTrade({ reEntryCooldownWinHours: v })} min={1} max={168} unit="시간"
+                    fieldId="reentry-cooldown-win" emptyTracker={emptyFields} />
+                  <NumberInput label="손절 후" value={draftTrade.reEntryCooldownLossHours ?? draftTrade.reEntryCooldownHours}
+                    onChange={v => setDraftTrade({ reEntryCooldownLossHours: v })} min={1} max={168} unit="시간"
+                    fieldId="reentry-cooldown-loss" emptyTracker={emptyFields} />
+                </div>
+              )}
             </div>
           )}
+          <div className="flex items-center gap-3">
+            <input type="checkbox" id="blockLossSymbols" className="w-4 h-4 accent-accent"
+              checked={draftTrade.blockLossSymbols ?? false}
+              onChange={e => setDraftTrade({ blockLossSymbols: e.target.checked })} />
+            <label htmlFor="blockLossSymbols" className="text-sm text-gray-300 cursor-pointer">
+              손실 발생 코인은 이후 영구 재진입 금지 <span className="text-gray-500 text-xs">(체크 시 위 손절 재진입 시간 설정 대신 항상 우선 적용)</span>
+            </label>
+          </div>
         </div>
 
         {/* 그리드 RSI 과열 포기 (선택) */}

@@ -29,7 +29,10 @@ export interface TradeConfig {
   stopLossPct: number;
   maxDurationHours: number | null;  // null = 타임아웃 없음
   rsiExitThreshold: number | null;  // null = 비활성, 숫자 = RSI 반전 청산 임계값
-  reEntryCooldownHours?: number | null;  // null/0/미설정 = 비활성, 숫자 = 청산 후 해당 심볼 재진입 금지 시간
+  reEntryCooldownHours?: number | null;  // null/0/미설정 = 비활성, 숫자 = 청산 후 해당 심볼 재진입 금지 시간 (하위 호환용 — win/loss 개별 설정이 없을 때 폴백)
+  reEntryCooldownWinHours?: number | null;   // null/0/미설정 = reEntryCooldownHours로 폴백. 이전 청산이 수익이었을 때 재진입 금지 시간
+  reEntryCooldownLossHours?: number | null;  // null/0/미설정 = reEntryCooldownHours로 폴백. 이전 청산이 손실이었을 때 재진입 금지 시간 (blockLossSymbols가 true면 무시됨)
+  blockLossSymbols?: boolean;  // true면 해당 심볼에서 손실이 한 번이라도 발생한 적 있으면 이후 영구 재진입 금지 (쿨다운 무시)
   gridRsiSkipThreshold?: number | null;  // null/미설정 = 비활성, 숫자 = 그리드 체결 시점 RSI가 이 값 이상이면 그리드 포기 + 즉시 전체 청산
   liquidationSafetyPct?: number | null;  // null/미설정 = 기본 99 사용. 실제(또는 추정) 청산가까지 거리의 이 %지점에 안전 손절 설정, 이보다 먼 그리드 레벨은 등록하지 않음
 }
@@ -150,6 +153,9 @@ export const DEFAULT_TRADE: TradeConfig = {
   maxDurationHours: null,
   rsiExitThreshold: 40,
   reEntryCooldownHours: 24,
+  reEntryCooldownWinHours: null,
+  reEntryCooldownLossHours: null,
+  blockLossSymbols: false,
   gridRsiSkipThreshold: 90,
   liquidationSafetyPct: 99
 };

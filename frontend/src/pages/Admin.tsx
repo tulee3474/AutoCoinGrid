@@ -198,7 +198,8 @@ function UserDetailPanel({ detail }: { detail: UserDetail }) {
                           <div><span className="text-gray-600">익절 </span><span className="text-gray-300">-{t?.takeProfitPct}% 하락시</span></div>
                           <div><span className="text-gray-600">최대 보유 </span><span className="text-gray-300">{t?.maxDurationHours != null ? `${t.maxDurationHours}시간` : '제한 없음'}</span></div>
                           <div><span className="text-gray-600">RSI 반전 청산 </span><span className="text-gray-300">{t?.rsiExitThreshold != null ? `RSI ${t.rsiExitThreshold} 미만` : '비활성'}</span></div>
-                          <div><span className="text-gray-600">재진입 쿨다운 </span><span className="text-gray-300">{t?.reEntryCooldownHours != null ? `${t.reEntryCooldownHours}시간` : '비활성'}</span></div>
+                          <div><span className="text-gray-600">재진입 쿨다운(익절) </span><span className="text-gray-300">{(t?.reEntryCooldownWinHours ?? t?.reEntryCooldownHours) != null ? `${t?.reEntryCooldownWinHours ?? t?.reEntryCooldownHours}시간` : '비활성'}</span></div>
+                          <div><span className="text-gray-600">재진입 쿨다운(손절) </span><span className="text-gray-300">{t?.blockLossSymbols ? '영구 금지' : (t?.reEntryCooldownLossHours ?? t?.reEntryCooldownHours) != null ? `${t?.reEntryCooldownLossHours ?? t?.reEntryCooldownHours}시간` : '비활성'}</span></div>
                           <div><span className="text-gray-600">그리드 RSI 과열 포기 </span><span className="text-gray-300">{t?.gridRsiSkipThreshold != null ? `RSI ${t.gridRsiSkipThreshold} 이상` : '비활성'}</span></div>
                         </div>
                       </div>
@@ -505,7 +506,7 @@ function PresetForm({
               {t.rsiExitThreshold == null && <span className="text-xs text-gray-500">비활성</span>}
             </div>
           </F>
-          <F label="재진입 쿨다운">
+          <F label="재진입 쿨다운 (기본값)">
             <div className="flex items-center gap-1">
               <input type="checkbox" checked={t.reEntryCooldownHours != null}
                 onChange={e => st({ reEntryCooldownHours: e.target.checked ? 24 : null })}
@@ -517,6 +518,29 @@ function PresetForm({
               )}
               {t.reEntryCooldownHours != null && <span className="text-xs text-gray-500 flex-shrink-0">시간</span>}
               {t.reEntryCooldownHours == null && <span className="text-xs text-gray-500">비활성</span>}
+            </div>
+          </F>
+          {t.reEntryCooldownHours != null && (
+            <>
+              <F label="재진입(익절 후)">
+                <input type="number" value={t.reEntryCooldownWinHours ?? t.reEntryCooldownHours}
+                  onChange={e => st({ reEntryCooldownWinHours: +e.target.value })}
+                  className="w-full bg-surface border border-border rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-accent" />
+              </F>
+              <F label="재진입(손절 후)">
+                <input type="number" value={t.reEntryCooldownLossHours ?? t.reEntryCooldownHours}
+                  onChange={e => st({ reEntryCooldownLossHours: +e.target.value })}
+                  disabled={t.blockLossSymbols}
+                  className="w-full bg-surface border border-border rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-accent disabled:opacity-40" />
+              </F>
+            </>
+          )}
+          <F label="손실 코인 영구 재진입 금지">
+            <div className="flex items-center gap-2 mt-1">
+              <input type="checkbox" checked={t.blockLossSymbols ?? false}
+                onChange={e => st({ blockLossSymbols: e.target.checked })}
+                className="w-4 h-4 accent-accent" />
+              <span className="text-xs text-gray-300">사용</span>
             </div>
           </F>
           <F label="그리드 RSI 과열 포기 (큰 손실 방지)">

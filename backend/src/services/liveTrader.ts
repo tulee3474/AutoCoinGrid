@@ -4,7 +4,7 @@ import { computeIndicators } from './indicator';
 import { StrategyConfig, StrategyConditions, TradeConfig } from '../types';
 import prisma from '../lib/prisma';
 import { decrypt } from '../lib/crypto';
-import { calcPdfStopLoss, calcPdfGridPrices, capSlWithLiquidation, truncateGridsToSafeZone } from './gridUtils';
+import { calcPdfStopLoss, calcPdfGridPrices, capSlWithLiquidation, truncateGridsToSafeZone, resolveReEntryCooldownHours } from './gridUtils';
 
 const SCAN_INTERVAL_MS = 60_000;
 const SYNC_INTERVAL_MS = 15_000;   // TP/SL 체결 감지 전용 빠른 인터벌
@@ -378,14 +378,22 @@ export async function openLivePosition(
   const existing = await prisma.livePosition.findFirst({ where: { userId, symbol } });
   if (existing) return null;
 
-  if (trade.reEntryCooldownHours) {
-    const cooldownMs = trade.reEntryCooldownHours * 3_600_000;
-    const lastClose = await prisma.liveTradeLog.findFirst({
-      where:   { userId, symbol },
-      orderBy: { exitTime: 'desc' }
-    });
-    if (lastClose) {
-      const remainingMs = cooldownMs - (Date.now() - lastClose.exitTime.getTime());
+  if (trade.blockLossSymbols) {
+    const anyLoss = await prisma.liveTradeLog.findFirst({ where: { userId, symbol, pnlUsdt: { lte: 0 } } });
+    if (anyLoss) {
+      addLog(userId, `🚫 ${symbol}: 과거 손실 이력으로 영구 재진입 금지 설정됨`);
+      return null;
+    }
+  }
+
+  const lastClose = await prisma.liveTradeLog.findFirst({
+    where:   { userId, symbol },
+    orderBy: { exitTime: 'desc' }
+  });
+  if (lastClose) {
+    const cooldownHours = resolveReEntryCooldownHours(trade, lastClose.pnlUsdt > 0);
+    if (cooldownHours) {
+      const remainingMs = cooldownHours * 3_600_000 - (Date.now() - lastClose.exitTime.getTime());
       if (remainingMs > 0) {
         addLog(userId, `⏳ 재진입 쿨다운 ${symbol}: ${(remainingMs / 3_600_000).toFixed(1)}h 남음 (최근 청산: ${lastClose.exitReason})`);
         return null;

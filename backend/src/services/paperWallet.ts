@@ -1,6 +1,6 @@
 import { TradeConfig } from '../types';
 import prisma from '../lib/prisma';
-import { calcPdfStopLoss, calcPdfGridPrices, capSlWithLiquidation, truncateGridsToSafeZone } from './gridUtils';
+import { calcPdfStopLoss, calcPdfGridPrices, capSlWithLiquidation, truncateGridsToSafeZone, resolveReEntryCooldownHours } from './gridUtils';
 import { estimateLiquidationPrice } from './binance';
 
 export async function getOrCreateWallet(userId: string) {
@@ -27,12 +27,18 @@ export async function openPaperPosition(
   if (wallet.openPositions.find(p => p.symbol === symbol)) return null;
   if (wallet.balance < trade.entryAmountUsdt) return null;
 
-  if (trade.reEntryCooldownHours) {
-    const lastLog = await prisma.paperTradeLog.findFirst({
-      where:   { walletId: wallet.id, symbol },
-      orderBy: { exitTime: 'desc' }
-    });
-    if (lastLog && Date.now() - lastLog.exitTime.getTime() < trade.reEntryCooldownHours * 3_600_000) {
+  if (trade.blockLossSymbols) {
+    const anyLoss = await prisma.paperTradeLog.findFirst({ where: { walletId: wallet.id, symbol, pnlUsdt: { lte: 0 } } });
+    if (anyLoss) return null;
+  }
+
+  const lastLog = await prisma.paperTradeLog.findFirst({
+    where:   { walletId: wallet.id, symbol },
+    orderBy: { exitTime: 'desc' }
+  });
+  if (lastLog) {
+    const cooldownHours = resolveReEntryCooldownHours(trade, lastLog.pnlUsdt > 0);
+    if (cooldownHours && Date.now() - lastLog.exitTime.getTime() < cooldownHours * 3_600_000) {
       return null;
     }
   }

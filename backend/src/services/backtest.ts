@@ -1,6 +1,6 @@
 import { Kline, StrategyConditions, TradeConfig, BacktestResult, BacktestTrade } from '../types';
 import { calcRSI, calc24hChange, candlesPerDay } from './indicator';
-import { calcPdfGridPrices, calcPdfAvgEntry, calcPdfStopLoss, calcIsolatedLiquidationPrice, capSlWithLiquidation, truncateGridsToSafeZone } from './gridUtils';
+import { calcPdfGridPrices, calcPdfAvgEntry, calcPdfStopLoss, calcIsolatedLiquidationPrice, capSlWithLiquidation, truncateGridsToSafeZone, resolveReEntryCooldownHours } from './gridUtils';
 import { binanceMaster, pickLeverageBracket, LeverageBracket } from './binance';
 
 interface BacktestOptions {
@@ -192,12 +192,18 @@ export async function runBacktest(
           ` | 사유: ${tradeSim.exitReason}` +
           ` | 진입시각: ${new Date(tradeSim.entryTime).toLocaleString('ko-KR', { hour12: false, timeZone: 'Asia/Seoul' })}`
         );
+        const wasWin = tradeSim.pnlPct > 0;
+        // blockLossSymbols: 손실이면 이 심볼은 이후로 다시 진입하지 않는 실거래/가상거래 동작을
+        // 백테스트에서도 동일하게 반영 — 루프를 여기서 완전히 종료
+        if (trade.blockLossSymbols && !wasWin) break;
+
         const exitKlineIdx = klines.findIndex(k => k.openTime >= tradeSim.exitTime);
         // exitKlineIdx가 -1이면 거래가 데이터 끝까지 갔다는 뜻 → 루프 종료
         let nextIdx = exitKlineIdx > 0 ? exitKlineIdx : klines.length;
-        // reEntryCooldownHours: 청산 직후 캔들 수만큼 재진입 스캔 스킵 (실거래/가상거래 쿨다운과 동일하게 반영)
-        if (trade.reEntryCooldownHours) {
-          nextIdx += Math.round(trade.reEntryCooldownHours * 60 / (MINS_PER_CANDLE[interval] ?? 60));
+        // 이전 청산이 수익/손실이었는지에 따라 재진입 쿨다운 캔들 수만큼 스캔 스킵 (실거래/가상거래와 동일 로직)
+        const cooldownHours = resolveReEntryCooldownHours(trade, wasWin);
+        if (cooldownHours) {
+          nextIdx += Math.round(cooldownHours * 60 / (MINS_PER_CANDLE[interval] ?? 60));
         }
         i = nextIdx;
         continue;

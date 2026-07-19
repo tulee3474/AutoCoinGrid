@@ -1,3 +1,11 @@
+import { TradeConfig } from '../types';
+
+/** 직전 청산이 수익/손실이었는지에 따라 적용할 재진입 쿨다운 시간 결정 (live/paper/backtest 공통) */
+export function resolveReEntryCooldownHours(trade: TradeConfig, wasWin: boolean): number | null {
+  const specific = wasWin ? trade.reEntryCooldownWinHours : trade.reEntryCooldownLossHours;
+  return specific ?? trade.reEntryCooldownHours ?? null;
+}
+
 /**
  * PDF 방식 그리드 공식
  * nextGrid = currentArithmeticAvgEntry × (1 + gridSpacing/100 / leverage)
