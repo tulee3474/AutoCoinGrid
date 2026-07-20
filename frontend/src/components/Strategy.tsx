@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
 import { createStrategy, updateStrategy, getStrategies, deleteStrategy, toggleStrategy, validateStrategy, runBacktest, getPresets, AdminPreset } from '../utils/api';
-import { ValidationResult, BacktestResult, StrategyConditions, TradeConfig, Side } from '../types';
+import { ValidationResult, BacktestResult, StrategyConditions, TradeConfig, Side, mirrorConditionsForSide, mirrorTradeForSide } from '../types';
 import { fmtDate } from '../utils/datetime';
 
 // ── 공통 입력 ────────────────────────────────────────────────
@@ -616,7 +616,12 @@ export default function Strategy() {
           <div className="flex gap-1 flex-shrink-0">
             {(['SHORT', 'LONG'] as const).map(sd => (
               <button key={sd} type="button"
-                onClick={() => setDraftSide(sd)}
+                onClick={() => {
+                  if (sd === draftSide) return;
+                  setDraftConditions(mirrorConditionsForSide(draftConditions, draftSide, sd));
+                  setDraftTrade(mirrorTradeForSide(draftTrade, draftSide, sd));
+                  setDraftSide(sd);
+                }}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
                   draftSide === sd
                     ? (sd === 'SHORT' ? 'border-down bg-down/10 text-down' : 'border-up bg-up/10 text-up')
@@ -716,7 +721,9 @@ export default function Strategy() {
                 checked={draftConditions.noRecentCrash != null}
                 onChange={e => setDraftConditions({ noRecentCrash: e.target.checked ? { days: 7, dropPct: 50 } : null })} />
               <label htmlFor="noRecentCrash" className="text-sm text-gray-300 cursor-pointer">
-                최근 급락 이력 있으면 제외 <span className="text-gray-500 text-xs">(이미 크게 떨어진 코인의 반등을 급등으로 오인 방지)</span>
+                {draftSide === 'SHORT'
+                  ? <>최근 급락 이력 있으면 제외 <span className="text-gray-500 text-xs">(이미 크게 떨어진 코인의 반등을 급등으로 오인 방지)</span></>
+                  : <>최근 급등 이력 있으면 제외 <span className="text-gray-500 text-xs">(이미 크게 오른 코인의 눌림목을 저점으로 오인 방지)</span></>}
               </label>
             </div>
             {draftConditions.noRecentCrash != null && (
@@ -726,7 +733,7 @@ export default function Strategy() {
                   min={1} max={30} unit="일 이내" fieldId="crash-days" emptyTracker={emptyFields} />
                 <NumberInput label="" value={draftConditions.noRecentCrash.dropPct}
                   onChange={v => setDraftConditions({ noRecentCrash: { ...draftConditions.noRecentCrash!, dropPct: v } })}
-                  min={10} max={90} unit="% 이상 급락 시 제외" fieldId="crash-pct" emptyTracker={emptyFields} />
+                  min={10} max={90} unit={draftSide === 'SHORT' ? '% 이상 급락 시 제외' : '% 이상 급등 시 제외'} fieldId="crash-pct" emptyTracker={emptyFields} />
               </div>
             )}
           </div>
@@ -797,7 +804,7 @@ export default function Strategy() {
           <div className="flex items-center gap-3">
             <input type="checkbox" id="useRsiExit" className="w-4 h-4 accent-accent"
               checked={draftTrade.rsiExitThreshold !== null}
-              onChange={e => setDraftTrade({ rsiExitThreshold: e.target.checked ? 40 : null })} />
+              onChange={e => setDraftTrade({ rsiExitThreshold: e.target.checked ? (draftSide === 'SHORT' ? 40 : 60) : null })} />
             <label htmlFor="useRsiExit" className="text-sm text-gray-300 cursor-pointer">
               RSI 반전 시 조기 청산 <span className="text-gray-500 text-xs">
                 {draftSide === 'SHORT' ? '(적당선 익절 — 과매수 → 정상화 감지 시 확정)' : '(적당선 익절 — 과매도 → 정상화 감지 시 확정)'}
@@ -867,15 +874,19 @@ export default function Strategy() {
           <div className="flex items-center gap-3">
             <input type="checkbox" id="useGridRsiSkip" className="w-4 h-4 accent-accent"
               checked={draftTrade.gridRsiSkipThreshold != null}
-              onChange={e => setDraftTrade({ gridRsiSkipThreshold: e.target.checked ? 90 : null })} />
+              onChange={e => setDraftTrade({ gridRsiSkipThreshold: e.target.checked ? (draftSide === 'SHORT' ? 90 : 10) : null })} />
             <label htmlFor="useGridRsiSkip" className="text-sm text-gray-300 cursor-pointer">
-              그리드 체결 시 RSI 과열이면 포기 <span className="text-gray-500 text-xs">(큰 손실 방지 — 30분봉 RSI 기준, 과열 지속 시 물타기 대신 즉시 전체청산)</span>
+              {draftSide === 'SHORT'
+                ? <>그리드 체결 시 RSI 과열이면 포기 <span className="text-gray-500 text-xs">(큰 손실 방지 — 30분봉 RSI 기준, 과열 지속 시 물타기 대신 즉시 전체청산)</span></>
+                : <>그리드 체결 시 RSI 과매도(패닉)면 포기 <span className="text-gray-500 text-xs">(큰 손실 방지 — 30분봉 RSI 기준, 패닉 지속 시 물타기 대신 즉시 전체청산)</span></>}
             </label>
           </div>
           {draftTrade.gridRsiSkipThreshold != null && (
             <div className="ml-7">
               <NumberInput label="" value={draftTrade.gridRsiSkipThreshold}
-                onChange={v => setDraftTrade({ gridRsiSkipThreshold: v })} min={50} max={99} unit="RSI 이상이면 포기"
+                onChange={v => setDraftTrade({ gridRsiSkipThreshold: v })}
+                min={draftSide === 'SHORT' ? 50 : 1} max={draftSide === 'SHORT' ? 99 : 50}
+                unit={draftSide === 'SHORT' ? 'RSI 이상이면 포기' : 'RSI 이하면 포기'}
                 fieldId="grid-rsi-skip" emptyTracker={emptyFields} />
             </div>
           )}

@@ -8,7 +8,7 @@ import {
   getPresets, adminCreatePreset, adminUpdatePreset, adminDeletePreset,
   AdminUser, AdminPreset
 } from '../utils/api';
-import { StrategyConditions, TradeConfig, DEFAULT_CONDITIONS, DEFAULT_TRADE, Side } from '../types';
+import { StrategyConditions, TradeConfig, DEFAULT_CONDITIONS, DEFAULT_TRADE, Side, mirrorConditionsForSide, mirrorTradeForSide } from '../types';
 import { fmtDate } from '../utils/datetime';
 
 interface UserDetail {
@@ -385,7 +385,12 @@ function PresetForm({
         <div className="flex gap-1 flex-shrink-0">
           {(['SHORT', 'LONG'] as const).map(sd => (
             <button key={sd} type="button"
-              onClick={() => setSide(sd)}
+              onClick={() => {
+                if (sd === side) return;
+                setC(mirrorConditionsForSide(c, side, sd));
+                setT(mirrorTradeForSide(t, side, sd));
+                setSide(sd);
+              }}
               className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
                 side === sd
                   ? (sd === 'SHORT' ? 'border-down bg-down/10 text-down' : 'border-up bg-up/10 text-up')
@@ -451,7 +456,7 @@ function PresetForm({
               {c.minListingDays == null && <span className="text-xs text-gray-500">비활성</span>}
             </div>
           </F>
-          <F label="최근 급락 이력 제외">
+          <F label={side === 'SHORT' ? '최근 급락 이력 제외' : '최근 급등 이력 제외'}>
             <div className="flex items-center gap-1">
               <input type="checkbox" checked={c.noRecentCrash != null}
                 onChange={e => sc({ noRecentCrash: e.target.checked ? { days: 7, dropPct: 50 } : null })}
@@ -465,7 +470,7 @@ function PresetForm({
                   <input type="number" value={c.noRecentCrash.dropPct}
                     onChange={e => sc({ noRecentCrash: { ...c.noRecentCrash!, dropPct: +e.target.value } })}
                     className="w-full bg-surface border border-border rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-accent" />
-                  <span className="text-xs text-gray-500 flex-shrink-0">% 급락 제외</span>
+                  <span className="text-xs text-gray-500 flex-shrink-0">{side === 'SHORT' ? '% 급락 제외' : '% 급등 제외'}</span>
                 </>
               )}
               {c.noRecentCrash == null && <span className="text-xs text-gray-500">비활성</span>}
@@ -514,7 +519,7 @@ function PresetForm({
           <F label="RSI 반전 청산 (적당선 익절)">
             <div className="flex items-center gap-1">
               <input type="checkbox" checked={t.rsiExitThreshold != null}
-                onChange={e => st({ rsiExitThreshold: e.target.checked ? 40 : null })}
+                onChange={e => st({ rsiExitThreshold: e.target.checked ? (side === 'SHORT' ? 40 : 60) : null })}
                 className="w-4 h-4 accent-accent flex-shrink-0" />
               {t.rsiExitThreshold != null && (
                 <input type="number" value={t.rsiExitThreshold}
@@ -562,10 +567,10 @@ function PresetForm({
               <span className="text-xs text-gray-300">사용</span>
             </div>
           </F>
-          <F label="그리드 RSI 과열 포기 (큰 손실 방지)">
+          <F label={side === 'SHORT' ? '그리드 RSI 과열 포기 (큰 손실 방지)' : '그리드 RSI 과매도 포기 (큰 손실 방지)'}>
             <div className="flex items-center gap-1">
               <input type="checkbox" checked={t.gridRsiSkipThreshold != null}
-                onChange={e => st({ gridRsiSkipThreshold: e.target.checked ? 90 : null })}
+                onChange={e => st({ gridRsiSkipThreshold: e.target.checked ? (side === 'SHORT' ? 90 : 10) : null })}
                 className="w-4 h-4 accent-accent flex-shrink-0" />
               {t.gridRsiSkipThreshold != null && (
                 <input type="number" value={t.gridRsiSkipThreshold}

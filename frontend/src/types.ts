@@ -50,6 +50,34 @@ export interface StrategyConfig {
   createdAt: number;
 }
 
+/**
+ * 롱/숏 토글 시 조건 값을 실제로 미러링 — 라벨만 바꾸면 숏 기준 숫자(예: RSI 70 이상,
+ * 가격상승률 20~100%)가 그대로 남아 롱에선 의미 없는 조건이 되므로, 100 대칭/부호 반전으로
+ * 방향에 맞는 값으로 자동 변환한다. 정수 기준 완전한 역함수라 왕복 토글해도 값이 안 틀어짐.
+ */
+export function mirrorConditionsForSide(c: StrategyConditions, fromSide: Side, toSide: Side): StrategyConditions {
+  if (fromSide === toSide) return c;
+  const activeRsi = fromSide === 'SHORT' ? c.rsi.min : c.rsi.max;
+  const mirroredRsi = 100 - activeRsi;
+  return {
+    ...c,
+    rsi: toSide === 'SHORT'
+      ? { ...c.rsi, min: mirroredRsi, max: 100 }
+      : { ...c.rsi, min: 0, max: mirroredRsi },
+    priceChange24h: { min: -c.priceChange24h.max, max: -c.priceChange24h.min }
+  };
+}
+
+export function mirrorTradeForSide(t: TradeConfig, fromSide: Side, toSide: Side): TradeConfig {
+  if (fromSide === toSide) return t;
+  const mirror = (v: number | null | undefined) => v == null ? v : 100 - v;
+  return {
+    ...t,
+    rsiExitThreshold: mirror(t.rsiExitThreshold) ?? null,
+    gridRsiSkipThreshold: mirror(t.gridRsiSkipThreshold)
+  };
+}
+
 export interface MarketSnapshot {
   symbol: string;
   price: number;
