@@ -72,8 +72,9 @@ router.post('/scan', async (req, res) => {
   try {
     const conditions: StrategyConditions = req.body.conditions;
     const btcDominance: number = req.body.btcDominance ?? 50;
+    const side: 'LONG' | 'SHORT' = req.body.side ?? 'SHORT';
     if (!conditions) return res.status(400).json({ error: 'conditions 필요' });
-    const results = await scanMarket(conditions, btcDominance);
+    const results = await scanMarket(conditions, side, btcDominance);
     res.json(results);
   } catch (e: any) {
     res.status(500).json({ error: e.message });

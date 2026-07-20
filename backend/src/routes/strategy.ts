@@ -10,6 +10,7 @@ function toClientShape(r: any) {
     id:         r.id,
     name:       r.name,
     enabled:    r.enabled,
+    side:       r.side ?? 'SHORT',
     coins:      r.coins as string[],
     conditions: r.conditions as StrategyConditions,
     trade:      r.trade as TradeConfig,
@@ -35,12 +36,12 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
 
 // POST /api/strategy
 router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
-  const { name, enabled, coins, conditions, trade } = req.body;
+  const { name, enabled, coins, conditions, trade, side } = req.body;
   if (!name || !conditions || !trade) {
     return res.status(400).json({ error: 'name, conditions, trade 필요' });
   }
   const row = await prisma.strategy.create({
-    data: { userId: req.userId!, name, enabled: enabled ?? false, coins: coins ?? [], conditions, trade }
+    data: { userId: req.userId!, name, enabled: enabled ?? false, side: side ?? 'SHORT', coins: coins ?? [], conditions, trade }
   });
   res.status(201).json(toClientShape(row));
 });
@@ -50,10 +51,10 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   const exists = await prisma.strategy.findFirst({ where: { id: req.params.id, userId: req.userId } });
   if (!exists) return res.status(404).json({ error: 'not found' });
 
-  const { name, enabled, coins, conditions, trade } = req.body;
+  const { name, enabled, coins, conditions, trade, side } = req.body;
   const row = await prisma.strategy.update({
     where: { id: req.params.id },
-    data:  { name, enabled, coins, conditions, trade }
+    data:  { name, enabled, coins, conditions, trade, side }
   });
   res.json(toClientShape(row));
 });

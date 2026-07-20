@@ -22,7 +22,7 @@ router.get('/', async (_req, res) => {
 
 // POST /api/presets — 관리자 전용: 프리셋 생성
 router.post('/', requireAdmin, async (req, res) => {
-  const { type, name, conditions, trade, sortOrder } = req.body;
+  const { type, name, conditions, trade, sortOrder, side } = req.body;
   if (!type || !name || !conditions || !trade) {
     return res.status(400).json({ error: 'type, name, conditions, trade 필요' });
   }
@@ -32,7 +32,7 @@ router.post('/', requireAdmin, async (req, res) => {
       await prisma.adminPreset.deleteMany({ where: { type: 'default' } });
     }
     const preset = await prisma.adminPreset.create({
-      data: { type, name, conditions, trade, sortOrder: sortOrder ?? 0 }
+      data: { type, name, side: side ?? 'SHORT', conditions, trade, sortOrder: sortOrder ?? 0 }
     });
     res.json(preset);
   } catch (e: any) {
@@ -42,11 +42,11 @@ router.post('/', requireAdmin, async (req, res) => {
 
 // PUT /api/presets/:id — 관리자 전용: 프리셋 수정
 router.put('/:id', requireAdmin, async (req, res) => {
-  const { name, conditions, trade, sortOrder } = req.body;
+  const { name, conditions, trade, sortOrder, side } = req.body;
   try {
     const preset = await prisma.adminPreset.update({
       where: { id: req.params.id },
-      data: { name, conditions, trade, sortOrder }
+      data: { name, conditions, trade, sortOrder, side }
     });
     res.json(preset);
   } catch {

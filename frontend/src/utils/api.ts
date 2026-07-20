@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { StrategyConditions, TradeConfig, StrategyConfig } from '../types';
+import { StrategyConditions, TradeConfig, StrategyConfig, Side } from '../types';
 
 const api = axios.create({ baseURL: '/api', timeout: 30000 });
 
@@ -141,6 +141,7 @@ export const runBacktest = (params: {
   limit: number;
   conditions: StrategyConditions;
   trade: TradeConfig;
+  side?: Side;
   btcDominance?: number;
 }) => api.post('/backtest/run', params).then(r => r.data);
 
@@ -148,6 +149,7 @@ export const runBacktest = (params: {
 export const validateStrategy = (params: {
   conditions: StrategyConditions;
   trade: TradeConfig;
+  side?: Side;
 }) => api.post('/backtest/validate', params).then(r => r.data);
 
 export const runMultiBacktest = (params: {
@@ -317,6 +319,7 @@ export interface AdminPreset {
   id: string;
   type: 'default' | 'recommended';
   name: string;
+  side: Side;
   conditions: import('../types').StrategyConditions;
   trade: import('../types').TradeConfig;
   sortOrder: number;

@@ -37,10 +37,13 @@ export interface TradeConfig {
   liquidationSafetyPct?: number | null;  // null/미설정 = 기본 99 사용. 실제(또는 추정) 청산가까지 거리의 이 %지점에 안전 손절 설정, 이보다 먼 그리드 레벨은 등록하지 않음
 }
 
+export type Side = 'LONG' | 'SHORT';
+
 export interface StrategyConfig {
   id: string;
   name: string;
   enabled: boolean;
+  side: Side;
   coins: string[];
   conditions: StrategyConditions;
   trade: TradeConfig;

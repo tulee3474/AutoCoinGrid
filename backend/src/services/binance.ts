@@ -581,13 +581,14 @@ export async function estimateLiquidationPrice(
   symbol: string,
   marginUsdt: number,
   qty: number,
-  avgEntryPrice: number
+  avgEntryPrice: number,
+  side: 'LONG' | 'SHORT' = 'SHORT'
 ): Promise<number | null> {
   try {
     const brackets = await binanceMaster.getLeverageBracket(symbol);
     if (brackets.length === 0) return null;
     const { mmr, cum } = pickLeverageBracket(brackets, qty * avgEntryPrice);
-    return calcIsolatedLiquidationPrice(marginUsdt, qty, avgEntryPrice, mmr, cum);
+    return calcIsolatedLiquidationPrice(marginUsdt, qty, avgEntryPrice, mmr, cum, side);
   } catch {
     return null;
   }

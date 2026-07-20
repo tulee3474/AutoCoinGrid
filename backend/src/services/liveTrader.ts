@@ -1,7 +1,7 @@
 import { BinanceService, binance } from './binance';
 import { scanMarket } from './scanner';
 import { computeIndicators } from './indicator';
-import { StrategyConfig, StrategyConditions, TradeConfig } from '../types';
+import { StrategyConfig, StrategyConditions, TradeConfig, Side } from '../types';
 import prisma from '../lib/prisma';
 import { decrypt } from '../lib/crypto';
 import { calcPdfStopLoss, calcPdfGridPrices, capSlWithLiquidation, truncateGridsToSafeZone, resolveReEntryCooldownHours } from './gridUtils';
@@ -161,6 +161,7 @@ async function loadStrategies(userId: string): Promise<StrategyConfig[]> {
     id:         r.id,
     name:       r.name,
     enabled:    r.enabled,
+    side:       (r.side as Side) ?? 'SHORT',
     coins:      r.coins as string[],
     conditions: r.conditions as unknown as StrategyConditions,
     trade:      r.trade     as unknown as TradeConfig,
@@ -885,8 +886,14 @@ async function runLiveScanCycle(userId: string, broadcast: (data: unknown) => vo
 
   const btcDom = await getBtcDominance();
   for (const strategy of strategies) {
+    // 롱 전략 실거래 진입은 아직 미지원 (그리드/청산가/주문방향이 숏 전용) — 백테스트/가상거래로
+    // 검증 중인 롱 전략이 실수로 실거래에서 돌아가지 않도록 여기서 원천 차단
+    if (strategy.side === 'LONG') {
+      addLog(userId, `⏭️ 전략 "${strategy.name}"(LONG) — 실거래 롱은 아직 지원하지 않아 스킵`);
+      continue;
+    }
     try {
-      const signals     = await scanMarket(strategy.conditions, btcDom);
+      const signals     = await scanMarket(strategy.conditions, strategy.side, btcDom);
       const fullSignals = signals.filter(s => s.signalScore >= 100);
       addLog(userId, `전략 "${strategy.name}": 후보 ${signals.length}개, 충족 ${fullSignals.length}개`);
       for (const signal of fullSignals) {

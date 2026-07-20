@@ -32,6 +32,7 @@ model Strategy {
   userId     String
   name       String
   enabled    Boolean  @default(false)
+  side       String   @default("SHORT")
   conditions Json
   trade      Json
   coins      Json     @default("[]")
@@ -61,6 +62,7 @@ model PaperPosition {
   id              String   @id @default(uuid())
   walletId        String
   symbol          String
+  side            String   @default("SHORT")
   entryPrice      Float
   avgEntryPrice   Float    @default(0)
   totalEntryUsdt  Float    @default(0)
@@ -83,6 +85,7 @@ model PaperTradeLog {
   id              String   @id @default(uuid())
   walletId        String
   symbol          String
+  side            String   @default("SHORT")
   entryTime       DateTime
   exitTime        DateTime
   entryPrice      Float
@@ -132,6 +135,7 @@ model AdminPreset {
   id         String   @id @default(uuid())
   type       String   // 'default' | 'recommended'
   name       String
+  side       String   @default("SHORT")
   conditions Json
   trade      Json
   sortOrder  Int      @default(0)

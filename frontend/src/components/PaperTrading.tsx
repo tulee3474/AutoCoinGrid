@@ -24,6 +24,7 @@ interface WalletSummary {
 interface PaperPosition {
   id: string;
   symbol: string;
+  side?: string;
   entryPrice: number;
   avgEntryPrice: number;
   gridsFilled: number;
@@ -44,6 +45,7 @@ interface PaperPosition {
 interface TradeLog {
   id: string;
   symbol: string;
+  side?: string;
   entryTime: number;
   exitTime: number;
   entryPrice: number;
@@ -293,6 +295,9 @@ export default function PaperTrading() {
                 <div className={`w-2 h-2 rounded-full flex-shrink-0 ${s.enabled ? 'bg-up animate-pulse' : 'bg-gray-600'}`} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0 ${(s.side ?? 'SHORT') === 'LONG' ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`}>
+                      {(s.side ?? 'SHORT') === 'LONG' ? '롱' : '숏'}
+                    </span>
                     <span className="text-sm font-medium text-gray-200 truncate">{s.name}</span>
                     {s.enabled && <span className="text-xs text-up font-semibold">● 실행 중</span>}
                     {(() => {
@@ -413,7 +418,12 @@ export default function PaperTrading() {
               <tbody>
                 {positions.map(pos => (
                   <tr key={pos.id} className="border-b border-border/40 hover:bg-white/3">
-                    <td className="py-2 pr-3 font-bold text-gray-200">{pos.symbol.replace('USDT', '')}</td>
+                    <td className="py-2 pr-3">
+                      <span className={`text-[10px] px-1 py-0.5 rounded mr-1 ${(pos.side ?? 'SHORT') === 'LONG' ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`}>
+                        {(pos.side ?? 'SHORT') === 'LONG' ? '롱' : '숏'}
+                      </span>
+                      <span className="font-bold text-gray-200">{pos.symbol.replace('USDT', '')}</span>
+                    </td>
                     <td className="py-2 pr-3 text-gray-500 truncate max-w-[80px]">{pos.strategyName}</td>
                     <td className="py-2 pr-3 text-gray-400 num" title={pos.gridPrices.length > 0 ? `최초 진입가 $${pos.entryPrice.toPrecision(5)} · 그리드 ${pos.gridsFilled}/${pos.gridPrices.length}차 (청산가 안전마진 내 등록 가능한 최대치)` : undefined}>
                       ${(pos.avgEntryPrice > 0 ? pos.avgEntryPrice : pos.entryPrice).toPrecision(5)}
@@ -492,6 +502,9 @@ export default function PaperTrading() {
                     onClick={() => setExpandedLogId(expanded ? null : log.id)}
                   >
                     <div className="flex items-center gap-2 p-2">
+                      <span className={`text-[10px] px-1 py-0.5 rounded flex-shrink-0 ${(log.side ?? 'SHORT') === 'LONG' ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`}>
+                        {(log.side ?? 'SHORT') === 'LONG' ? '롱' : '숏'}
+                      </span>
                       <span className="text-gray-300 font-semibold w-12 flex-shrink-0">{log.symbol.replace('USDT', '')}</span>
                       <span className="text-gray-600 truncate w-16 flex-shrink-0" title={log.strategyName}>{log.strategyName}</span>
                       <span className={`font-bold num flex-1 ${log.pnlUsdt >= 0 ? 'text-up' : 'text-down'}`}>

@@ -2,8 +2,8 @@ import { binance, estimateLiquidationPrice } from './binance';
 import { scanMarket } from './scanner';
 import { openPaperPosition, closePaperPosition, getOrCreateWallet } from './paperWallet';
 import { computeIndicators } from './indicator';
-import { calcPdfStopLoss, capSlWithLiquidation } from './gridUtils';
-import { StrategyConfig, StrategyConditions, TradeConfig } from '../types';
+import { calcPdfStopLoss, calcTakeProfitPrice, capSlWithLiquidation } from './gridUtils';
+import { StrategyConfig, StrategyConditions, TradeConfig, Side } from '../types';
 import prisma from '../lib/prisma';
 
 const SCAN_INTERVAL_MS = 60_000;
@@ -58,6 +58,7 @@ async function loadStrategies(userId: string): Promise<StrategyConfig[]> {
     id:         r.id,
     name:       r.name,
     enabled:    r.enabled,
+    side:       (r.side as Side) ?? 'SHORT',
     coins:      r.coins as string[],
     conditions: r.conditions as unknown as StrategyConditions,
     trade:      r.trade as unknown as TradeConfig,
@@ -114,6 +115,8 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
         const price = priceMap.get(pos.symbol);
         if (!price) continue;
 
+        const posSide = (pos.side as Side) ?? 'SHORT';
+
         // 이 포지션 오픈 이후 캔들만 필터
         const posKlines = (klinesBySymbol.get(pos.symbol) ?? [])
           .filter(k => k.openTime >= pos.openedAt.getTime());
@@ -129,26 +132,30 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
           let gridsToFill = 0;
           for (let gi = currentGridsFilled; gi < gridPrices.length; gi++) {
             const gp = gridPrices[gi];
-            // 현재가 또는 이전 캔들 HIGH가 그리드 가격에 도달했으면 체결
-            const reached = price >= gp || posKlines.some(k => k.high >= gp);
+            // 숏: 현재가/캔들 HIGH가 그리드 가격 이상 / 롱: 현재가/캔들 LOW가 그리드 가격 이하
+            const reached = posSide === 'SHORT'
+              ? (price >= gp || posKlines.some(k => k.high >= gp))
+              : (price <= gp || posKlines.some(k => k.low <= gp));
             if (reached) gridsToFill++;
             else break;
           }
 
           if (gridsToFill > 0) {
-            // 1100%/500%급 급등처럼 그리드를 계속 태우면 크게 잃는 상황 방지 —
-            // 이번 그리드 체결 시점 RSI가 임계값 이상이면 추가진입 포기하고 즉시 전체 청산
+            // 숏: 1100%/500%급 급등처럼 그리드를 계속 태우면 크게 잃는 상황 방지 (RSI 과열 이상 시 포기)
+            // 롱: 반대로 급락이 계속되는 상황 방지 (RSI 과매도 이하 시 포기)
             const gridSkipThreshold = strategyTradeMap.get(pos.strategyName)?.gridRsiSkipThreshold ?? null;
             let overheatRsi: number | null = null;
             if (gridSkipThreshold !== null) {
               const rsi14 = await fetchRsi14(pos.symbol, '30m');
-              if (rsi14 !== null && rsi14 >= gridSkipThreshold) overheatRsi = rsi14;
+              const triggered = rsi14 !== null && (posSide === 'SHORT' ? rsi14 >= gridSkipThreshold : rsi14 <= gridSkipThreshold);
+              if (triggered) overheatRsi = rsi14;
             }
 
             if (overheatRsi !== null) {
               exitReason = 'rsiOverheat';
               exitPrice  = price;
-              addLog(userId, `🔥 RSI 과열(${overheatRsi.toFixed(1)}) 감지 ${pos.symbol} — 그리드 포기 + 즉시 전체청산`, 'info');
+              const label = posSide === 'SHORT' ? '과열' : '패닉(과매도)';
+              addLog(userId, `🔥 RSI ${label}(${overheatRsi.toFixed(1)}) 감지 ${pos.symbol} — 그리드 포기 + 즉시 전체청산`, 'info');
             } else {
               const freshWallet = await getOrCreateWallet(userId);
               const cost = pos.entryAmountUsdt * gridsToFill;
@@ -172,13 +179,13 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
                 const tradeCfg = strategyTradeMap.get(pos.strategyName);
                 if (tradeCfg) {
                   const remainingLevels = gridPrices.length - newGridsFilled;
-                  newTpPrice = newAvgEntry * (1 - tradeCfg.takeProfitPct / 100);
-                  newSlPrice = calcPdfStopLoss(newAvgEntry, pos.leverage, remainingLevels, tradeCfg.gridSpacing);
+                  newTpPrice = calcTakeProfitPrice(newAvgEntry, tradeCfg.takeProfitPct, posSide);
+                  newSlPrice = calcPdfStopLoss(newAvgEntry, pos.leverage, remainingLevels, tradeCfg.gridSpacing, posSide);
 
                   // 그리드 체결로 마진/평균단가가 바뀌었으니 추정 청산가도 새로 조회해 안전 캡 재적용 (실거래와 동일 로직)
                   const newQty = newTotalUsdt * pos.leverage / newAvgEntry;
-                  const liqPrice = (await estimateLiquidationPrice(pos.symbol, newTotalUsdt, newQty, newAvgEntry)) ?? 0;
-                  newSlPrice = capSlWithLiquidation(newSlPrice, newAvgEntry, liqPrice, tradeCfg.liquidationSafetyPct ?? 99);
+                  const liqPrice = (await estimateLiquidationPrice(pos.symbol, newTotalUsdt, newQty, newAvgEntry, posSide)) ?? 0;
+                  newSlPrice = capSlWithLiquidation(newSlPrice, newAvgEntry, liqPrice, tradeCfg.liquidationSafetyPct ?? 99, posSide);
                 }
 
                 await prisma.$transaction([
@@ -215,23 +222,34 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
         }
 
         if (!exitReason) {
-          if      (price <= pos.takeProfitPrice) { exitReason = 'takeProfit'; exitPrice = pos.takeProfitPrice; }
-          else if (price >= pos.stopLossPrice)   { exitReason = 'stopLoss';   exitPrice = pos.stopLossPrice;   }
+          if (posSide === 'SHORT') {
+            if      (price <= pos.takeProfitPrice) { exitReason = 'takeProfit'; exitPrice = pos.takeProfitPrice; }
+            else if (price >= pos.stopLossPrice)   { exitReason = 'stopLoss';   exitPrice = pos.stopLossPrice;   }
+          } else {
+            if      (price >= pos.takeProfitPrice) { exitReason = 'takeProfit'; exitPrice = pos.takeProfitPrice; }
+            else if (price <= pos.stopLossPrice)   { exitReason = 'stopLoss';   exitPrice = pos.stopLossPrice;   }
+          }
         }
 
         // 60초 폴링 사이에 놓친 SL/TP: 캔들 HIGH/LOW로 소급 감지
         if (!exitReason) {
           for (const k of posKlines) {
-            if (k.high >= pos.stopLossPrice)   { exitReason = 'stopLoss';   exitPrice = pos.stopLossPrice;   break; }
-            if (k.low  <= pos.takeProfitPrice) { exitReason = 'takeProfit'; exitPrice = pos.takeProfitPrice; break; }
+            if (posSide === 'SHORT') {
+              if (k.high >= pos.stopLossPrice)   { exitReason = 'stopLoss';   exitPrice = pos.stopLossPrice;   break; }
+              if (k.low  <= pos.takeProfitPrice) { exitReason = 'takeProfit'; exitPrice = pos.takeProfitPrice; break; }
+            } else {
+              if (k.low  <= pos.stopLossPrice)   { exitReason = 'stopLoss';   exitPrice = pos.stopLossPrice;   break; }
+              if (k.high >= pos.takeProfitPrice) { exitReason = 'takeProfit'; exitPrice = pos.takeProfitPrice; break; }
+            }
           }
         }
 
-        // RSI 반전 신호: 전략의 rsiExitThreshold 미만이면 숏 조기 청산
+        // RSI 반전 신호: 숏은 rsiExitThreshold 미만(과매수→정상화)이면, 롱은 초과(과매도→정상화)면 조기 청산
         const rsiThreshold = strategyTradeMap.get(pos.strategyName)?.rsiExitThreshold ?? null;
         if (!exitReason && rsiThreshold !== null) {
           const rsi14 = await fetchRsi14(pos.symbol);
-          if (rsi14 !== null && rsi14 < rsiThreshold) {
+          const reversed = rsi14 !== null && (posSide === 'SHORT' ? rsi14 < rsiThreshold : rsi14 > rsiThreshold);
+          if (reversed) {
             exitReason = 'signalReversal';
             exitPrice  = price;
           }
@@ -266,13 +284,13 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
 
   for (const strategy of strategies) {
     try {
-      const signals     = await scanMarket(strategy.conditions, btcDom);
+      const signals     = await scanMarket(strategy.conditions, strategy.side, btcDom);
       const fullSignals = signals.filter(s => s.signalScore >= 100);
 
-      addLog(userId, `전략 "${strategy.name}": 후보 ${signals.length}개, 충족 ${fullSignals.length}개`);
+      addLog(userId, `전략 "${strategy.name}"(${strategy.side}): 후보 ${signals.length}개, 충족 ${fullSignals.length}개`);
 
       for (const signal of fullSignals) {
-        const pos = await openPaperPosition(userId, signal.symbol, signal.price, strategy.trade, strategy.name);
+        const pos = await openPaperPosition(userId, signal.symbol, signal.price, strategy.trade, strategy.name, strategy.side);
         if (pos) {
           addLog(userId,
             `📈 [진입] ${signal.symbol} @ $${signal.price.toPrecision(5)} | TP $${pos.takeProfitPrice.toPrecision(4)} | SL $${pos.stopLossPrice.toPrecision(4)}`,

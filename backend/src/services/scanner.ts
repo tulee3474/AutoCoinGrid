@@ -1,6 +1,6 @@
 import { binance } from './binance';
 import { computeIndicators } from './indicator';
-import { StrategyConditions, MarketSnapshot } from '../types';
+import { StrategyConditions, MarketSnapshot, Side } from '../types';
 
 const EXCLUDE = new Set([
   'BTCUSDT', 'ETHUSDT', 'USDCUSDT', 'BUSDUSDT', 'TUSDUSDT',
@@ -28,6 +28,7 @@ function isPrefilterCycle(): boolean {
 
 export async function scanMarket(
   conditions: StrategyConditions,
+  side: Side,
   _btcDominance: number
 ): Promise<MarketSnapshot[]> {
   const priceChangeTf = conditions.priceChangeTimeframe ?? '24h';
@@ -120,9 +121,10 @@ export async function scanMarket(
         const changePass = actualChange >= conditions.priceChange24h.min &&
                            actualChange <= conditions.priceChange24h.max;
 
+        const rsiPass = side === 'SHORT' ? (ind.rsi14 >= conditions.rsi.min) : (ind.rsi14 <= conditions.rsi.max);
         const scores = [
-          (ind.rsi14 >= conditions.rsi.min) ? 50 : 0, // RSI min만 (max 제거)
-          changePass                        ? 50 : 0, // 가격 변화
+          rsiPass    ? 50 : 0, // 숏: RSI 최솟값(과매수) / 롱: RSI 최댓값(과매도)
+          changePass ? 50 : 0, // 가격 변화
           // BTC 도미넌스 조건 비활성화 (나중에 추가할 수 있음)
           // (btcDominance <= conditions.btcDominanceMax) ? 10 : 0,
         ];

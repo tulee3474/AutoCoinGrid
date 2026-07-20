@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
 import { createStrategy, updateStrategy, getStrategies, deleteStrategy, toggleStrategy, validateStrategy, runBacktest, getPresets, AdminPreset } from '../utils/api';
-import { ValidationResult, BacktestResult, StrategyConditions, TradeConfig } from '../types';
+import { ValidationResult, BacktestResult, StrategyConditions, TradeConfig, Side } from '../types';
 import { fmtDate } from '../utils/datetime';
 
 // ── 공통 입력 ────────────────────────────────────────────────
@@ -136,11 +136,12 @@ function RangeInput({ label, minVal, maxVal, unit = '', onMinChange, onMaxChange
 // ── 코인 상세 모달 ────────────────────────────────────────────
 
 function CoinDetailModal({
-  symbol, conditions, trade, onClose
+  symbol, conditions, trade, side, onClose
 }: {
   symbol: string;
   conditions: StrategyConditions;
   trade: TradeConfig;
+  side: Side;
   onClose: () => void;
 }) {
   const [result, setResult] = useState<BacktestResult | null>(null);
@@ -154,6 +155,7 @@ function CoinDetailModal({
       limit: 1500,
       conditions,
       trade,
+      side,
       btcDominance: 50
     })
       .then(setResult)
@@ -253,11 +255,12 @@ function intervalToPeriodLabel(interval: string): string {
   return `약 ${days}일`;
 }
 
-function ValidationPanel({ result, loading, conditions, trade }: {
+function ValidationPanel({ result, loading, conditions, trade, side }: {
   result: ValidationResult | null;
   loading: boolean;
   conditions: StrategyConditions;
   trade: TradeConfig;
+  side: Side;
 }) {
   const [showPerCoin, setShowPerCoin] = useState(false);
   const [selectedCoin, setSelectedCoin] = useState<string | null>(null);
@@ -292,7 +295,7 @@ function ValidationPanel({ result, loading, conditions, trade }: {
   return (
     <>
       {selectedCoin && (
-        <CoinDetailModal symbol={selectedCoin} conditions={conditions} trade={trade} onClose={() => setSelectedCoin(null)} />
+        <CoinDetailModal symbol={selectedCoin} conditions={conditions} trade={trade} side={side} onClose={() => setSelectedCoin(null)} />
       )}
       <div className={`card border ${isPositiveEV ? 'border-up/30 bg-up/5' : 'border-down/30 bg-down/5'}`}>
         <div className="flex items-start justify-between mb-4">
@@ -427,7 +430,7 @@ let defaultApplied = false;
 
 export default function Strategy() {
   const {
-    draftConditions, draftTrade, setDraftConditions, setDraftTrade,
+    draftConditions, draftTrade, draftSide, setDraftConditions, setDraftTrade, setDraftSide,
     strategies, setStrategies,
     validationResult, setValidationResult, validating, setValidating
   } = useStore();
@@ -453,6 +456,7 @@ export default function Strategy() {
           setStrategyName(target.name);
           setDraftConditions(target.conditions);
           setDraftTrade(target.trade);
+          setDraftSide(target.side ?? 'SHORT');
           defaultApplied = true; // 기본값 덮어쓰기 방지
         }
       }
@@ -464,6 +468,7 @@ export default function Strategy() {
         defaultApplied = true;
         setDraftConditions(def.conditions as StrategyConditions);
         setDraftTrade(def.trade as TradeConfig);
+        setDraftSide(def.side ?? 'SHORT');
         setStrategyName(def.name);
       }
     }).catch(() => {});
@@ -472,6 +477,7 @@ export default function Strategy() {
   function applyPreset(p: AdminPreset) {
     setDraftConditions(p.conditions as StrategyConditions);
     setDraftTrade(p.trade as TradeConfig);
+    setDraftSide(p.side ?? 'SHORT');
     setStrategyName(p.name);
     setApplyMsg(`"${p.name}" 적용됨`);
     setShowPresets(false);
@@ -494,7 +500,7 @@ export default function Strategy() {
     setValidating(true);
     setValidationResult(null);
     try {
-      const result: ValidationResult = await validateStrategy({ conditions: draftConditions, trade: draftTrade });
+      const result: ValidationResult = await validateStrategy({ conditions: draftConditions, trade: draftTrade, side: draftSide });
       setValidationResult(result);
     } catch (e: any) {
       alert(`검증 오류: ${e.response?.data?.error ?? e.message}`);
@@ -507,9 +513,9 @@ export default function Strategy() {
     if (checkEmpty()) return;
     try {
       if (editingId) {
-        await updateStrategy(editingId, { name: strategyName, conditions: draftConditions, trade: draftTrade });
+        await updateStrategy(editingId, { name: strategyName, conditions: draftConditions, trade: draftTrade, side: draftSide });
       } else {
-        await createStrategy({ name: strategyName, enabled: false, coins: [], conditions: draftConditions, trade: draftTrade });
+        await createStrategy({ name: strategyName, enabled: false, side: draftSide, coins: [], conditions: draftConditions, trade: draftTrade });
       }
       setStrategies(await getStrategies());
       setSaved(true);
@@ -528,6 +534,7 @@ export default function Strategy() {
       if (def) {
         setDraftConditions(def.conditions as StrategyConditions);
         setDraftTrade(def.trade as TradeConfig);
+        setDraftSide(def.side ?? 'SHORT');
         setStrategyName(def.name);
         defaultApplied = true;
       }
@@ -539,6 +546,7 @@ export default function Strategy() {
     setStrategyName(s.name);
     setDraftConditions(s.conditions);
     setDraftTrade(s.trade);
+    setDraftSide(s.side ?? 'SHORT');
     setSearchParams({ edit: s.id });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -561,7 +569,7 @@ export default function Strategy() {
     <div className="space-y-6 max-w-3xl">
       <div>
         <h1 className="page-title">전략 설정</h1>
-        <p className="page-sub">숏 진입 조건과 그리드 파라미터를 설정하고 과거 성과를 검증합니다</p>
+        <p className="page-sub">{draftSide === 'LONG' ? '롱' : '숏'} 진입 조건과 그리드 파라미터를 설정하고 과거 성과를 검증합니다</p>
       </div>
 
       {/* 추천 전략 패널 */}
@@ -579,7 +587,12 @@ export default function Strategy() {
               {recommended.map(p => (
                 <button key={p.id} onClick={() => applyPreset(p)}
                   className="text-left p-3 bg-surface rounded-lg border border-border hover:border-accent/50 hover:bg-accent/5 transition-colors">
-                  <div className="text-sm font-medium text-gray-200">{p.name}</div>
+                  <div className="text-sm font-medium text-gray-200 flex items-center gap-1.5">
+                    {p.name}
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${(p.side ?? 'SHORT') === 'LONG' ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`}>
+                      {(p.side ?? 'SHORT') === 'LONG' ? '롱' : '숏'}
+                    </span>
+                  </div>
                   <div className="text-xs text-gray-500 mt-0.5">
                     RSI ≥ {p.conditions.rsi.min} · {CHANGE_TF_LABEL[p.conditions.priceChangeTimeframe ?? '24h']} +{p.conditions.priceChange24h.min}% · {p.trade.leverage}x
                   </div>
@@ -595,21 +608,46 @@ export default function Strategy() {
 
       {/* 진입 조건 */}
       <div className="card space-y-5">
-        <div>
-          <h2 className="section-title">진입 조건</h2>
-          <p className="text-xs text-gray-500 mt-1">아래 조건이 동시에 충족될 때 숏 진입 신호가 발생합니다 (AND 조건)</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="section-title">진입 조건</h2>
+            <p className="text-xs text-gray-500 mt-1">아래 조건이 동시에 충족될 때 {draftSide === 'LONG' ? '롱' : '숏'} 진입 신호가 발생합니다 (AND 조건)</p>
+          </div>
+          <div className="flex gap-1 flex-shrink-0">
+            {(['SHORT', 'LONG'] as const).map(sd => (
+              <button key={sd} type="button"
+                onClick={() => setDraftSide(sd)}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
+                  draftSide === sd
+                    ? (sd === 'SHORT' ? 'border-down bg-down/10 text-down' : 'border-up bg-up/10 text-up')
+                    : 'border-border text-gray-400 hover:border-gray-500'
+                }`}>
+                {sd === 'SHORT' ? '숏' : '롱'}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* RSI + 봉 설정 */}
         <div className="flex flex-wrap gap-4 items-end">
           <div>
-            <NumberInput
-              label={`RSI (${draftConditions.rsi.period}일) 최솟값`}
-              value={draftConditions.rsi.min}
-              onChange={v => setDraftConditions({ rsi: { ...draftConditions.rsi, min: v } })}
-              min={0} max={100} unit="이상"
-              fieldId="rsi-min" emptyTracker={emptyFields}
-            />
+            {draftSide === 'SHORT' ? (
+              <NumberInput
+                label={`RSI (${draftConditions.rsi.period}일) 최솟값`}
+                value={draftConditions.rsi.min}
+                onChange={v => setDraftConditions({ rsi: { ...draftConditions.rsi, min: v } })}
+                min={0} max={100} unit="이상"
+                fieldId="rsi-min" emptyTracker={emptyFields}
+              />
+            ) : (
+              <NumberInput
+                label={`RSI (${draftConditions.rsi.period}일) 최댓값`}
+                value={draftConditions.rsi.max}
+                onChange={v => setDraftConditions({ rsi: { ...draftConditions.rsi, max: v } })}
+                min={0} max={100} unit="이하"
+                fieldId="rsi-max" emptyTracker={emptyFields}
+              />
+            )}
           </div>
           <div>
             <label className="label">RSI 기간</label>
@@ -631,7 +669,7 @@ export default function Strategy() {
 
         {/* 가격 변화 */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5 items-end">
-          <RangeInput label="가격 상승률" unit="%"
+          <RangeInput label={draftSide === 'SHORT' ? '가격 상승률' : '가격 변화율 (하락은 음수로 입력)'} unit="%"
             minVal={draftConditions.priceChange24h.min} maxVal={draftConditions.priceChange24h.max}
             onMinChange={v => setChange('min', v)} onMaxChange={v => setChange('max', v)}
             fieldIdMin="change-min" fieldIdMax="change-max" emptyTracker={emptyFields} />
@@ -704,7 +742,7 @@ export default function Strategy() {
 
         {/* 스코어 안내 */}
         <div className="text-xs text-gray-500 bg-surface rounded-lg p-3">
-          스코어 배점: RSI 30 · 가격변화 25 · 볼륨 20 · MA7 5 · MA20 5 · BB 15 = 100점 → 100점 충족 시 신호
+          스코어 배점: RSI 50 · 가격변화 50 = 100점 → 100점 충족 시 신호
         </div>
       </div>
 
@@ -730,9 +768,9 @@ export default function Strategy() {
             </>
           )}
           {draftTrade.gridEnabled === false && (
-            <NumberInput label="손절 %" value={draftTrade.stopLossPct} onChange={v => setDraftTrade({ stopLossPct: v })} min={1} max={200} unit="% 상승시" fieldId="stop-loss" emptyTracker={emptyFields} />
+            <NumberInput label="손절 %" value={draftTrade.stopLossPct} onChange={v => setDraftTrade({ stopLossPct: v })} min={1} max={200} unit={draftSide === 'SHORT' ? '% 상승시' : '% 하락시'} fieldId="stop-loss" emptyTracker={emptyFields} />
           )}
-          <NumberInput label="익절 목표"         value={draftTrade.takeProfitPct}   onChange={v => setDraftTrade({ takeProfitPct: v })}  min={1} max={100} unit="% 하락시" fieldId="take-profit"  emptyTracker={emptyFields} />
+          <NumberInput label="익절 목표"         value={draftTrade.takeProfitPct}   onChange={v => setDraftTrade({ takeProfitPct: v })}  min={1} max={100} unit={draftSide === 'SHORT' ? '% 하락시' : '% 상승시'} fieldId="take-profit"  emptyTracker={emptyFields} />
         </div>
 
         {/* 최대 보유 시간 (선택) */}
@@ -761,13 +799,16 @@ export default function Strategy() {
               checked={draftTrade.rsiExitThreshold !== null}
               onChange={e => setDraftTrade({ rsiExitThreshold: e.target.checked ? 40 : null })} />
             <label htmlFor="useRsiExit" className="text-sm text-gray-300 cursor-pointer">
-              RSI 반전 시 조기 청산 <span className="text-gray-500 text-xs">(적당선 익절 — 과매수 → 정상화 감지 시 확정)</span>
+              RSI 반전 시 조기 청산 <span className="text-gray-500 text-xs">
+                {draftSide === 'SHORT' ? '(적당선 익절 — 과매수 → 정상화 감지 시 확정)' : '(적당선 익절 — 과매도 → 정상화 감지 시 확정)'}
+              </span>
             </label>
           </div>
           {draftTrade.rsiExitThreshold !== null && (
             <div className="ml-7">
               <NumberInput label="" value={draftTrade.rsiExitThreshold}
-                onChange={v => setDraftTrade({ rsiExitThreshold: v })} min={10} max={60} unit="RSI 미만 시 청산"
+                onChange={v => setDraftTrade({ rsiExitThreshold: v })} min={10} max={90}
+                unit={draftSide === 'SHORT' ? 'RSI 미만 시 청산' : 'RSI 초과 시 청산'}
                 fieldId="rsi-exit" emptyTracker={emptyFields} />
             </div>
           )}
@@ -843,15 +884,15 @@ export default function Strategy() {
         <div className="p-3 bg-surface rounded-lg text-xs text-gray-400 space-y-1">
           {draftTrade.gridEnabled !== false ? (
             <>
-              <p>PDF 방식: 평균 진입가 기준 <span className="text-gray-300 font-semibold">{(draftTrade.gridSpacing / draftTrade.leverage).toFixed(1)}%</span> 간격으로 숏 {draftTrade.gridLevels}개 추가 (레버리지 분할)</p>
-              <p>이론상 자동 손절: 진입가 대비 약 <span className="text-down font-semibold">+{calcPdfSlPct(draftTrade.leverage, draftTrade.gridLevels, draftTrade.gridSpacing).toFixed(1)}%</span> 상승시 청산 (레버리지 기준 추정치)</p>
+              <p>PDF 방식: 평균 진입가 기준 <span className="text-gray-300 font-semibold">{(draftTrade.gridSpacing / draftTrade.leverage).toFixed(1)}%</span> 간격으로 {draftSide === 'SHORT' ? '숏' : '롱'} {draftTrade.gridLevels}개 추가 (레버리지 분할)</p>
+              <p>이론상 자동 손절: 진입가 대비 약 <span className="text-down font-semibold">{draftSide === 'SHORT' ? '+' : '-'}{calcPdfSlPct(draftTrade.leverage, draftTrade.gridLevels, draftTrade.gridSpacing).toFixed(1)}%</span> {draftSide === 'SHORT' ? '상승' : '하락'}시 청산 (레버리지 기준 추정치)</p>
               <p className="text-gray-500">※ 실제 진입 시엔 코인별 실제(또는 추정) 청산가까지 거리의 <span className="text-gray-300 font-semibold">{draftTrade.liquidationSafetyPct ?? 99}%</span> 지점에 손절이 설정되고, 그 밖에 있는 그리드 레벨은 채워질 기회가 없어 자동으로 등록에서 제외됩니다 — 코인마다 실제 유지증거금률이 달라 위 이론치보다 타이트해질 수 있습니다.</p>
               <p>총 최대 노출: <span className="text-gray-300 num">${draftTrade.entryAmountUsdt * (draftTrade.gridLevels + 1)}</span> USDT × {draftTrade.leverage}x</p>
             </>
           ) : (
             <>
-              <p>단순 숏 포지션 — 그리드 추가 진입 없음</p>
-              <p>손절: 진입가 대비 <span className="text-down font-semibold">+{draftTrade.stopLossPct.toFixed(1)}%</span> 상승시 청산 (ISOLATED)</p>
+              <p>단순 {draftSide === 'SHORT' ? '숏' : '롱'} 포지션 — 그리드 추가 진입 없음</p>
+              <p>손절: 진입가 대비 <span className="text-down font-semibold">{draftSide === 'SHORT' ? '+' : '-'}{draftTrade.stopLossPct.toFixed(1)}%</span> {draftSide === 'SHORT' ? '상승' : '하락'}시 청산 (ISOLATED)</p>
               <p>총 노출: <span className="text-gray-300 num">${draftTrade.entryAmountUsdt}</span> USDT × {draftTrade.leverage}x</p>
             </>
           )}
@@ -874,7 +915,7 @@ export default function Strategy() {
             {validating ? '분석 중...' : '승률 검증'}
           </button>
         </div>
-        <ValidationPanel result={validationResult} loading={validating} conditions={draftConditions} trade={draftTrade} />
+        <ValidationPanel result={validationResult} loading={validating} conditions={draftConditions} trade={draftTrade} side={draftSide} />
       </div>
 
       {/* 저장 */}
@@ -904,6 +945,9 @@ export default function Strategy() {
                 editingId === s.id ? 'bg-accent/8 border border-accent/25' : 'bg-surface'
               }`}>
                 <div>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full mr-2 ${(s.side ?? 'SHORT') === 'LONG' ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`}>
+                    {(s.side ?? 'SHORT') === 'LONG' ? '롱' : '숏'}
+                  </span>
                   <span className="text-sm text-gray-200">{s.name}</span>
                   <span className="text-xs text-gray-500 ml-2">
                     RSI ≥ {s.conditions.rsi.min} / {CHANGE_TF_LABEL[s.conditions.priceChangeTimeframe ?? '24h']} +{s.conditions.priceChange24h.min}% 이상

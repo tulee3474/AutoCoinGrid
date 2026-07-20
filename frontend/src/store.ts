@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import {
   StrategyConfig, MarketSnapshot, BacktestResult,
-  ValidationResult,
-  DEFAULT_CONDITIONS, DEFAULT_TRADE
+  ValidationResult, Side,
+  DEFAULT_CONDITIONS, DEFAULT_TRADE, DEFAULT_SIDE
 } from './types';
 
 interface TopTicker {
@@ -47,8 +47,10 @@ interface AppState {
   // 임시 전략 편집 상태
   draftConditions: typeof DEFAULT_CONDITIONS;
   draftTrade: typeof DEFAULT_TRADE;
+  draftSide: Side;
   setDraftConditions: (c: Partial<typeof DEFAULT_CONDITIONS>) => void;
   setDraftTrade: (t: Partial<typeof DEFAULT_TRADE>) => void;
+  setDraftSide: (side: Side) => void;
   resetDraft: () => void;
 }
 
@@ -81,9 +83,11 @@ export const useStore = create<AppState>((set) => ({
 
   draftConditions: { ...DEFAULT_CONDITIONS },
   draftTrade: { ...DEFAULT_TRADE },
+  draftSide: DEFAULT_SIDE,
   setDraftConditions: (c) =>
     set((state) => ({ draftConditions: { ...state.draftConditions, ...c } })),
   setDraftTrade: (t) =>
     set((state) => ({ draftTrade: { ...state.draftTrade, ...t } })),
-  resetDraft: () => set({ draftConditions: { ...DEFAULT_CONDITIONS }, draftTrade: { ...DEFAULT_TRADE } })
+  setDraftSide: (draftSide) => set({ draftSide }),
+  resetDraft: () => set({ draftConditions: { ...DEFAULT_CONDITIONS }, draftTrade: { ...DEFAULT_TRADE }, draftSide: DEFAULT_SIDE })
 }));

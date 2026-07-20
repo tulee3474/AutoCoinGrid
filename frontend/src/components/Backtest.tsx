@@ -46,7 +46,7 @@ function TradeRow({ trade, idx }: { trade: BacktestResult['trades'][0]; idx: num
 }
 
 export default function Backtest() {
-  const { draftConditions, draftTrade, btcDominance, backtestResult, setBacktestResult, backtesting, setBacktesting, topTickers } = useStore();
+  const { draftConditions, draftTrade, draftSide, btcDominance, backtestResult, setBacktestResult, backtesting, setBacktesting, topTickers } = useStore();
   const [symbol, setSymbol]   = useState('');
   const [interval, setInterval] = useState(draftConditions.rsi.timeframe);
   const [limit, setLimit]     = useState(1500);
@@ -68,6 +68,7 @@ export default function Backtest() {
         limit,
         conditions: draftConditions,
         trade: draftTrade,
+        side: draftSide,
         btcDominance
       });
       setBacktestResult(result);
@@ -88,7 +89,12 @@ export default function Backtest() {
       {/* 현재 전략 조건 요약 (읽기 전용) */}
       <div className="card bg-accent/5 border-accent/20">
         <div className="flex items-center justify-between mb-3">
-          <p className="section-title text-accent">현재 적용 중인 전략 조건</p>
+          <p className="section-title text-accent flex items-center gap-2">
+            현재 적용 중인 전략 조건
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${draftSide === 'LONG' ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`}>
+              {draftSide === 'LONG' ? '롱' : '숏'}
+            </span>
+          </p>
           <Link to="/strategy" className="text-xs text-accent hover:underline">전략 수정 →</Link>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
@@ -204,9 +210,12 @@ export default function Backtest() {
         <>
           {/* 통계 */}
           <div className="card">
-            <h2 className="section-title mb-1">
+            <h2 className="section-title mb-1 flex items-center gap-2">
               {backtestResult.symbol} 결과
-              <span className="text-gray-500 font-normal ml-2 text-xs">({backtestResult.timeframe}봉)</span>
+              <span className="text-gray-500 font-normal text-xs">({backtestResult.timeframe}봉)</span>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${draftSide === 'LONG' ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`}>
+                {draftSide === 'LONG' ? '롱' : '숏'}
+              </span>
             </h2>
             <p className="text-xs text-gray-500 mb-5">
               이 전략 조건이 {backtestResult.symbol}에서 과거 {backtestResult.totalTrades}번 발생했고,

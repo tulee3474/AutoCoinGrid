@@ -8,7 +8,7 @@ import {
   getPresets, adminCreatePreset, adminUpdatePreset, adminDeletePreset,
   AdminUser, AdminPreset
 } from '../utils/api';
-import { StrategyConditions, TradeConfig, DEFAULT_CONDITIONS, DEFAULT_TRADE } from '../types';
+import { StrategyConditions, TradeConfig, DEFAULT_CONDITIONS, DEFAULT_TRADE, Side } from '../types';
 import { fmtDate } from '../utils/datetime';
 
 interface UserDetail {
@@ -16,11 +16,11 @@ interface UserDetail {
   email: string;
   hasApiKeys: boolean;
   strategies: Array<{
-    id: string; name: string; enabled: boolean;
+    id: string; name: string; enabled: boolean; side?: string;
     coins: string[]; conditions: any; trade: any;
   }>;
   livePositions: Array<{
-    id: string; symbol: string; qty: number; entryPrice: number;
+    id: string; symbol: string; side?: string; qty: number; entryPrice: number;
     takeProfitPrice: number; stopLossPrice: number; leverage: number;
     entryAmountUsdt: number; strategyName: string; openedAt: string;
     markPrice: number | null; unrealizedPnlUsdt: number | null;
@@ -37,7 +37,7 @@ interface UserDetail {
     balance: number;
     initialBalance: number;
     openPositions: Array<{
-      id: string; symbol: string; entryPrice: number; avgEntryPrice: number;
+      id: string; symbol: string; side?: string; entryPrice: number; avgEntryPrice: number;
       totalEntryUsdt: number; gridsFilled: number; takeProfitPrice: number;
       stopLossPrice: number; leverage: number; entryAmountUsdt: number;
       strategyName: string; openedAt: string;
@@ -158,6 +158,9 @@ function UserDetailPanel({ detail }: { detail: UserDetail }) {
                   <button onClick={() => toggleStrategy(s.id)}
                     className="w-full flex items-center gap-2.5 p-2.5 hover:bg-white/5 transition-colors text-left">
                     <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${s.enabled ? 'bg-green-400' : 'bg-gray-600'}`} />
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0 ${(s.side ?? 'SHORT') === 'LONG' ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`}>
+                      {(s.side ?? 'SHORT') === 'LONG' ? '롱' : '숏'}
+                    </span>
                     <span className="text-sm text-gray-200 font-medium flex-1 truncate">{s.name}</span>
                     <span className={`text-xs px-1.5 py-0.5 rounded-full flex-shrink-0 ${s.enabled ? 'bg-green-500/15 text-green-400' : 'bg-gray-500/15 text-gray-500'}`}>
                       {s.enabled ? '활성' : '비활성'}
@@ -237,7 +240,7 @@ function UserDetailPanel({ detail }: { detail: UserDetail }) {
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-xs bg-yellow-500/15 text-yellow-400 border border-yellow-500/20 px-1.5 py-0.5 rounded">실거래</span>
                   <span className="text-sm font-bold text-gray-100">{p.symbol.replace('USDT', '')}</span>
-                  <span className="text-xs text-gray-500">{p.leverage}x SHORT</span>
+                  <span className="text-xs text-gray-500">{p.leverage}x {p.side ?? 'SHORT'}</span>
                   <span className="text-xs text-gray-600 ml-auto truncate max-w-32">{p.strategyName}</span>
                 </div>
                 <div className="grid grid-cols-3 gap-2 text-xs">
@@ -264,7 +267,7 @@ function UserDetailPanel({ detail }: { detail: UserDetail }) {
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs bg-blue-500/15 text-blue-400 border border-blue-500/20 px-1.5 py-0.5 rounded">가상</span>
                     <span className="text-sm font-bold text-gray-100">{p.symbol.replace('USDT', '')}</span>
-                    <span className="text-xs text-gray-500">{p.leverage}x SHORT</span>
+                    <span className="text-xs text-gray-500">{p.leverage}x {p.side ?? 'SHORT'}</span>
                     {p.gridsFilled > 0 && <span className="text-xs text-gray-500">그리드 {p.gridsFilled}회</span>}
                     <span className="text-xs text-gray-600 ml-auto truncate max-w-32">{p.strategyName}</span>
                   </div>
@@ -346,12 +349,13 @@ function Range({ label, min, max, onMin, onMax, unit = '' }: {
 function PresetForm({
   initial, onSave, onCancel, loading
 }: {
-  initial: { name: string; conditions: StrategyConditions; trade: TradeConfig };
-  onSave: (name: string, c: StrategyConditions, t: TradeConfig) => void;
+  initial: { name: string; conditions: StrategyConditions; trade: TradeConfig; side?: Side };
+  onSave: (name: string, c: StrategyConditions, t: TradeConfig, side: Side) => void;
   onCancel: () => void;
   loading: boolean;
 }) {
   const [name, setName] = useState(initial.name);
+  const [side, setSide] = useState<Side>(initial.side ?? 'SHORT');
   const [c, setC] = useState<StrategyConditions>({
     ...DEFAULT_CONDITIONS,
     ...initial.conditions,
@@ -373,10 +377,25 @@ function PresetForm({
 
   return (
     <div className="mt-3 p-4 bg-surface rounded-xl border border-border space-y-4">
-      <F label="전략 이름">
-        <input value={name} onChange={e => setName(e.target.value)}
-          className="w-full bg-card border border-border rounded px-2 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-accent" />
-      </F>
+      <div className="flex items-end gap-3">
+        <F label="전략 이름">
+          <input value={name} onChange={e => setName(e.target.value)}
+            className="w-full bg-card border border-border rounded px-2 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-accent" />
+        </F>
+        <div className="flex gap-1 flex-shrink-0">
+          {(['SHORT', 'LONG'] as const).map(sd => (
+            <button key={sd} type="button"
+              onClick={() => setSide(sd)}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
+                side === sd
+                  ? (sd === 'SHORT' ? 'border-down bg-down/10 text-down' : 'border-up bg-up/10 text-up')
+                  : 'border-border text-gray-400 hover:border-gray-500'
+              }`}>
+              {sd === 'SHORT' ? '숏' : '롱'}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div>
         <div className="text-xs font-semibold text-gray-400 mb-2">진입 조건</div>
@@ -475,9 +494,9 @@ function PresetForm({
               <Num label="청산가 안전마진" unit="%" value={t.liquidationSafetyPct ?? 99} onChange={v => st({ liquidationSafetyPct: v })} />
             </>
           ) : (
-            <Num label="손절 %" unit="% 상승시" value={t.stopLossPct} onChange={v => st({ stopLossPct: v })} />
+            <Num label="손절 %" unit={side === 'SHORT' ? '% 상승시' : '% 하락시'} value={t.stopLossPct} onChange={v => st({ stopLossPct: v })} />
           )}
-          <Num label="익절" unit="% 하락시" value={t.takeProfitPct} onChange={v => st({ takeProfitPct: v })} />
+          <Num label="익절" unit={side === 'SHORT' ? '% 하락시' : '% 상승시'} value={t.takeProfitPct} onChange={v => st({ takeProfitPct: v })} />
           <F label="최대 보유">
             <div className="flex items-center gap-1">
               <input type="checkbox" checked={t.maxDurationHours !== null}
@@ -502,7 +521,7 @@ function PresetForm({
                   onChange={e => st({ rsiExitThreshold: +e.target.value })}
                   className="w-full bg-surface border border-border rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-accent" />
               )}
-              {t.rsiExitThreshold != null && <span className="text-xs text-gray-500 flex-shrink-0">미만시</span>}
+              {t.rsiExitThreshold != null && <span className="text-xs text-gray-500 flex-shrink-0">{side === 'SHORT' ? '미만시' : '초과시'}</span>}
               {t.rsiExitThreshold == null && <span className="text-xs text-gray-500">비활성</span>}
             </div>
           </F>
@@ -553,20 +572,20 @@ function PresetForm({
                   onChange={e => st({ gridRsiSkipThreshold: +e.target.value })}
                   className="w-full bg-surface border border-border rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-accent" />
               )}
-              {t.gridRsiSkipThreshold != null && <span className="text-xs text-gray-500 flex-shrink-0">RSI 이상</span>}
+              {t.gridRsiSkipThreshold != null && <span className="text-xs text-gray-500 flex-shrink-0">{side === 'SHORT' ? 'RSI 이상' : 'RSI 이하'}</span>}
               {t.gridRsiSkipThreshold == null && <span className="text-xs text-gray-500">비활성</span>}
             </div>
           </F>
         </div>
         <div className="text-xs text-gray-500 p-2 bg-card rounded-lg">
           {t.gridEnabled !== false
-            ? `이론상 자동 손절: 진입가 대비 ${Math.min(t.gridSpacing / t.leverage, 99 / t.leverage).toFixed(1)}% 상승시 (레버리지 반영, 코인별 실제 청산가 안전마진 ${t.liquidationSafetyPct ?? 99}%가 이보다 타이트하면 우선 적용)`
-            : `손절: 진입가 대비 +${t.stopLossPct}% 상승시 청산`}
+            ? `이론상 자동 손절: 진입가 대비 ${Math.min(t.gridSpacing / t.leverage, 99 / t.leverage).toFixed(1)}% ${side === 'SHORT' ? '상승' : '하락'}시 (레버리지 반영, 코인별 실제 청산가 안전마진 ${t.liquidationSafetyPct ?? 99}%가 이보다 타이트하면 우선 적용)`
+            : `손절: 진입가 대비 ${side === 'SHORT' ? '+' : '-'}${t.stopLossPct}% ${side === 'SHORT' ? '상승' : '하락'}시 청산`}
         </div>
       </div>
 
       <div className="flex gap-2 pt-1">
-        <button onClick={() => onSave(name, c, t)} disabled={loading || !name.trim()}
+        <button onClick={() => onSave(name, c, t, side)} disabled={loading || !name.trim()}
           className="text-xs bg-accent text-black font-semibold px-4 py-1.5 rounded-lg hover:bg-accent/90 disabled:opacity-50">
           {loading ? '저장 중...' : '저장'}
         </button>
@@ -741,10 +760,10 @@ export default function Admin() {
 
   // ── 프리셋 핸들러 ─────────────────────────────────────────────
 
-  async function handleSaveDefault(name: string, conditions: StrategyConditions, trade: TradeConfig) {
+  async function handleSaveDefault(name: string, conditions: StrategyConditions, trade: TradeConfig, side: Side) {
     setPresetLoading(true); setPresetMsg('');
     try {
-      await adminCreatePreset({ type: 'default', name, conditions, trade, sortOrder: 0 });
+      await adminCreatePreset({ type: 'default', name, side, conditions, trade, sortOrder: 0 });
       await loadPresets();
       setShowDefaultForm(false);
       setPresetMsg('기본 전략 저장 완료');
@@ -753,13 +772,13 @@ export default function Admin() {
     } finally { setPresetLoading(false); }
   }
 
-  async function handleSaveRecommended(name: string, conditions: StrategyConditions, trade: TradeConfig) {
+  async function handleSaveRecommended(name: string, conditions: StrategyConditions, trade: TradeConfig, side: Side) {
     setPresetLoading(true); setPresetMsg('');
     try {
       if (editingPreset && editingPreset !== 'new-recommended') {
-        await adminUpdatePreset(editingPreset.id, { name, conditions, trade });
+        await adminUpdatePreset(editingPreset.id, { name, side, conditions, trade });
       } else {
-        await adminCreatePreset({ type: 'recommended', name, conditions, trade, sortOrder: recommended.length });
+        await adminCreatePreset({ type: 'recommended', name, side, conditions, trade, sortOrder: recommended.length });
       }
       await loadPresets();
       setEditingPreset(null);
@@ -960,7 +979,12 @@ export default function Admin() {
 
           {defaultPreset && !showDefaultForm && (
             <div className="p-3 bg-surface rounded-lg">
-              <div className="text-sm text-gray-200 font-medium">{defaultPreset.name}</div>
+              <div className="text-sm text-gray-200 font-medium flex items-center gap-1.5">
+                {defaultPreset.name}
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${(defaultPreset.side ?? 'SHORT') === 'LONG' ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`}>
+                  {(defaultPreset.side ?? 'SHORT') === 'LONG' ? '롱' : '숏'}
+                </span>
+              </div>
               <div className="text-xs text-gray-500 mt-0.5">{presetSummary(defaultPreset.conditions as StrategyConditions)}</div>
             </div>
           )}
@@ -974,6 +998,7 @@ export default function Admin() {
                 name: defaultPreset?.name ?? '기본 전략',
                 conditions: (defaultPreset?.conditions as StrategyConditions) ?? DEFAULT_CONDITIONS,
                 trade: (defaultPreset?.trade as TradeConfig) ?? DEFAULT_TRADE,
+                side: defaultPreset?.side ?? 'SHORT',
               }}
               onSave={handleSaveDefault}
               onCancel={() => setShowDefaultForm(false)}
@@ -998,7 +1023,7 @@ export default function Admin() {
               <div key={p.id}>
                 {editingPreset && editingPreset !== 'new-recommended' && editingPreset.id === p.id ? (
                   <PresetForm
-                    initial={{ name: p.name, conditions: p.conditions as StrategyConditions, trade: p.trade as TradeConfig }}
+                    initial={{ name: p.name, conditions: p.conditions as StrategyConditions, trade: p.trade as TradeConfig, side: p.side ?? 'SHORT' }}
                     onSave={handleSaveRecommended}
                     onCancel={() => setEditingPreset(null)}
                     loading={presetLoading}
@@ -1008,6 +1033,9 @@ export default function Admin() {
                     <div>
                       <span className="text-xs text-gray-500 mr-2">{i + 1}.</span>
                       <span className="text-sm text-gray-200 font-medium">{p.name}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full ml-1.5 ${(p.side ?? 'SHORT') === 'LONG' ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`}>
+                        {(p.side ?? 'SHORT') === 'LONG' ? '롱' : '숏'}
+                      </span>
                       <div className="text-xs text-gray-500 mt-0.5">{presetSummary(p.conditions as StrategyConditions)}</div>
                     </div>
                     <div className="flex gap-2 flex-shrink-0">

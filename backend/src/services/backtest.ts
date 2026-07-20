@@ -1,12 +1,13 @@
-import { Kline, StrategyConditions, TradeConfig, BacktestResult, BacktestTrade } from '../types';
+import { Kline, StrategyConditions, TradeConfig, BacktestResult, BacktestTrade, Side } from '../types';
 import { calcRSI, calc24hChange, candlesPerDay } from './indicator';
-import { calcPdfGridPrices, calcPdfAvgEntry, calcPdfStopLoss, calcIsolatedLiquidationPrice, capSlWithLiquidation, truncateGridsToSafeZone, resolveReEntryCooldownHours } from './gridUtils';
+import { calcPdfGridPrices, calcPdfAvgEntry, calcPdfStopLoss, calcTakeProfitPrice, calcSimpleStopLoss, calcIsolatedLiquidationPrice, capSlWithLiquidation, truncateGridsToSafeZone, resolveReEntryCooldownHours, dirSign } from './gridUtils';
 import { binanceMaster, pickLeverageBracket, LeverageBracket } from './binance';
 
 interface BacktestOptions {
   conditions: StrategyConditions;
   trade: TradeConfig;
   interval: string;
+  side?: Side;
 }
 
 // kline 간격(분) 맵
@@ -26,7 +27,8 @@ function checkConditions(
   klines: Kline[],
   idx: number,
   conditions: StrategyConditions,
-  interval: string
+  interval: string,
+  side: Side
 ): boolean {
   const closes  = klines.slice(0, idx + 1).map(k => k.close);
   const cpd = candlesPerDay(interval);
@@ -46,9 +48,12 @@ function checkConditions(
   // const historicalDom = getDominanceAt(klines[idx].openTime);
   // const btcDomPass = historicalDom === null || historicalDom <= conditions.btcDominanceMax;
 
+  const rsiPass = side === 'SHORT'
+    ? rsi >= conditions.rsi.min
+    : rsi <= (conditions.rsi.max ?? 100);
+
   return (
-    rsi >= conditions.rsi.min &&
-    rsi <= (conditions.rsi.max ?? 100) &&
+    rsiPass &&
     priceChange >= conditions.priceChange24h.min &&
     priceChange <= conditions.priceChange24h.max
     // && btcDomPass
@@ -62,7 +67,8 @@ function simulateTrade(
   entryIdx: number,
   trade: TradeConfig,
   interval: string,
-  brackets: LeverageBracket[]
+  brackets: LeverageBracket[],
+  side: Side
 ): BacktestTrade | null {
   if (entryIdx + 1 >= klines.length) return null;
 
@@ -82,21 +88,21 @@ function simulateTrade(
   const estimateLiq = (marginUsdt: number, qty: number, avgEntry: number): number => {
     if (brackets.length === 0) return 0;
     const { mmr, cum } = pickLeverageBracket(brackets, qty * avgEntry);
-    return calcIsolatedLiquidationPrice(marginUsdt, qty, avgEntry, mmr, cum);
+    return calcIsolatedLiquidationPrice(marginUsdt, qty, avgEntry, mmr, cum, side);
   };
 
-  let gridPrices = gridEnabled ? calcPdfGridPrices(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing) : [];
+  let gridPrices = gridEnabled ? calcPdfGridPrices(entryPrice, trade.leverage, trade.gridLevels, trade.gridSpacing, side) : [];
   let avgEntryPrice   = entryPrice;
-  let takeProfitPrice = entryPrice * (1 - trade.takeProfitPct / 100);
+  let takeProfitPrice = calcTakeProfitPrice(entryPrice, trade.takeProfitPct, side);
   let stopLossPrice: number;
   if (gridEnabled) {
     const qty = trade.entryAmountUsdt * trade.leverage / entryPrice;
     const liqPrice = estimateLiq(trade.entryAmountUsdt, qty, entryPrice);
-    gridPrices = truncateGridsToSafeZone(gridPrices, entryPrice, liqPrice, safetyPct);
-    stopLossPrice = calcPdfStopLoss(entryPrice, trade.leverage, gridPrices.length, trade.gridSpacing);
-    stopLossPrice = capSlWithLiquidation(stopLossPrice, entryPrice, liqPrice, safetyPct);
+    gridPrices = truncateGridsToSafeZone(gridPrices, entryPrice, liqPrice, safetyPct, side);
+    stopLossPrice = calcPdfStopLoss(entryPrice, trade.leverage, gridPrices.length, trade.gridSpacing, side);
+    stopLossPrice = capSlWithLiquidation(stopLossPrice, entryPrice, liqPrice, safetyPct, side);
   } else {
-    stopLossPrice = entryPrice * (1 + trade.stopLossPct / 100);
+    stopLossPrice = calcSimpleStopLoss(entryPrice, trade.stopLossPct, side);
   }
 
   let exitPrice = 0;
@@ -106,31 +112,38 @@ function simulateTrade(
 
   for (let j = entryIdx + 2; j <= maxEndIdx; j++) {
     const candle = klines[j];
-    const filledNow = gridPrices.filter(p => candle.high >= p).length;
+    // 숏: 그리드가 진입가 위쪽에 있어 캔들 HIGH가 기준 / 롱: 그리드가 아래쪽이라 LOW가 기준
+    const filledNow = side === 'SHORT'
+      ? gridPrices.filter(p => candle.high >= p).length
+      : gridPrices.filter(p => candle.low <= p).length;
 
-    // 그리드 체결로 평균단가가 오른 만큼 TP/SL도 재계산 (실거래/가상거래와 동일 로직) —
+    // 그리드 체결로 평균단가가 바뀐 만큼 TP/SL도 재계산 (실거래/가상거래와 동일 로직) —
     // 안 하면 SL이 최초 진입가 기준 캡에 고정돼 남은 그리드가 그 캡보다 먼 가격에 있으면
     // 절대 채워질 수 없는 문제가 생겨 실제 동작과 백테스트 결과가 어긋남
     if (filledNow > gridsFilled) {
       gridsFilled     = filledNow;
       avgEntryPrice   = calcPdfAvgEntry(entryPrice, gridPrices.slice(0, gridsFilled));
       const remainingLevels = gridPrices.length - gridsFilled;
-      takeProfitPrice = avgEntryPrice * (1 - trade.takeProfitPct / 100);
-      stopLossPrice   = calcPdfStopLoss(avgEntryPrice, trade.leverage, remainingLevels, trade.gridSpacing);
+      takeProfitPrice = calcTakeProfitPrice(avgEntryPrice, trade.takeProfitPct, side);
+      stopLossPrice   = calcPdfStopLoss(avgEntryPrice, trade.leverage, remainingLevels, trade.gridSpacing, side);
 
       const newTotalUsdt = trade.entryAmountUsdt * (1 + gridsFilled);
       const newQty = newTotalUsdt * trade.leverage / avgEntryPrice;
       const liqPrice = estimateLiq(newTotalUsdt, newQty, avgEntryPrice);
-      stopLossPrice = capSlWithLiquidation(stopLossPrice, avgEntryPrice, liqPrice, safetyPct);
+      stopLossPrice = capSlWithLiquidation(stopLossPrice, avgEntryPrice, liqPrice, safetyPct, side);
     }
 
-    if (candle.high >= stopLossPrice) {
+    // 숏: SL은 위쪽(HIGH로 도달)/TP는 아래쪽(LOW로 도달) / 롱: 반대
+    const hitSl = side === 'SHORT' ? candle.high >= stopLossPrice   : candle.low  <= stopLossPrice;
+    const hitTp = side === 'SHORT' ? candle.low  <= takeProfitPrice : candle.high >= takeProfitPrice;
+
+    if (hitSl) {
       exitPrice  = stopLossPrice;
       exitTime   = candle.openTime;
       exitReason = 'stopLoss';
       break;
     }
-    if (candle.low <= takeProfitPrice) {
+    if (hitTp) {
       exitPrice  = takeProfitPrice;
       exitTime   = candle.closeTime;
       exitReason = 'takeProfit';
@@ -145,7 +158,7 @@ function simulateTrade(
 
   if (exitPrice === 0) return null;
 
-  const pnlPct  = ((avgEntryPrice - exitPrice) / avgEntryPrice) * 100 * trade.leverage;
+  const pnlPct  = ((avgEntryPrice - exitPrice) / avgEntryPrice) * 100 * trade.leverage * dirSign(side);
   const pnlUsdt = (trade.entryAmountUsdt * (1 + gridsFilled)) * (pnlPct / 100);
 
   return {
@@ -168,7 +181,7 @@ export async function runBacktest(
   options: BacktestOptions,
   symbol: string
 ): Promise<BacktestResult> {
-  const { conditions, trade, interval } = options;
+  const { conditions, trade, interval, side = 'SHORT' } = options;
   const trades: BacktestTrade[] = [];
 
   // 유지증거금률 구간표는 심볼당 하나(포지션 규모별 상수)라 캔들 루프 전에 한 번만 조회 —
@@ -179,8 +192,8 @@ export async function runBacktest(
 
   let i = 20; // MA20 기준으로 워밍업
   while (i < klines.length - 1) {
-    if (checkConditions(klines, i, conditions, interval)) {
-      const tradeSim = simulateTrade(klines, i, trade, interval, brackets);
+    if (checkConditions(klines, i, conditions, interval, side)) {
+      const tradeSim = simulateTrade(klines, i, trade, interval, brackets, side);
       if (tradeSim) {
         trades.push(tradeSim);
         console.log(

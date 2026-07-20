@@ -31,7 +31,7 @@ async function batchSettled<T>(
 // POST /api/backtest/run - 단일 코인 상세 백테스트
 // BTC 도미넌스: backend/data/btc_dominance.csv 있으면 캔들별 조회, 없으면 조건 skip
 router.post('/run', async (req, res) => {
-  const { symbol, interval = '1h', limit = 1500, conditions, trade } = req.body;
+  const { symbol, interval = '1h', limit = 1500, conditions, trade, side = 'SHORT' } = req.body;
   if (!symbol || !conditions || !trade) {
     return res.status(400).json({ error: 'symbol, conditions, trade 필요' });
   }
@@ -39,7 +39,7 @@ router.post('/run', async (req, res) => {
     // 선물 전용 상장 코인(예: TAIKO)은 스팟에 없어 getKlines(스팟) 호출 시 400 Invalid symbol —
     // 스캐너/실거래와 동일하게 선물 캔들 사용
     const klines = await binance.getFuturesKlines(symbol, interval, limit);
-    const result = await runBacktest(klines, { conditions, trade, interval }, symbol);
+    const result = await runBacktest(klines, { conditions, trade, interval, side }, symbol);
     res.json(result);
   } catch (e: any) {
     res.status(500).json({ error: e.response?.data?.msg ?? e.message });
@@ -49,7 +49,7 @@ router.post('/run', async (req, res) => {
 // POST /api/backtest/validate
 // 전략 조건이 과거에 몇 번 발생했고 승률이 어떤지 — 전체 알트코인 대상
 router.post('/validate', async (req, res) => {
-  const { conditions, trade }: { conditions: StrategyConditions; trade: TradeConfig } = req.body;
+  const { conditions, trade, side = 'SHORT' }: { conditions: StrategyConditions; trade: TradeConfig; side?: 'LONG' | 'SHORT' } = req.body;
   if (!conditions || !trade) {
     return res.status(400).json({ error: 'conditions, trade 필요' });
   }
@@ -90,7 +90,7 @@ router.post('/validate', async (req, res) => {
       allAlt,
       async (symbol) => {
         const klines = await binance.getFuturesKlines(symbol, interval, 1500);
-        return await runBacktest(klines, { conditions, trade, interval }, symbol);
+        return await runBacktest(klines, { conditions, trade, interval, side }, symbol);
       },
       40,
       300
