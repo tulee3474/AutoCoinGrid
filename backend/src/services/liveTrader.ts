@@ -464,6 +464,10 @@ export async function openLivePosition(
     try {
       const posAfterEntry = (await binanceSvc.getPositions()).find((p: any) => p.symbol === symbol);
       liqPrice = posAfterEntry ? parseFloat(posAfterEntry.liquidationPrice) : 0;
+      if (liqPrice > 0) {
+        const pct = ((liqPrice - actualEntry) / actualEntry * 100).toFixed(1);
+        addLog(userId, `📊 ${symbol} 실제 청산가(진입 시): $${liqPrice.toPrecision(5)} (진입가 대비 +${pct}%, 마진타입=${posAfterEntry?.marginType ?? '?'}, 격리지갑=$${posAfterEntry?.isolatedWallet ?? '?'})`, 'info');
+      }
     } catch { /* 조회 실패 시 안전캡 미적용 */ }
 
     let gridPrices = gridEnabled
@@ -785,6 +789,10 @@ async function fillLiveGrids(userId: string, binanceSvc: BinanceService, broadca
       try {
         const freshPos = (await binanceSvc.getPositions()).find((p: any) => p.symbol === pos.symbol);
         const liqPrice = freshPos ? parseFloat(freshPos.liquidationPrice) : 0;
+        if (liqPrice > 0) {
+          const pct = ((liqPrice - newAvgEntry) / newAvgEntry * 100).toFixed(1);
+          addLog(userId, `📊 ${pos.symbol} 실제 청산가(그리드 체결 후): $${liqPrice.toPrecision(5)} (평균진입가 대비 +${pct}%, 마진타입=${freshPos?.marginType ?? '?'}, 격리지갑=$${freshPos?.isolatedWallet ?? '?'}, 신규총증거금=$${newTotalUsdt})`, 'info');
+        }
         newSlPrice = capSlWithLiquidation(newSlPrice, newAvgEntry, liqPrice, tradeCfg.liquidationSafetyPct ?? 99);
       } catch { /* 조회 실패 시 기존 계산값 유지 */ }
 
