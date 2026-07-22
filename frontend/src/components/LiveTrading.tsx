@@ -318,6 +318,9 @@ export default function LiveTrading() {
                 <div className={`w-2 h-2 rounded-full flex-shrink-0 ${s.enabled ? 'bg-up animate-pulse' : 'bg-gray-600'}`} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0 ${(s.side ?? 'SHORT') === 'LONG' ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`}>
+                      {(s.side ?? 'SHORT') === 'LONG' ? '롱' : '숏'}
+                    </span>
                     <span className="text-sm font-medium text-gray-200 truncate">{s.name}</span>
                     {s.enabled && <span className="text-xs text-up font-semibold">● 활성</span>}
                     {(() => {
