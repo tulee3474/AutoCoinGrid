@@ -125,7 +125,7 @@ function simulateTrade(
       avgEntryPrice   = calcPdfAvgEntry(entryPrice, gridPrices.slice(0, gridsFilled));
       const remainingLevels = gridPrices.length - gridsFilled;
       takeProfitPrice = calcTakeProfitPrice(avgEntryPrice, trade.takeProfitPct, side);
-      stopLossPrice   = calcPdfStopLoss(avgEntryPrice, trade.leverage, remainingLevels, trade.gridSpacing, side);
+      stopLossPrice   = calcPdfStopLoss(avgEntryPrice, trade.leverage, remainingLevels, trade.gridSpacing, side, gridsFilled + 1);
 
       const newTotalUsdt = trade.entryAmountUsdt * (1 + gridsFilled);
       const newQty = newTotalUsdt * trade.leverage / avgEntryPrice;

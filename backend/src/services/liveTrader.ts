@@ -4,7 +4,7 @@ import { computeIndicators } from './indicator';
 import { StrategyConfig, StrategyConditions, TradeConfig, Side } from '../types';
 import prisma from '../lib/prisma';
 import { decrypt } from '../lib/crypto';
-import { calcPdfStopLoss, calcPdfGridPrices, capSlWithLiquidation, truncateGridsToSafeZone, resolveReEntryCooldownHours } from './gridUtils';
+import { calcPdfStopLoss, calcPdfGridPrices, capSlWithLiquidation, truncateGridsToSafeZone, resolveReEntryCooldownHours, updateAvgEntryOnFill } from './gridUtils';
 
 const SCAN_INTERVAL_MS = 60_000;
 const SYNC_INTERVAL_MS = 15_000;   // TP/SL 체결 감지 전용 빠른 인터벌
@@ -451,24 +451,29 @@ export async function openLivePosition(
       try { entryOrder = await binanceSvc.getOrder(symbol, entryOrder.orderId); } catch { break; }
     }
     const filledQty   = parseFloat(entryOrder.executedQty || '0') || qty;
-    const actualEntry = extractFillPrice(entryOrder, entryPrice);
-
-    // TP/SL/그리드는 신호 가격이 아니라 실제 체결가(actualEntry) 기준으로 계산
-    const tpPrice  = actualEntry * (1 - trade.takeProfitPct / 100);
+    let actualEntry = extractFillPrice(entryOrder, entryPrice);
     const safetyPct = trade.liquidationSafetyPct ?? 99;
 
-    // 실제 청산가를 먼저 조회 — 우리 그리드/SL 계산식(펀딩비/수수료/실제 유지증거금률 미반영)이
-    // Binance 실제 청산가보다 낙관적일 수 있어, 안전마진 밖에 있는 그리드 레벨은 애초에 등록하지 않음
-    // (등록해봤자 그 전에 손절이 먼저 발동해 채워질 기회가 없음)
+    // 실제 청산가 + 실제 평균단가(entryPrice)를 먼저 조회 — 우리 그리드/SL 계산식(펀딩비/수수료/
+    // 실제 유지증거금률 미반영)이 Binance 실제 청산가보다 낙관적일 수 있어, 안전마진 밖에 있는
+    // 그리드 레벨은 애초에 등록하지 않음. entryPrice도 우리가 추출한 체결가 대신 바이낸스가 실제
+    // 계산한 값으로 덮어써서 이후 TP/SL 계산 기준점이 어긋나지 않게 함.
     let liqPrice = 0;
     try {
       const posAfterEntry = (await binanceSvc.getPositions()).find((p: any) => p.symbol === symbol);
-      liqPrice = posAfterEntry ? parseFloat(posAfterEntry.liquidationPrice) : 0;
+      if (posAfterEntry) {
+        const realEntryPrice = parseFloat(posAfterEntry.entryPrice);
+        if (realEntryPrice > 0) actualEntry = realEntryPrice;
+        liqPrice = parseFloat(posAfterEntry.liquidationPrice) || 0;
+      }
       if (liqPrice > 0) {
         const pct = ((liqPrice - actualEntry) / actualEntry * 100).toFixed(1);
-        addLog(userId, `📊 ${symbol} 실제 청산가(진입 시): $${liqPrice.toPrecision(5)} (진입가 대비 +${pct}%, 마진타입=${posAfterEntry?.marginType ?? '?'}, 격리지갑=$${posAfterEntry?.isolatedWallet ?? '?'})`, 'info');
+        addLog(userId, `📊 ${symbol} 실제 청산가(진입 시): $${liqPrice.toPrecision(5)} (실제진입가 $${actualEntry.toPrecision(5)} 대비 +${pct}%, 마진타입=${posAfterEntry?.marginType ?? '?'}, 격리지갑=$${posAfterEntry?.isolatedWallet ?? '?'})`, 'info');
       }
-    } catch { /* 조회 실패 시 안전캡 미적용 */ }
+    } catch { /* 조회 실패 시 우리 쪽 체결가/안전캡 미적용으로 계속 진행 */ }
+
+    // TP/SL/그리드는 신호 가격이 아니라 실제 체결가(actualEntry, 위에서 바이낸스 실제값으로 보정됨) 기준으로 계산
+    const tpPrice = actualEntry * (1 - trade.takeProfitPct / 100);
 
     let gridPrices = gridEnabled
       ? calcPdfGridPrices(actualEntry, trade.leverage, trade.gridLevels, trade.gridSpacing)
@@ -756,8 +761,11 @@ async function fillLiveGrids(userId: string, binanceSvc: BinanceService, broadca
           try { order = await binanceSvc.getOrder(pos.symbol, order.orderId); } catch { break; }
         }
         const actualGridPrice = extractFillPrice(order, gp);
-        newAvgEntry  = (newAvgEntry * newTotalUsdt + actualGridPrice * pos.entryAmountUsdt) / (newTotalUsdt + pos.entryAmountUsdt);
-        newTotalUsdt += pos.entryAmountUsdt;
+        // 레벨마다 증거금은 같아도 체결가가 다르면 실제 수량이 달라 단순 산술평균은 바이낸스 실제
+        // 평균단가와 어긋남 — 수량가중(조화평균) 방식으로 갱신 (아래에서 바이낸스 실제값으로 한 번 더 덮어씀)
+        const updated = updateAvgEntryOnFill(newAvgEntry, newTotalUsdt, actualGridPrice, pos.entryAmountUsdt);
+        newAvgEntry  = updated.avgEntry;
+        newTotalUsdt = updated.totalUsdt;
         actualFilled++;
         availableBalance -= pos.entryAmountUsdt;
       } catch (e: any) {
@@ -781,20 +789,28 @@ async function fillLiveGrids(userId: string, binanceSvc: BinanceService, broadca
 
     const tradeCfg = tradeMap.get(pos.strategyName);
     if (tradeCfg) {
-      const remainingLevels = gridPrices.length - newGridsFilled;
-      newTpPrice = newAvgEntry * (1 - tradeCfg.takeProfitPct / 100);
-      newSlPrice = calcPdfStopLoss(newAvgEntry, pos.leverage, remainingLevels, tradeCfg.gridSpacing);
-
-      // 그리드 체결로 마진/평균단가가 바뀌었으니 실제 청산가도 새로 조회해 안전 캡 재적용
+      // 그리드 체결 직후 실제 포지션을 다시 조회 — 청산가뿐 아니라 평균단가(entryPrice)도
+      // 바이낸스가 계산한 실제(수량가중) 값으로 덮어써서 우리 쪽 근사식과 어긋나지 않게 함
+      // (증거금은 레벨마다 동일해도 체결가가 다르면 실제 매수 수량이 달라, 우리가 자체 계산한
+      //  평균단가가 바이낸스 실제 값보다 계속 높게 잡혀 SL 안전마진 기준점이 틀어지는 문제가 있었음)
+      let liqPrice = 0;
       try {
         const freshPos = (await binanceSvc.getPositions()).find((p: any) => p.symbol === pos.symbol);
-        const liqPrice = freshPos ? parseFloat(freshPos.liquidationPrice) : 0;
+        if (freshPos) {
+          const realEntryPrice = parseFloat(freshPos.entryPrice);
+          if (realEntryPrice > 0) newAvgEntry = realEntryPrice;
+          liqPrice = parseFloat(freshPos.liquidationPrice) || 0;
+        }
         if (liqPrice > 0) {
           const pct = ((liqPrice - newAvgEntry) / newAvgEntry * 100).toFixed(1);
-          addLog(userId, `📊 ${pos.symbol} 실제 청산가(그리드 체결 후): $${liqPrice.toPrecision(5)} (평균진입가 대비 +${pct}%, 마진타입=${freshPos?.marginType ?? '?'}, 격리지갑=$${freshPos?.isolatedWallet ?? '?'}, 신규총증거금=$${newTotalUsdt})`, 'info');
+          addLog(userId, `📊 ${pos.symbol} 실제 청산가(그리드 체결 후): $${liqPrice.toPrecision(5)} (실제평균단가 $${newAvgEntry.toPrecision(5)} 대비 +${pct}%, 마진타입=${freshPos?.marginType ?? '?'}, 격리지갑=$${freshPos?.isolatedWallet ?? '?'}, 신규총증거금=$${newTotalUsdt})`, 'info');
         }
-        newSlPrice = capSlWithLiquidation(newSlPrice, newAvgEntry, liqPrice, tradeCfg.liquidationSafetyPct ?? 99);
-      } catch { /* 조회 실패 시 기존 계산값 유지 */ }
+      } catch { /* 조회 실패 시 우리 쪽 근사 평균단가로 계속 진행 */ }
+
+      const remainingLevels = gridPrices.length - newGridsFilled;
+      newTpPrice = newAvgEntry * (1 - tradeCfg.takeProfitPct / 100);
+      newSlPrice = calcPdfStopLoss(newAvgEntry, pos.leverage, remainingLevels, tradeCfg.gridSpacing, 'SHORT', newGridsFilled + 1);
+      newSlPrice = capSlWithLiquidation(newSlPrice, newAvgEntry, liqPrice, tradeCfg.liquidationSafetyPct ?? 99);
 
       if (pos.tpOrderId !== null && pos.slOrderId !== null) {
         try {

@@ -2,7 +2,7 @@ import { binance, estimateLiquidationPrice } from './binance';
 import { scanMarket } from './scanner';
 import { openPaperPosition, closePaperPosition, getOrCreateWallet } from './paperWallet';
 import { computeIndicators } from './indicator';
-import { calcPdfStopLoss, calcTakeProfitPrice, capSlWithLiquidation } from './gridUtils';
+import { calcPdfStopLoss, calcTakeProfitPrice, capSlWithLiquidation, updateAvgEntryOnFill } from './gridUtils';
 import { StrategyConfig, StrategyConditions, TradeConfig, Side } from '../types';
 import prisma from '../lib/prisma';
 
@@ -165,8 +165,11 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
 
                 for (let i = 0; i < gridsToFill; i++) {
                   const gp = gridPrices[currentGridsFilled + i];
-                  newAvgEntry = (newAvgEntry * newTotalUsdt + gp * pos.entryAmountUsdt) / (newTotalUsdt + pos.entryAmountUsdt);
-                  newTotalUsdt += pos.entryAmountUsdt;
+                  // 레벨마다 증거금은 같아도 체결가가 다르면 실제 매수 수량이 달라 단순 산술평균은
+                  // 바이낸스 실제 평균단가와 어긋남 — 수량가중(조화평균) 방식으로 갱신
+                  const updated = updateAvgEntryOnFill(newAvgEntry, newTotalUsdt, gp, pos.entryAmountUsdt);
+                  newAvgEntry  = updated.avgEntry;
+                  newTotalUsdt = updated.totalUsdt;
                 }
 
                 const newGridsFilled = currentGridsFilled + gridsToFill;
@@ -180,7 +183,7 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
                 if (tradeCfg) {
                   const remainingLevels = gridPrices.length - newGridsFilled;
                   newTpPrice = calcTakeProfitPrice(newAvgEntry, tradeCfg.takeProfitPct, posSide);
-                  newSlPrice = calcPdfStopLoss(newAvgEntry, pos.leverage, remainingLevels, tradeCfg.gridSpacing, posSide);
+                  newSlPrice = calcPdfStopLoss(newAvgEntry, pos.leverage, remainingLevels, tradeCfg.gridSpacing, posSide, newGridsFilled + 1);
 
                   // 그리드 체결로 마진/평균단가가 바뀌었으니 추정 청산가도 새로 조회해 안전 캡 재적용 (실거래와 동일 로직)
                   const newQty = newTotalUsdt * pos.leverage / newAvgEntry;

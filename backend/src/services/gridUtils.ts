@@ -48,9 +48,44 @@ export function calcPdfGridPrices(
   return prices;
 }
 
+/**
+ * 그리드 레벨마다 같은 증거금(USDT)을 투입해도 체결가가 다르면 실제 매수 수량은 달라진다
+ * (qty_i = 증거금×레버리지/체결가_i). 바이낸스가 실제로 쓰는 평균단가는 이 수량 가중평균
+ * (= 총노출 / Σ(1/체결가_i), 증거금이 레벨마다 동일하면 결국 산술평균이 아니라 조화평균)인데,
+ * 예전엔 단순 산술평균을 써서 실제 평균단가보다 항상 높게(불리하게) 잡히는 버그가 있었음 —
+ * 이게 SL/청산가 안전마진 계산의 기준점 자체를 틀리게 만들어 실거래에서 예상보다 훨씬 이른
+ * 손절이 발생한 원인. 레벨별 증거금이 다를 수 있는 일반적인 경우까지 지원하도록 가중치를 받는다.
+ */
+export function calcTrueAvgEntry(fills: { price: number; marginUsdt: number }[]): number {
+  let totalMargin = 0;
+  let sumInv = 0;
+  for (const f of fills) {
+    totalMargin += f.marginUsdt;
+    sumInv += f.marginUsdt / f.price;
+  }
+  return sumInv > 0 ? totalMargin / sumInv : (fills[0]?.price ?? 0);
+}
+
+/** calcTrueAvgEntry의 레벨당 증거금이 전부 동일한 경우(현재 구조) 전용 축약형 — 조화평균과 동일 */
 export function calcPdfAvgEntry(entryPrice: number, filledGridPrices: number[]): number {
-  const all = [entryPrice, ...filledGridPrices];
-  return all.reduce((a, b) => a + b, 0) / all.length;  // 산술평균 (방향 무관)
+  return calcTrueAvgEntry([entryPrice, ...filledGridPrices].map(price => ({ price, marginUsdt: 1 })));
+}
+
+/**
+ * 그리드 한 레벨이 새로 체결됐을 때 평균단가를 증분 갱신 (바이낸스와 동일한 수량가중 방식).
+ * 이전 상태(currentAvgEntry, currentTotalUsdt)만 있으면 되고, DB에 별도 수량 컬럼을
+ * 추가하지 않아도 됨 — 현재까지의 Σ(1/가격)을 "총증거금/현재평균가"로 역산해서 이어붙인다.
+ */
+export function updateAvgEntryOnFill(
+  currentAvgEntry: number,
+  currentTotalUsdt: number,
+  fillPrice: number,
+  fillMarginUsdt: number
+): { avgEntry: number; totalUsdt: number } {
+  const currentSumInv = currentTotalUsdt / currentAvgEntry;
+  const newTotalUsdt = currentTotalUsdt + fillMarginUsdt;
+  const newSumInv = currentSumInv + fillMarginUsdt / fillPrice;
+  return { avgEntry: newTotalUsdt / newSumInv, totalUsdt: newTotalUsdt };
 }
 
 /**
@@ -77,25 +112,35 @@ export function calcIsolatedLiquidationPrice(
   return (qty * avgEntryPrice - marginUsdt - maintAmt) / (qty * (1 - mmr));
 }
 
-/** 모든 그리드 체결 후 산술평균 진입가에서 한 단계 더 역방향으로 가면 SL */
+/**
+ * 모든 그리드 체결 후 (수량가중) 평균 진입가에서 한 단계 더 역방향으로 가면 SL.
+ * 그리드 트리거 가격 자체(다음 레벨이 어느 가격에 걸리는지)는 calcPdfGridPrices와 동일한
+ * 산술평균 기반 공식을 그대로 씀(전략의 그리드 배치 방식 자체는 안 바뀜) — 다만 "이 레벨들이
+ * 전부 체결되면 평균단가가 얼마가 되는가"는 실제 매수 수량이 반영되는 수량가중 평균으로 계산해야
+ * 바이낸스 실제 청산가/평균단가와 어긋나지 않는다.
+ * filledLevelWeight: 지금까지 투입된 "레벨 단위" 수(증거금 기준) — 최초진입만 했으면 1,
+ * 그리드 1회 체결 후엔 2 (entryPrice가 이미 그 시점까지의 평균단가일 때 사용)
+ */
 export function calcPdfStopLoss(
   entryPrice: number,
   leverage: number,
   gridLevels: number,
   gridSpacing: number,
-  side: Side = 'SHORT'
+  side: Side = 'SHORT',
+  filledLevelWeight = 1
 ): number {
   const step = gridSpacing / 100 / leverage * dirSign(side);
-  let sumPrices = entryPrice;
-  let count = 1;
+  const futurePrices = calcPdfGridPrices(entryPrice, leverage, gridLevels, gridSpacing, side);
 
-  for (let i = 0; i < gridLevels; i++) {
-    const currentAvg = sumPrices / count;
-    const nextPrice  = currentAvg * (1 + step);
-    sumPrices += nextPrice;
-    count++;
+  let sumInv = filledLevelWeight / entryPrice;
+  let totalWeight = filledLevelWeight;
+  for (const p of futurePrices) {
+    sumInv += 1 / p;
+    totalWeight += 1;
   }
-  const pdfSL = (sumPrices / count) * (1 + step);
+  const fullyFilledAvg = totalWeight / sumInv;
+
+  const pdfSL = fullyFilledAvg * (1 + step);
   // 격리 마진(ISOLATED) 기준 최대 손실 99%로 제한: 진입가 × (1 ± 0.99/레버리지)
   const isolatedSL = entryPrice * (1 + 0.99 / leverage * dirSign(side));
   // 숏은 더 작은(=진입가에 더 가까운) 쪽이, 롱은 더 큰(=진입가에 더 가까운) 쪽이 더 타이트한 캡
