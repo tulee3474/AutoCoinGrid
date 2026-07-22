@@ -246,8 +246,8 @@ export const getLiveAccount = () =>
 export const getPaperStrategyStats = () =>
   api.get('/paper/strategy-stats').then(r => r.data as Record<string, { winRate: number; trades: number }>);
 
-export const closeLivePosition = (symbol: string) =>
-  api.delete(`/live/position/${symbol}`).then(r => r.data);
+export const closeLivePosition = (symbol: string, side: Side = 'SHORT') =>
+  api.delete(`/live/position/${symbol}?side=${side}`).then(r => r.data);
 
 export const clearLiveLogs = () =>
   api.delete('/live/logs').then(r => r.data);

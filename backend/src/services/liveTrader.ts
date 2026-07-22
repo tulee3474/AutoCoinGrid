@@ -4,7 +4,7 @@ import { computeIndicators } from './indicator';
 import { StrategyConfig, StrategyConditions, TradeConfig, Side } from '../types';
 import prisma from '../lib/prisma';
 import { decrypt } from '../lib/crypto';
-import { calcPdfStopLoss, calcPdfGridPrices, capSlWithLiquidation, truncateGridsToSafeZone, resolveReEntryCooldownHours, updateAvgEntryOnFill } from './gridUtils';
+import { calcPdfStopLoss, calcPdfGridPrices, calcTakeProfitPrice, calcSimpleStopLoss, capSlWithLiquidation, truncateGridsToSafeZone, resolveReEntryCooldownHours, updateAvgEntryOnFill, dirSign } from './gridUtils';
 
 const SCAN_INTERVAL_MS = 60_000;
 const SYNC_INTERVAL_MS = 15_000;   // TP/SL 체결 감지 전용 빠른 인터벌
@@ -88,7 +88,6 @@ async function getHedgeMode(userId: string, svc: BinanceService): Promise<boolea
 }
 
 // positionSide('SHORT'|'LONG')와 isHedge를 받아 시장가 청산 파라미터 생성
-// LONG 추가 시 posSide 인자만 바꾸면 됨
 function closeOrderParams(
   symbol: string,
   posSide: 'SHORT' | 'LONG',
@@ -102,6 +101,16 @@ function closeOrderParams(
     quantity,
     ...(isHedge ? { positionSide: posSide } : { reduceOnly: true })
   };
+}
+
+// 코인당 롱/숏 동시 보유(헤지모드)가 가능해져 symbol만으로는 어느 방향 포지션인지 특정 불가 —
+// positionAmt 부호로 방향까지 맞춰 매칭. 원웨이 모드에서 반대 포지션이 없다면 부호는 side와 항상 일치.
+function findBinancePosition(binancePositions: any[], symbol: string, side: Side): any | undefined {
+  return binancePositions.find(p => {
+    if (p.symbol !== symbol) return false;
+    const amt = parseFloat(p.positionAmt);
+    return side === 'SHORT' ? amt < 0 : amt > 0;
+  });
 }
 
 // Binance Futures MARKET 주문의 avgPrice는 "0.00000"으로 반환되는 버그가 있어
@@ -205,7 +214,7 @@ async function recordClose(
   const avgEntry  = pos.avgEntryPrice  > 0 ? pos.avgEntryPrice  : pos.entryPrice;
   const totalUsdt = pos.totalEntryUsdt > 0 ? pos.totalEntryUsdt : pos.entryAmountUsdt;
 
-  const pnlPct  = ((avgEntry - exitPrice) / avgEntry) * 100 * pos.leverage;
+  const pnlPct  = ((avgEntry - exitPrice) / avgEntry) * 100 * pos.leverage * dirSign(pos.side as Side);
   const pnlUsdt = totalUsdt * pnlPct / 100;
 
   const [log] = await prisma.$transaction([
@@ -240,14 +249,12 @@ async function syncClosed(userId: string, binanceSvc: BinanceService, broadcast:
   const positions = await prisma.livePosition.findMany({ where: { userId } });
   if (positions.length === 0) return;
 
-  const binancePos  = await binanceSvc.getPositions();
-  // positionAmt < 0 인 숏 포지션만 추적 — 헤지 모드에서 롱과 혼동 방지
-  const activeShortSymbols = new Set(
-    (binancePos as any[]).filter(p => parseFloat(p.positionAmt) < 0).map(p => p.symbol)
-  );
+  const binancePos = await binanceSvc.getPositions();
 
   for (const pos of positions) {
-    if (activeShortSymbols.has(pos.symbol)) continue;
+    const posSide = pos.side as Side;
+    // 헤지모드에서 롱/숏이 같은 심볼에 동시에 있을 수 있어 방향부호까지 맞춰 매칭
+    if (findBinancePosition(binancePos as any[], pos.symbol, posSide)) continue;
 
     // 스탠딩 주문 없는 포지션은 monitorNonOrderPositions에서 가격 모니터링으로 처리
     if (pos.tpOrderId === null) {
@@ -278,14 +285,16 @@ async function syncClosed(userId: string, binanceSvc: BinanceService, broadcast:
       // userTrades로 실제 체결가 조회
       try {
         const trades = await binanceSvc.getUserTrades(pos.symbol, pos.openedAt.getTime());
-        // 숏 청산 = BUY 방향 체결 중 가장 최신
-        const buyTrades = (trades as any[]).filter(t => t.side === 'BUY');
-        if (buyTrades.length > 0) {
+        // 포지션을 닫는 방향 체결(숏 청산=BUY, 롱 청산=SELL) 중 가장 최신
+        const closeSide = posSide === 'SHORT' ? 'BUY' : 'SELL';
+        const closeTrades = (trades as any[]).filter(t => t.side === closeSide);
+        if (closeTrades.length > 0) {
           // 여러 부분 체결 → 수량 가중 평균가
-          const totalQty = buyTrades.reduce((s: number, t: any) => s + parseFloat(t.qty), 0);
-          exitPrice = buyTrades.reduce((s: number, t: any) => s + parseFloat(t.price) * parseFloat(t.qty), 0) / totalQty;
-          // 숏: 청산가 > 진입가이면 손실(강제청산/SL)
-          exitReason = exitPrice > pos.entryPrice ? 'stopLoss' : 'takeProfit';
+          const totalQty = closeTrades.reduce((s: number, t: any) => s + parseFloat(t.qty), 0);
+          exitPrice = closeTrades.reduce((s: number, t: any) => s + parseFloat(t.price) * parseFloat(t.qty), 0) / totalQty;
+          // 숏: 청산가 > 진입가이면 손실(강제청산/SL) / 롱: 반대
+          const isLoss = posSide === 'SHORT' ? exitPrice > pos.entryPrice : exitPrice < pos.entryPrice;
+          exitReason = isLoss ? 'stopLoss' : 'takeProfit';
         }
       } catch { /* 조회 실패 시 기본값 유지 */ }
     }
@@ -308,8 +317,8 @@ async function closeTimedOut(userId: string, binanceSvc: BinanceService, broadca
       await binanceSvc.cancelAllOrders(pos.symbol);
       await binanceSvc.cancelAllAlgoOrders(pos.symbol).catch(() => {});
       const binancePositions = await binanceSvc.getPositions();
-      // 숏 포지션(positionAmt < 0)만 찾아야 헤지 모드에서 롱과 혼동하지 않음
-      const binPos = (binancePositions as any[]).find(p => p.symbol === pos.symbol && parseFloat(p.positionAmt) < 0);
+      // 헤지모드에서 롱/숏이 같은 심볼에 동시에 있을 수 있어 방향부호까지 맞춰 매칭
+      const binPos = findBinancePosition(binancePositions as any[], pos.symbol, pos.side as Side);
 
       if (binPos) {
         const exitPrice = await placeCloseOrderAndGetExitPrice(
@@ -341,14 +350,17 @@ async function closeOnRsiReversal(userId: string, binanceSvc: BinanceService, br
   const binancePositions = await binanceSvc.getPositions();
 
   for (const pos of candidates) {
+    const posSide = pos.side as Side;
     const threshold = tradeMap.get(pos.strategyName)!.rsiExitThreshold!;
     const rsi14 = await fetchRsi14(pos.symbol);
-    if (rsi14 === null || rsi14 >= threshold) continue;
+    // 숏은 rsiExitThreshold 미만(과매수→정상화)이면, 롱은 초과(과매도→정상화)면 조기 청산(가상거래와 동일 로직)
+    const reversed = rsi14 !== null && (posSide === 'SHORT' ? rsi14 < threshold : rsi14 > threshold);
+    if (!reversed) continue;
 
     try {
       await binanceSvc.cancelAllOrders(pos.symbol);
       await binanceSvc.cancelAllAlgoOrders(pos.symbol).catch(() => {});
-      const binPos = (binancePositions as any[]).find(p => p.symbol === pos.symbol && parseFloat(p.positionAmt) < 0);
+      const binPos = findBinancePosition(binancePositions as any[], pos.symbol, posSide);
 
       if (binPos) {
         const exitPrice = await placeCloseOrderAndGetExitPrice(
@@ -374,10 +386,11 @@ export async function openLivePosition(
   entryPrice: number,
   strategyName: string,
   trade: TradeConfig,
+  side: Side,
   broadcast: (data: unknown) => void
 ) {
-  const existing = await prisma.livePosition.findFirst({ where: { userId, symbol } });
-  if (existing) return null;
+  const existingSame = await prisma.livePosition.findFirst({ where: { userId, symbol, side } });
+  if (existingSame) return null;
 
   if (trade.blockLossSymbols) {
     const anyLoss = await prisma.liveTradeLog.findFirst({ where: { userId, symbol, pnlUsdt: { lte: 0 } } });
@@ -404,6 +417,21 @@ export async function openLivePosition(
 
   const binanceSvc = await getUserBinance(userId);
 
+  // 코인당 롱/숏 최대 1개씩 동시 보유 허용(가상거래와 동일 정책) — 단, 반대 방향이 이미 있는데
+  // 헤지모드가 꺼져 있으면 새 주문이 기존 포지션을 netting/reduce해버리는 사고로 이어짐
+  const oppositeSide = side === 'SHORT' ? 'LONG' : 'SHORT';
+  const existingOpposite = await prisma.livePosition.findFirst({ where: { userId, symbol, side: oppositeSide } });
+  if (existingOpposite) {
+    const isHedgeCheck = await getHedgeMode(userId, binanceSvc);
+    if (!isHedgeCheck) {
+      addLog(userId,
+        `⏭️ ${symbol}: 반대방향(${oppositeSide}) 포지션 보유 중 + 헤지모드 꺼짐 — 동시 진입 불가 (Binance에서 헤지모드 활성화 필요)`,
+        'error'
+      );
+      return null;
+    }
+  }
+
   // 잔액 사전 확인 (부족 시 주문 없이 조기 종료)
   try {
     const accountInfo      = await binanceSvc.getAccountInfo();
@@ -421,7 +449,8 @@ export async function openLivePosition(
   }
 
   let isHedge = false;
-  const posSide = 'SHORT' as const; // LONG 추가 시 파라미터로 변경
+  const posSide = side;
+  const closeSide = posSide === 'SHORT' ? 'BUY' : 'SELL'; // TP/SL/긴급청산 등 포지션을 "닫는" 방향
 
   try {
     await binanceSvc.setMarginType(symbol, 'ISOLATED');
@@ -442,7 +471,7 @@ export async function openLivePosition(
 
     isHedge = await getHedgeMode(userId, binanceSvc);
     let entryOrder  = await binanceSvc.placeOrder({
-      symbol, side: 'SELL', type: 'MARKET', quantity: qty.toString(),
+      symbol, side: posSide === 'SHORT' ? 'SELL' : 'BUY', type: 'MARKET', quantity: qty.toString(),
       ...(isHedge ? { positionSide: posSide } : {})
     });
     // MARKET 주문은 체결이 비동기로 마무리될 수 있어(특히 유동성 낮은 코인) 완전 체결 상태를 재조회
@@ -460,7 +489,7 @@ export async function openLivePosition(
     // 계산한 값으로 덮어써서 이후 TP/SL 계산 기준점이 어긋나지 않게 함.
     let liqPrice = 0;
     try {
-      const posAfterEntry = (await binanceSvc.getPositions()).find((p: any) => p.symbol === symbol);
+      const posAfterEntry = findBinancePosition(await binanceSvc.getPositions(), symbol, posSide);
       if (posAfterEntry) {
         const realEntryPrice = parseFloat(posAfterEntry.entryPrice);
         if (realEntryPrice > 0) actualEntry = realEntryPrice;
@@ -473,14 +502,14 @@ export async function openLivePosition(
     } catch { /* 조회 실패 시 우리 쪽 체결가/안전캡 미적용으로 계속 진행 */ }
 
     // TP/SL/그리드는 신호 가격이 아니라 실제 체결가(actualEntry, 위에서 바이낸스 실제값으로 보정됨) 기준으로 계산
-    const tpPrice = actualEntry * (1 - trade.takeProfitPct / 100);
+    const tpPrice = calcTakeProfitPrice(actualEntry, trade.takeProfitPct, posSide);
 
     let gridPrices = gridEnabled
-      ? calcPdfGridPrices(actualEntry, trade.leverage, trade.gridLevels, trade.gridSpacing)
+      ? calcPdfGridPrices(actualEntry, trade.leverage, trade.gridLevels, trade.gridSpacing, posSide)
       : [];
     if (gridEnabled) {
       const before = gridPrices.length;
-      gridPrices = truncateGridsToSafeZone(gridPrices, actualEntry, liqPrice, safetyPct);
+      gridPrices = truncateGridsToSafeZone(gridPrices, actualEntry, liqPrice, safetyPct, posSide);
       if (gridPrices.length < before) {
         addLog(userId,
           `⚠️ ${symbol} 청산가 안전마진(${safetyPct}%) 내에 그리드 ${gridPrices.length}/${before}차까지만 여유 있음`,
@@ -490,9 +519,9 @@ export async function openLivePosition(
     }
 
     let slPrice = gridEnabled
-      ? calcPdfStopLoss(actualEntry, trade.leverage, gridPrices.length, trade.gridSpacing)
-      : actualEntry * (1 + trade.stopLossPct / 100);
-    slPrice = capSlWithLiquidation(slPrice, actualEntry, liqPrice, safetyPct);
+      ? calcPdfStopLoss(actualEntry, trade.leverage, gridPrices.length, trade.gridSpacing, posSide)
+      : calcSimpleStopLoss(actualEntry, trade.stopLossPct, posSide);
+    slPrice = capSlWithLiquidation(slPrice, actualEntry, liqPrice, safetyPct, posSide);
 
     let tpOrderId: bigint | null = null;
     let slOrderId: bigint | null = null;
@@ -501,13 +530,13 @@ export async function openLivePosition(
       // 2025-12-09 Binance 정책 변경: STOP_MARKET/TAKE_PROFIT_MARKET은 /fapi/v1/order에서 막히고
       // 전용 Algo Order API(/fapi/v1/algoOrder)로 등록해야 함 (-4120 STOP_ORDER_SWITCH_ALGO)
       const tpOrder = await binanceSvc.placeAlgoOrder({
-        symbol, side: 'BUY', type: 'TAKE_PROFIT_MARKET',
+        symbol, side: closeSide, type: 'TAKE_PROFIT_MARKET',
         triggerPrice: tpPrice.toFixed(pricePrec), closePosition: true,
         ...(isHedge ? { positionSide: posSide } : {})
       });
       try {
         const slOrder = await binanceSvc.placeAlgoOrder({
-          symbol, side: 'BUY', type: 'STOP_MARKET',
+          symbol, side: closeSide, type: 'STOP_MARKET',
           triggerPrice: slPrice.toFixed(pricePrec), closePosition: true,
           ...(isHedge ? { positionSide: posSide } : {})
         });
@@ -524,7 +553,7 @@ export async function openLivePosition(
 
     const pos = await prisma.livePosition.create({
       data: {
-        userId, symbol, side: 'SHORT', qty: filledQty,
+        userId, symbol, side: posSide, qty: filledQty,
         entryPrice: actualEntry, avgEntryPrice: actualEntry,
         totalEntryUsdt: trade.entryAmountUsdt,
         gridPrices:  gridPrices as any,
@@ -553,7 +582,7 @@ export async function openLivePosition(
       await binanceSvc.cancelAllOrders(symbol);
       await binanceSvc.cancelAllAlgoOrders(symbol).catch(() => {});
       const binancePositions = await binanceSvc.getPositions();
-      const binPos = binancePositions.find((p: any) => p.symbol === symbol);
+      const binPos = findBinancePosition(binancePositions, symbol, posSide);
       if (binPos) {
         await binanceSvc.placeOrder(
           closeOrderParams(symbol, posSide, Math.abs(parseFloat(binPos.positionAmt)).toString(), isHedge)
@@ -575,9 +604,10 @@ export async function openLivePosition(
 export async function closeLivePositionManual(
   userId: string,
   symbol: string,
+  side: Side,
   broadcast: (data: unknown) => void
 ): Promise<boolean> {
-  const pos = await prisma.livePosition.findFirst({ where: { userId, symbol } });
+  const pos = await prisma.livePosition.findFirst({ where: { userId, symbol, side } });
   if (!pos) return false;
 
   try {
@@ -587,7 +617,7 @@ export async function closeLivePositionManual(
     await binanceSvc.cancelAllAlgoOrders(symbol).catch(() => {});
 
     const binancePositions = await binanceSvc.getPositions();
-    const binPos = binancePositions.find((p: any) => p.symbol === symbol);
+    const binPos = findBinancePosition(binancePositions, symbol, side);
 
     let exitPrice = pos.entryPrice;
     if (binPos) {
@@ -628,19 +658,22 @@ async function monitorNonOrderPositions(userId: string, broadcast: (data: unknow
     const price = priceMap.get(pos.symbol);
     if (price === undefined) continue;
 
+    const posSide = pos.side as Side;
     let exitReason: 'takeProfit' | 'stopLoss' | null = null;
     let exitPrice = price;
 
-    if (price <= pos.takeProfitPrice) {
-      exitReason = 'takeProfit'; exitPrice = pos.takeProfitPrice;
-    } else if (price >= pos.stopLossPrice) {
-      exitReason = 'stopLoss';   exitPrice = pos.stopLossPrice;
+    if (posSide === 'SHORT') {
+      if      (price <= pos.takeProfitPrice) { exitReason = 'takeProfit'; exitPrice = pos.takeProfitPrice; }
+      else if (price >= pos.stopLossPrice)   { exitReason = 'stopLoss';   exitPrice = pos.stopLossPrice;   }
+    } else {
+      if      (price >= pos.takeProfitPrice) { exitReason = 'takeProfit'; exitPrice = pos.takeProfitPrice; }
+      else if (price <= pos.stopLossPrice)   { exitReason = 'stopLoss';   exitPrice = pos.stopLossPrice;   }
     }
 
     if (!exitReason) continue;
 
     try {
-      const binPos = (await getBinancePositions()).find((p: any) => p.symbol === pos.symbol);
+      const binPos = findBinancePosition(await getBinancePositions(), pos.symbol, posSide);
       if (binPos) {
         exitPrice = await placeCloseOrderAndGetExitPrice(
           binanceSvc, pos.symbol, pos.side as 'SHORT' | 'LONG',
@@ -690,32 +723,37 @@ async function fillLiveGrids(userId: string, binanceSvc: BinanceService, broadca
     const lastFail = gridFailureCooldown.get(gridKey);
     if (lastFail && Date.now() - lastFail < GRID_RETRY_COOLDOWN_MS) continue;
 
+    const posSide           = pos.side as Side;
+    const closeSide          = posSide === 'SHORT' ? 'BUY' : 'SELL';
     const gridPrices        = pos.gridPrices as number[];
     const currentGridsFilled = pos.gridsFilled;
 
-    // 순차적으로 도달한 그리드 수 계산
+    // 순차적으로 도달한 그리드 수 계산 (숏: 위로 오른 그리드 / 롱: 아래로 내린 그리드)
     let gridsToFill = 0;
     for (let gi = currentGridsFilled; gi < gridPrices.length; gi++) {
-      if (price >= gridPrices[gi]) gridsToFill++;
+      const reached = posSide === 'SHORT' ? price >= gridPrices[gi] : price <= gridPrices[gi];
+      if (reached) gridsToFill++;
       else break;
     }
     if (gridsToFill === 0) continue;
 
-    // 1100%/500%급 급등처럼 그리드를 계속 태우면 크게 잃는 상황 방지 —
-    // 이번 그리드 체결 시점 RSI가 임계값 이상이면 추가진입 포기하고 즉시 전체 청산 (가상거래와 동일 로직)
+    // 숏: 1100%/500%급 급등처럼 그리드를 계속 태우면 크게 잃는 상황 방지 (RSI 과열 이상 시 포기)
+    // 롱: 반대로 급락이 계속되는 상황 방지 (RSI 과매도 이하 시 포기) — 가상거래와 동일 로직
     const gridSkipThreshold = tradeMap.get(pos.strategyName)?.gridRsiSkipThreshold ?? null;
     if (gridSkipThreshold !== null) {
       const rsi14 = await fetchRsi14(pos.symbol, '30m');
-      if (rsi14 !== null && rsi14 >= gridSkipThreshold) {
-        addLog(userId, `🔥 RSI 과열(${rsi14.toFixed(1)}) 감지 ${pos.symbol} — 그리드 포기 + 즉시 전체청산`, 'info');
+      const triggered = rsi14 !== null && (posSide === 'SHORT' ? rsi14 >= gridSkipThreshold : rsi14 <= gridSkipThreshold);
+      if (triggered) {
+        const label = posSide === 'SHORT' ? '과열' : '패닉(과매도)';
+        addLog(userId, `🔥 RSI ${label}(${rsi14!.toFixed(1)}) 감지 ${pos.symbol} — 그리드 포기 + 즉시 전체청산`, 'info');
         try {
           await binanceSvc.cancelAllOrders(pos.symbol);
           await binanceSvc.cancelAllAlgoOrders(pos.symbol).catch(() => {});
-          const binPosMatch = (await getBinancePos()).find((p: any) => p.symbol === pos.symbol);
+          const binPosMatch = findBinancePosition(await getBinancePos(), pos.symbol, posSide);
           let exitPriceFinal = price;
           if (binPosMatch) {
             exitPriceFinal = await placeCloseOrderAndGetExitPrice(
-              binanceSvc, pos.symbol, pos.side as 'SHORT' | 'LONG',
+              binanceSvc, pos.symbol, posSide,
               Math.abs(parseFloat(binPosMatch.positionAmt)).toString(), isHedge, price
             );
           }
@@ -751,9 +789,9 @@ async function fillLiveGrids(userId: string, binanceSvc: BinanceService, broadca
 
       try {
         let order = await binanceSvc.placeOrder({
-          symbol: pos.symbol, side: 'SELL', type: 'MARKET',
+          symbol: pos.symbol, side: posSide === 'SHORT' ? 'SELL' : 'BUY', type: 'MARKET',
           quantity: gridQty.toString(),
-          ...(isHedge ? { positionSide: 'SHORT' } : {})
+          ...(isHedge ? { positionSide: posSide } : {})
         });
         // MARKET 주문은 목표가(gp)와 실제 체결가가 다를 수 있어(특히 급등 구간) 실제 체결가로 평균단가 계산
         for (let r = 0; r < 5 && order.status !== 'FILLED'; r++) {
@@ -795,7 +833,7 @@ async function fillLiveGrids(userId: string, binanceSvc: BinanceService, broadca
       //  평균단가가 바이낸스 실제 값보다 계속 높게 잡혀 SL 안전마진 기준점이 틀어지는 문제가 있었음)
       let liqPrice = 0;
       try {
-        const freshPos = (await binanceSvc.getPositions()).find((p: any) => p.symbol === pos.symbol);
+        const freshPos = findBinancePosition(await binanceSvc.getPositions(), pos.symbol, posSide);
         if (freshPos) {
           const realEntryPrice = parseFloat(freshPos.entryPrice);
           if (realEntryPrice > 0) newAvgEntry = realEntryPrice;
@@ -808,22 +846,22 @@ async function fillLiveGrids(userId: string, binanceSvc: BinanceService, broadca
       } catch { /* 조회 실패 시 우리 쪽 근사 평균단가로 계속 진행 */ }
 
       const remainingLevels = gridPrices.length - newGridsFilled;
-      newTpPrice = newAvgEntry * (1 - tradeCfg.takeProfitPct / 100);
-      newSlPrice = calcPdfStopLoss(newAvgEntry, pos.leverage, remainingLevels, tradeCfg.gridSpacing, 'SHORT', newGridsFilled + 1);
-      newSlPrice = capSlWithLiquidation(newSlPrice, newAvgEntry, liqPrice, tradeCfg.liquidationSafetyPct ?? 99);
+      newTpPrice = calcTakeProfitPrice(newAvgEntry, tradeCfg.takeProfitPct, posSide);
+      newSlPrice = calcPdfStopLoss(newAvgEntry, pos.leverage, remainingLevels, tradeCfg.gridSpacing, posSide, newGridsFilled + 1);
+      newSlPrice = capSlWithLiquidation(newSlPrice, newAvgEntry, liqPrice, tradeCfg.liquidationSafetyPct ?? 99, posSide);
 
       if (pos.tpOrderId !== null && pos.slOrderId !== null) {
         try {
           await binanceSvc.cancelAllAlgoOrders(pos.symbol);
           const tpOrder = await binanceSvc.placeAlgoOrder({
-            symbol: pos.symbol, side: 'BUY', type: 'TAKE_PROFIT_MARKET',
+            symbol: pos.symbol, side: closeSide, type: 'TAKE_PROFIT_MARKET',
             triggerPrice: newTpPrice.toFixed(pricePrec), closePosition: true,
-            ...(isHedge ? { positionSide: 'SHORT' } : {})
+            ...(isHedge ? { positionSide: posSide } : {})
           });
           const slOrder = await binanceSvc.placeAlgoOrder({
-            symbol: pos.symbol, side: 'BUY', type: 'STOP_MARKET',
+            symbol: pos.symbol, side: closeSide, type: 'STOP_MARKET',
             triggerPrice: newSlPrice.toFixed(pricePrec), closePosition: true,
-            ...(isHedge ? { positionSide: 'SHORT' } : {})
+            ...(isHedge ? { positionSide: posSide } : {})
           });
           newTpOrderId = BigInt(tpOrder.algoId);
           newSlOrderId = BigInt(slOrder.algoId);
@@ -910,18 +948,12 @@ async function runLiveScanCycle(userId: string, broadcast: (data: unknown) => vo
 
   const btcDom = await getBtcDominance();
   for (const strategy of strategies) {
-    // 롱 전략 실거래 진입은 아직 미지원 (그리드/청산가/주문방향이 숏 전용) — 백테스트/가상거래로
-    // 검증 중인 롱 전략이 실수로 실거래에서 돌아가지 않도록 여기서 원천 차단
-    if (strategy.side === 'LONG') {
-      addLog(userId, `⏭️ 전략 "${strategy.name}"(LONG) — 실거래 롱은 아직 지원하지 않아 스킵`);
-      continue;
-    }
     try {
       const signals     = await scanMarket(strategy.conditions, strategy.side, btcDom);
       const fullSignals = signals.filter(s => s.signalScore >= 100);
-      addLog(userId, `전략 "${strategy.name}": 후보 ${signals.length}개, 충족 ${fullSignals.length}개`);
+      addLog(userId, `전략 "${strategy.name}"(${strategy.side}): 후보 ${signals.length}개, 충족 ${fullSignals.length}개`);
       for (const signal of fullSignals) {
-        await openLivePosition(userId, signal.symbol, signal.price, strategy.name, strategy.trade, broadcast);
+        await openLivePosition(userId, signal.symbol, signal.price, strategy.name, strategy.trade, strategy.side, broadcast);
       }
       broadcast({ type: 'live_scan', data: { signals: fullSignals, scannedAt: Date.now() } });
     } catch (e: any) {
@@ -1018,7 +1050,7 @@ export function stopLiveScanner(userId: string, broadcast: (data: unknown) => vo
         const binancePositions = await binanceSvc.getPositions();
         for (const pos of monitoringPositions) {
           try {
-            const binPos = binancePositions.find((p: any) => p.symbol === pos.symbol);
+            const binPos = findBinancePosition(binancePositions, pos.symbol, pos.side as Side);
             if (binPos) {
               const exitPrice = await placeCloseOrderAndGetExitPrice(
                 binanceSvc, pos.symbol, pos.side as 'SHORT' | 'LONG',
@@ -1065,7 +1097,7 @@ export async function forceStopLiveScanner(userId: string, broadcast: (data: unk
         await binanceSvc.cancelAllOrders(pos.symbol);
         await binanceSvc.cancelAllAlgoOrders(pos.symbol).catch(() => {});
         const binancePositions = await binanceSvc.getPositions();
-        const binPos = binancePositions.find((p: any) => p.symbol === pos.symbol);
+        const binPos = findBinancePosition(binancePositions, pos.symbol, pos.side as Side);
         if (binPos) {
           const exitPrice = await placeCloseOrderAndGetExitPrice(
             binanceSvc, pos.symbol, pos.side as 'SHORT' | 'LONG',
@@ -1102,14 +1134,14 @@ export async function getLivePositionsEnriched(userId: string) {
   try {
     const binanceSvc    = await getUserBinance(userId);
     const allBinancePos = await binanceSvc.getPositions();
-    // 숏 포지션만 매칭 (positionAmt < 0)
-    const shortPosMap = new Map<string, any>(
-      allBinancePos
-        .filter((bp: any) => parseFloat(bp.positionAmt) < 0)
-        .map((bp: any) => [bp.symbol, bp])
+    // 심볼+방향부호로 매칭 — 헤지모드에서 같은 심볼에 롱/숏이 동시에 있을 수 있음
+    const posMap = new Map<string, any>(
+      (allBinancePos as any[])
+        .filter((bp: any) => parseFloat(bp.positionAmt) !== 0)
+        .map((bp: any) => [`${bp.symbol}:${parseFloat(bp.positionAmt) < 0 ? 'SHORT' : 'LONG'}`, bp])
     );
     return positions.map(pos => {
-      const bp = shortPosMap.get(pos.symbol);
+      const bp = posMap.get(`${pos.symbol}:${pos.side}`);
       if (!bp) return { ...pos, currentPrice: pos.entryPrice, pnlPct: 0, pnlUsdt: 0, liquidationPrice: null };
       const currentPrice   = parseFloat(bp.markPrice);
       const pnlUsdt        = parseFloat(bp.unRealizedProfit);
@@ -1126,7 +1158,7 @@ export async function getLivePositionsEnriched(userId: string) {
       const priceMap = new Map<string, number>(indices.map((m: any) => [m.symbol, parseFloat(m.markPrice)]));
       return positions.map(pos => {
         const currentPrice = priceMap.get(pos.symbol) ?? pos.entryPrice;
-        const pnlPct  = ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100 * pos.leverage;
+        const pnlPct  = ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100 * pos.leverage * dirSign(pos.side as Side);
         const pnlUsdt = pos.entryAmountUsdt * pnlPct / 100;
         return { ...pos, currentPrice, pnlPct, pnlUsdt, liquidationPrice: null };
       });

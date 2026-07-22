@@ -7,7 +7,7 @@ import {
   getLiveAccount, closeLivePosition, clearLiveLogs, getStrategies, toggleStrategy, deleteStrategy, getMe,
   LivePosition, LiveTradeLog, ScanLogEntry, LiveAccountInfo
 } from '../utils/api';
-import { StrategyConfig } from '../types';
+import { StrategyConfig, Side } from '../types';
 import { fmtDateTime, fmtTime } from '../utils/datetime';
 
 const EXIT_LABEL: Record<string, { text: string; cls: string }> = {
@@ -151,9 +151,9 @@ export default function LiveTrading() {
     }
   };
 
-  const handleClose = async (symbol: string) => {
+  const handleClose = async (symbol: string, side: Side) => {
     if (!confirm(`${symbol} 포지션을 시장가로 즉시 청산합니까?`)) return;
-    await closeLivePosition(symbol);
+    await closeLivePosition(symbol, side);
     await refresh();
   };
 
@@ -422,7 +422,7 @@ export default function LiveTrading() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-gray-500 border-b border-border">
-                  {['코인', '전략', '진입가', '현재가', '미실현손익', 'TP', 'SL', '만료', ''].map(h => (
+                  {['코인', '', '전략', '진입가', '현재가', '미실현손익', 'TP', 'SL', '만료', ''].map(h => (
                     <th key={h} className="text-left pb-2 pr-3 font-medium">{h}</th>
                   ))}
                 </tr>
@@ -445,6 +445,11 @@ export default function LiveTrading() {
                             스캐너 모니터링
                           </div>
                         )}
+                      </td>
+                      <td className="py-2 pr-3">
+                        <span className={`text-[10px] px-1 py-0.5 rounded ${pos.side === 'LONG' ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`}>
+                          {pos.side === 'LONG' ? '롱' : '숏'}
+                        </span>
                       </td>
                       <td className="py-2 pr-3 text-gray-500 truncate max-w-[80px]">{pos.strategyName}</td>
                       <td className="py-2 pr-3 text-gray-400 num" title={pos.gridPrices.length > 0 ? `최초 진입가 $${pos.entryPrice.toPrecision(5)} · 그리드 ${pos.gridsFilled}/${pos.gridPrices.length}차 (청산가 안전마진 내 등록 가능한 최대치)` : undefined}>
@@ -473,7 +478,7 @@ export default function LiveTrading() {
                           const avgEntry = pos.avgEntryPrice > 0 ? pos.avgEntryPrice : pos.entryPrice;
                           const liqPct = ((pos.liquidationPrice - avgEntry) / avgEntry) * 100;
                           return (
-                            <div className="text-[10px] text-gray-600">청산 ${pos.liquidationPrice.toPrecision(4)} (+{liqPct.toFixed(1)}%)</div>
+                            <div className="text-[10px] text-gray-600">청산 ${pos.liquidationPrice.toPrecision(4)} ({liqPct >= 0 ? '+' : ''}{liqPct.toFixed(1)}%)</div>
                           );
                         })()}
                       </td>
@@ -482,7 +487,7 @@ export default function LiveTrading() {
                       </td>
                       <td className="py-2">
                         <button
-                          onClick={() => handleClose(pos.symbol)}
+                          onClick={() => handleClose(pos.symbol, pos.side as Side)}
                           className="text-xs px-2 py-1 rounded border border-border text-gray-400 hover:text-down hover:border-down transition-colors"
                         >
                           청산
@@ -528,6 +533,9 @@ export default function LiveTrading() {
                   >
                     <div className="flex items-center gap-2 p-2">
                       <span className="text-gray-300 font-semibold w-12 flex-shrink-0">{log.symbol.replace('USDT', '')}</span>
+                      <span className={`text-[10px] px-1 py-0.5 rounded flex-shrink-0 ${log.side === 'LONG' ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`}>
+                        {log.side === 'LONG' ? '롱' : '숏'}
+                      </span>
                       <span className="text-gray-600 truncate w-16 flex-shrink-0" title={log.strategyName}>{log.strategyName}</span>
                       <span className={`font-bold num flex-1 ${log.pnlUsdt >= 0 ? 'text-up' : 'text-down'}`}>
                         {log.pnlUsdt >= 0 ? '+' : ''}{log.pnlPct.toFixed(2)}%

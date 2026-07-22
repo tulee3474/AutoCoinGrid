@@ -1,5 +1,6 @@
 import { Router, Response } from 'express';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { Side } from '../types';
 import {
   startLiveScanner, stopLiveScanner, forceStopLiveScanner,
   isLiveRunning, isLiveStopping,
@@ -156,9 +157,10 @@ router.delete('/logs', requireAuth, async (req: AuthRequest, res: Response) => {
   res.json({ ok: true });
 });
 
-// DELETE /api/live/position/:symbol — 수동 청산
+// DELETE /api/live/position/:symbol?side=SHORT|LONG — 수동 청산
 router.delete('/position/:symbol', requireAuth, async (req: AuthRequest, res: Response) => {
-  const ok = await closeLivePositionManual(req.userId!, req.params.symbol, broadcastFn);
+  const side = (req.query.side as Side) ?? 'SHORT';
+  const ok = await closeLivePositionManual(req.userId!, req.params.symbol, side, broadcastFn);
   if (!ok) return res.status(404).json({ error: `포지션 없음: ${req.params.symbol}` });
   res.json({ ok: true });
 });
