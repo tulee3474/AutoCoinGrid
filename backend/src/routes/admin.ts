@@ -5,6 +5,8 @@ import { requireAdmin } from '../middleware/admin';
 import { isPaperRunning, startPaperScanner, stopPaperScanner, getRunningUserIds } from '../services/autoScanner';
 import { isLiveRunning, startLiveScanner, stopLiveScanner, getRunningLiveUserIds, getLiveAccountInfo } from '../services/liveTrader';
 import { binance } from '../services/binance';
+import { dirSign } from '../services/gridUtils';
+import { Side } from '../types';
 
 const noop = () => {};
 
@@ -54,7 +56,7 @@ router.get('/users', requireAdmin, async (req: Request, res: Response) => {
           select: {
             balance: true, initialBalance: true,
             openPositions: {
-              select: { symbol: true, avgEntryPrice: true, entryPrice: true, totalEntryUsdt: true, entryAmountUsdt: true, leverage: true }
+              select: { symbol: true, side: true, avgEntryPrice: true, entryPrice: true, totalEntryUsdt: true, entryAmountUsdt: true, leverage: true }
             }
           }
         }
@@ -86,7 +88,7 @@ router.get('/users', requireAdmin, async (req: Request, res: Response) => {
         const markPrice = priceMap[p.symbol];
         if (markPrice == null) continue;
         const impliedQty = totalUsdt * p.leverage / avgEntry;
-        paperUnrealizedPnl += (avgEntry - markPrice) * impliedQty; // SHORT
+        paperUnrealizedPnl += (avgEntry - markPrice) * impliedQty * dirSign(p.side as Side);
       }
       const paperBalance = u.paperWallet?.balance ?? null;
       return {
@@ -139,8 +141,8 @@ router.get('/users/:userId', requireAdmin, async (req: Request, res: Response) =
     const livePositions = user.livePositions.map(p => {
       const markPrice = priceMap[p.symbol] ?? null;
       const avgEntry  = p.avgEntryPrice > 0 ? p.avgEntryPrice : p.entryPrice;
-      // SHORT: 진입가 - 현재가 × 수량 (참고용 추정치 — 그리드 체결 후 실제 수량은 Binance 총 자산 값이 정확함)
-      const unrealizedPnlUsdt = markPrice !== null ? (avgEntry - markPrice) * p.qty : null;
+      // 진입가 - 현재가 × 수량 × 방향부호 (참고용 추정치 — 그리드 체결 후 실제 수량은 Binance 총 자산 값이 정확함)
+      const unrealizedPnlUsdt = markPrice !== null ? (avgEntry - markPrice) * p.qty * dirSign(p.side as Side) : null;
       return {
         ...p,
         tpOrderId: p.tpOrderId?.toString() ?? null,
@@ -155,7 +157,7 @@ router.get('/users/:userId', requireAdmin, async (req: Request, res: Response) =
       const avgEntry   = p.avgEntryPrice > 0 ? p.avgEntryPrice : p.entryPrice;
       const totalUsdt  = p.totalEntryUsdt  > 0 ? p.totalEntryUsdt  : p.entryAmountUsdt;
       const impliedQty = totalUsdt * p.leverage / avgEntry;
-      const unrealizedPnlUsdt = markPrice !== null ? (avgEntry - markPrice) * impliedQty : null;
+      const unrealizedPnlUsdt = markPrice !== null ? (avgEntry - markPrice) * impliedQty * dirSign(p.side as Side) : null;
       return { ...p, markPrice, unrealizedPnlUsdt };
     });
 
