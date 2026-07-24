@@ -113,11 +113,18 @@ export function calcIsolatedLiquidationPrice(
 }
 
 /**
- * 모든 그리드 체결 후 (수량가중) 평균 진입가에서 한 단계 더 역방향으로 가면 SL.
+ * 아직 채울 그리드가 남아있으면: (수량가중) 평균 진입가에서 한 단계 더 역방향으로 가면 SL —
+ * "남은 레벨이 전부 체결되면 평균단가가 얼마가 되는가"까지 감안해 조기 손절을 피하기 위함.
  * 그리드 트리거 가격 자체(다음 레벨이 어느 가격에 걸리는지)는 calcPdfGridPrices와 동일한
  * 산술평균 기반 공식을 그대로 씀(전략의 그리드 배치 방식 자체는 안 바뀜) — 다만 "이 레벨들이
  * 전부 체결되면 평균단가가 얼마가 되는가"는 실제 매수 수량이 반영되는 수량가중 평균으로 계산해야
  * 바이낸스 실제 청산가/평균단가와 어긋나지 않는다.
+ *
+ * 더 채울 그리드가 없으면(전부 체결됨): 더 이상 물을 물타기가 없으니 "한 스텝 더" 여유를 둘
+ * 근거가 없다 — 이 경우 이론치 캡을 최대한 넓게(격리마진 99% 근사치) 열어두고, 최종 SL은
+ * capSlWithLiquidation이 실제(또는 추정) 청산가 안전마진으로 결정하도록 맡긴다
+ * ("그리드 다 채웠으면 청산가까지 가야지"라는 사용자 피드백 반영).
+ *
  * filledLevelWeight: 지금까지 투입된 "레벨 단위" 수(증거금 기준) — 최초진입만 했으면 1,
  * 그리드 1회 체결 후엔 2 (entryPrice가 이미 그 시점까지의 평균단가일 때 사용)
  */
@@ -129,6 +136,10 @@ export function calcPdfStopLoss(
   side: Side = 'SHORT',
   filledLevelWeight = 1
 ): number {
+  // 격리 마진(ISOLATED) 기준 최대 손실 99%로 제한: 진입가 × (1 ± 0.99/레버리지)
+  const isolatedSL = entryPrice * (1 + 0.99 / leverage * dirSign(side));
+  if (gridLevels <= 0) return isolatedSL;
+
   const step = gridSpacing / 100 / leverage * dirSign(side);
   const futurePrices = calcPdfGridPrices(entryPrice, leverage, gridLevels, gridSpacing, side);
 
@@ -141,8 +152,6 @@ export function calcPdfStopLoss(
   const fullyFilledAvg = totalWeight / sumInv;
 
   const pdfSL = fullyFilledAvg * (1 + step);
-  // 격리 마진(ISOLATED) 기준 최대 손실 99%로 제한: 진입가 × (1 ± 0.99/레버리지)
-  const isolatedSL = entryPrice * (1 + 0.99 / leverage * dirSign(side));
   // 숏은 더 작은(=진입가에 더 가까운) 쪽이, 롱은 더 큰(=진입가에 더 가까운) 쪽이 더 타이트한 캡
   return side === 'SHORT' ? Math.min(pdfSL, isolatedSL) : Math.max(pdfSL, isolatedSL);
 }
