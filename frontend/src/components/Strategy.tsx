@@ -897,7 +897,7 @@ export default function Strategy() {
             <>
               <p>PDF 방식: 평균 진입가 기준 <span className="text-gray-300 font-semibold">{(draftTrade.gridSpacing / draftTrade.leverage).toFixed(1)}%</span> 간격으로 {draftSide === 'SHORT' ? '숏' : '롱'} {draftTrade.gridLevels}개 추가 (레버리지 분할)</p>
               <p>이론상 자동 손절: 진입가 대비 약 <span className="text-down font-semibold">{draftSide === 'SHORT' ? '+' : '-'}{calcPdfSlPct(draftTrade.leverage, draftTrade.gridLevels, draftTrade.gridSpacing).toFixed(1)}%</span> {draftSide === 'SHORT' ? '상승' : '하락'}시 청산 (레버리지 기준 추정치)</p>
-              <p className="text-gray-500">※ 실제 진입 시엔 코인별 실제(또는 추정) 청산가까지 거리의 <span className="text-gray-300 font-semibold">{draftTrade.liquidationSafetyPct ?? 99}%</span> 지점에 손절이 설정되고, 그 밖에 있는 그리드 레벨은 채워질 기회가 없어 자동으로 등록에서 제외됩니다 — 코인마다 실제 유지증거금률이 달라 위 이론치보다 타이트해질 수 있습니다.</p>
+              <p className="text-gray-500">※ 실제 손절가는 위 이론치와, 코인별 실제(또는 추정) 청산가까지 거리의 <span className="text-gray-300 font-semibold">{draftTrade.liquidationSafetyPct ?? 99}%</span> 지점 중 <span className="text-gray-300 font-semibold">더 가까운(안전한) 쪽</span>으로 설정됩니다 — 청산가가 이론치보다 훨씬 가까운 코인(유지증거금률이 높은 저유동성 코인 등)에서만 안전마진이 대신 적용되고, 청산가가 충분히 먼 경우(대부분)엔 위 이론치가 그대로 손절가가 됩니다. 안전마진 밖에 있는 그리드 레벨은 채워질 기회가 없어 자동으로 등록에서 제외됩니다.</p>
               <p>총 최대 노출: <span className="text-gray-300 num">${draftTrade.entryAmountUsdt * (draftTrade.gridLevels + 1)}</span> USDT × {draftTrade.leverage}x</p>
             </>
           ) : (
