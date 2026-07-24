@@ -769,6 +769,21 @@ async function fillLiveGrids(userId: string, binanceSvc: BinanceService, broadca
     const qtyPrec    = symbolInfo?.quantityPrecision ?? 2;
     const pricePrec  = symbolInfo?.pricePrecision    ?? 2;
 
+    // 그리드 주문을 넣기 전에 기존(구) 평균단가 기준 TP/SL을 먼저 취소 — 그리드 체결 대기 +
+    // 포지션 재조회 + 신규 SL 계산 사이(수 초~수십 초 소요 가능) 동안 예전의 더 타이트한 SL이
+    // 바이낸스에 그대로 살아있으면, 그 사이 가격이 더 움직여 예전 SL이 먼저 발동해버리는 사고가
+    // 생김(실제 발견된 사례). 취소를 먼저 해두면 그 공백 동안은 "무방비"가 될 뿐 "잘못된 조기
+    // 발동"은 없앨 수 있어 — 무방비 쪽이 훨씬 안전한 실패 모드.
+    const hadStandingOrders = pos.tpOrderId !== null && pos.slOrderId !== null;
+    if (hadStandingOrders) {
+      try {
+        await binanceSvc.cancelAllAlgoOrders(pos.symbol);
+      } catch (e: any) {
+        addLog(userId, `${pos.symbol} 그리드 체결 전 기존 SL 취소 실패 — 이번 사이클 보류: ${e.response?.data?.msg ?? e.message}`, 'error');
+        continue;
+      }
+    }
+
     let newAvgEntry  = pos.avgEntryPrice  > 0 ? pos.avgEntryPrice  : pos.entryPrice;
     let newTotalUsdt = pos.totalEntryUsdt > 0 ? pos.totalEntryUsdt : pos.entryAmountUsdt;
     let actualFilled = 0;
@@ -813,7 +828,32 @@ async function fillLiveGrids(userId: string, binanceSvc: BinanceService, broadca
       }
     }
 
-    if (actualFilled === 0) continue;
+    if (actualFilled === 0) {
+      // 그리드 체결 실패 — 위에서 이미 취소한 기존 TP/SL을 가격 변경 없이 그대로 재등록해
+      // 무방비 상태로 남지 않게 함
+      if (hadStandingOrders) {
+        try {
+          const tpOrder = await binanceSvc.placeAlgoOrder({
+            symbol: pos.symbol, side: closeSide, type: 'TAKE_PROFIT_MARKET',
+            triggerPrice: pos.takeProfitPrice.toFixed(pricePrec), closePosition: true,
+            ...(isHedge ? { positionSide: posSide } : {})
+          });
+          const slOrder = await binanceSvc.placeAlgoOrder({
+            symbol: pos.symbol, side: closeSide, type: 'STOP_MARKET',
+            triggerPrice: pos.stopLossPrice.toFixed(pricePrec), closePosition: true,
+            ...(isHedge ? { positionSide: posSide } : {})
+          });
+          await prisma.livePosition.update({
+            where: { id: pos.id },
+            data: { tpOrderId: BigInt(tpOrder.algoId), slOrderId: BigInt(slOrder.algoId) }
+          });
+        } catch (e: any) {
+          await prisma.livePosition.update({ where: { id: pos.id }, data: { tpOrderId: null, slOrderId: null } });
+          addLog(userId, `${pos.symbol} 그리드 실패 후 기존 SL 재등록 실패 — 스캐너 모니터링 전환: ${e.response?.data?.msg ?? e.message}`, 'error');
+        }
+      }
+      continue;
+    }
 
     const newGridsFilled = currentGridsFilled + actualFilled;
 
@@ -850,9 +890,9 @@ async function fillLiveGrids(userId: string, binanceSvc: BinanceService, broadca
       newSlPrice = calcPdfStopLoss(newAvgEntry, pos.leverage, remainingLevels, tradeCfg.gridSpacing, posSide, newGridsFilled + 1);
       newSlPrice = capSlWithLiquidation(newSlPrice, newAvgEntry, liqPrice, tradeCfg.liquidationSafetyPct ?? 99, posSide);
 
-      if (pos.tpOrderId !== null && pos.slOrderId !== null) {
+      if (hadStandingOrders) {
         try {
-          await binanceSvc.cancelAllAlgoOrders(pos.symbol);
+          // 기존 알고주문은 그리드 주문을 넣기 전에 이미 취소했으므로 여기선 재등록만
           const tpOrder = await binanceSvc.placeAlgoOrder({
             symbol: pos.symbol, side: closeSide, type: 'TAKE_PROFIT_MARKET',
             triggerPrice: newTpPrice.toFixed(pricePrec), closePosition: true,
@@ -875,6 +915,28 @@ async function fillLiveGrids(userId: string, binanceSvc: BinanceService, broadca
             'error'
           );
         }
+      }
+    } else if (hadStandingOrders) {
+      // 전략 설정이 삭제되는 등 tradeCfg를 못 찾은 경우에도, 위에서 이미 기존 TP/SL을 취소했으므로
+      // 가격 변경 없이 그대로 재등록해 무방비 상태로 남지 않게 함
+      try {
+        const tpOrder = await binanceSvc.placeAlgoOrder({
+          symbol: pos.symbol, side: closeSide, type: 'TAKE_PROFIT_MARKET',
+          triggerPrice: newTpPrice.toFixed(pricePrec), closePosition: true,
+          ...(isHedge ? { positionSide: posSide } : {})
+        });
+        const slOrder = await binanceSvc.placeAlgoOrder({
+          symbol: pos.symbol, side: closeSide, type: 'STOP_MARKET',
+          triggerPrice: newSlPrice.toFixed(pricePrec), closePosition: true,
+          ...(isHedge ? { positionSide: posSide } : {})
+        });
+        newTpOrderId = BigInt(tpOrder.algoId);
+        newSlOrderId = BigInt(slOrder.algoId);
+      } catch (e: any) {
+        await binanceSvc.cancelAllAlgoOrders(pos.symbol).catch(() => {});
+        newTpOrderId = null;
+        newSlOrderId = null;
+        addLog(userId, `${pos.symbol} 그리드 체결 후 기존 SL 재등록 실패 — 스캐너 모니터링 전환: ${e.response?.data?.msg ?? e.message}`, 'error');
       }
     }
 
