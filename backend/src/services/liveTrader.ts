@@ -857,6 +857,16 @@ async function fillLiveGrids(userId: string, binanceSvc: BinanceService, broadca
 
     const newGridsFilled = currentGridsFilled + actualFilled;
 
+    // 그리드가 실제로 체결된 순간(마진/수량이 이미 바뀐 시점) 즉시 avgEntryPrice/totalEntryUsdt/
+    // gridsFilled를 먼저 반영 — 아래 TP/SL 재계산·알고주문 재등록은 API 호출이 여러 번 더 필요해
+    // 시간이 걸리는데, 그 사이 포지션이 어떤 경로로든(레이스 컨디션, 수동청산 등) 먼저 종료돼버리면
+    // recordClose가 avgEntryPrice=0(또는 그리드 체결 전 옛값)으로 폴백해 실제보다 훨씬 나쁜 손익을
+    // 잘못 기록하는 사고가 있었음(ACE 실거래로 확인) — DB 갱신을 최대한 앞당겨 이 창을 최소화
+    await prisma.livePosition.update({
+      where: { id: pos.id },
+      data: { gridsFilled: newGridsFilled, avgEntryPrice: newAvgEntry, totalEntryUsdt: newTotalUsdt }
+    });
+
     // 그리드 체결로 평균단가가 올라간 만큼 TP/SL도 새 평균단가 기준으로 재계산 + 재등록
     // (안 하면 SL이 최초 진입가 기준 ISOLATED 99% 캡에 고정돼 있어, 남은 그리드가
     //  안전캡보다 먼 가격에 있으면 절대 채워질 수 없는 문제가 생김)
@@ -956,6 +966,92 @@ async function fillLiveGrids(userId: string, binanceSvc: BinanceService, broadca
   }
 }
 
+// ── 그리드가 이미 전부 체결된 포지션의 평균단가/TP/SL 재검증 ──────────────
+// 그리드가 다 채워진 포지션(gridsFilled >= gridPrices.length)은 앞으로 fillLiveGrids의 그리드
+// 체결 이벤트가 다시는 일어나지 않아 — 그 함수 안에서만 재계산되는 avgEntryPrice/TP/SL은 과거
+// 버그(공식 개선 전 계산값, 또는 DB 반영 전 종료 등)로 잘못 저장돼 있어도 영원히 방치됨(TUT/GWEI
+// 실거래로 확인 — SL이 옛 공식값에 고정된 채 남아있었음). syncClosed/fillLiveGrids와 같은 주기로
+// 매번 돌면서 바이낸스 실제값 기준으로 다시 계산해 다르면 자동으로 바로잡는다 — 서버 재시작
+// (스캐너 자동 복원) 시에도, 평소 스캐너 사이클에서도 동일하게 적용됨.
+async function resyncFullyFilledPositions(userId: string, binanceSvc: BinanceService, broadcast: (data: unknown) => void) {
+  const positions = await prisma.livePosition.findMany({ where: { userId } });
+  const fullyFilled = positions.filter(pos => {
+    const gp = Array.isArray(pos.gridPrices) ? pos.gridPrices as number[] : [];
+    return gp.length > 0 && pos.gridsFilled >= gp.length;
+  });
+  if (fullyFilled.length === 0) return;
+
+  const isHedge          = await getHedgeMode(userId, binanceSvc);
+  const exchInfo          = await binanceSvc.getFuturesExchangeInfo();
+  const tradeMap          = await getStrategyTrades(userId, [...new Set(fullyFilled.map(p => p.strategyName))]);
+  const binancePositions  = await binanceSvc.getPositions();
+
+  for (const pos of fullyFilled) {
+    const posSide   = pos.side as Side;
+    const closeSide = posSide === 'SHORT' ? 'BUY' : 'SELL';
+    const tradeCfg  = tradeMap.get(pos.strategyName);
+    if (!tradeCfg) continue;
+
+    const freshPos = findBinancePosition(binancePositions, pos.symbol, posSide);
+    if (!freshPos) continue; // Binance에 없으면(청산됨 등) syncClosed가 별도로 처리
+
+    const realEntryPrice = parseFloat(freshPos.entryPrice) || pos.avgEntryPrice || pos.entryPrice;
+    const realTotalUsdt  = parseFloat(freshPos.isolatedWallet) || pos.totalEntryUsdt || pos.entryAmountUsdt;
+    const liqPrice        = parseFloat(freshPos.liquidationPrice) || 0;
+
+    const correctedTp = calcTakeProfitPrice(realEntryPrice, tradeCfg.takeProfitPct, posSide);
+    let correctedSl   = calcPdfStopLoss(realEntryPrice, pos.leverage, 0, tradeCfg.gridSpacing, posSide, pos.gridsFilled + 1);
+    correctedSl        = capSlWithLiquidation(correctedSl, realEntryPrice, liqPrice, tradeCfg.liquidationSafetyPct ?? 99, posSide);
+
+    // 기존 값과 유의미하게(0.1% 이상) 다를 때만 실제로 취소/재등록 — 이미 맞는 값이면 매 사이클
+    // 불필요한 API 호출/알고주문 재발급을 반복하지 않도록
+    const avgDiffPct = Math.abs(realEntryPrice - pos.avgEntryPrice) / (pos.avgEntryPrice || realEntryPrice) * 100;
+    const slDiffPct  = Math.abs(correctedSl - pos.stopLossPrice) / (pos.stopLossPrice || correctedSl) * 100;
+    if (avgDiffPct < 0.1 && slDiffPct < 0.1) continue;
+
+    const symbolInfo = (exchInfo.symbols as any[]).find((s: any) => s.symbol === pos.symbol);
+    const pricePrec  = symbolInfo?.pricePrecision ?? 2;
+
+    let newTpOrderId = pos.tpOrderId;
+    let newSlOrderId = pos.slOrderId;
+
+    if (pos.tpOrderId !== null && pos.slOrderId !== null) {
+      try {
+        await binanceSvc.cancelAllAlgoOrders(pos.symbol);
+        const tpOrder = await binanceSvc.placeAlgoOrder({
+          symbol: pos.symbol, side: closeSide, type: 'TAKE_PROFIT_MARKET',
+          triggerPrice: correctedTp.toFixed(pricePrec), closePosition: true,
+          ...(isHedge ? { positionSide: posSide } : {})
+        });
+        const slOrder = await binanceSvc.placeAlgoOrder({
+          symbol: pos.symbol, side: closeSide, type: 'STOP_MARKET',
+          triggerPrice: correctedSl.toFixed(pricePrec), closePosition: true,
+          ...(isHedge ? { positionSide: posSide } : {})
+        });
+        newTpOrderId = BigInt(tpOrder.algoId);
+        newSlOrderId = BigInt(slOrder.algoId);
+      } catch (e: any) {
+        addLog(userId, `${pos.symbol} 평균단가/SL 보정 재등록 실패 — 다음 사이클에 재시도: ${e.response?.data?.msg ?? e.message}`, 'error');
+        continue; // 값은 갱신하지 않고 다음 사이클에 다시 시도
+      }
+    }
+
+    await prisma.livePosition.update({
+      where: { id: pos.id },
+      data: {
+        avgEntryPrice: realEntryPrice, totalEntryUsdt: realTotalUsdt,
+        takeProfitPrice: correctedTp, stopLossPrice: correctedSl,
+        tpOrderId: newTpOrderId, slOrderId: newSlOrderId
+      }
+    });
+    addLog(userId,
+      `🔧 ${pos.symbol} 평균단가/SL 보정 | 평균단가: $${realEntryPrice.toPrecision(5)} | TP $${correctedTp.toPrecision(4)} | SL $${correctedSl.toPrecision(4)}`,
+      'info'
+    );
+    broadcast({ type: 'live_grid_fill', data: { symbol: pos.symbol, gridsFilled: pos.gridsFilled, avgEntryPrice: realEntryPrice, takeProfitPrice: correctedTp, stopLossPrice: correctedSl } });
+  }
+}
+
 // ── TP/SL 동기화 + 타임아웃 (mutex 보호) ─────────────────────
 
 async function runSync(userId: string, broadcast: (data: unknown) => void) {
@@ -970,6 +1066,7 @@ async function runSync(userId: string, broadcast: (data: unknown) => void) {
       const binanceSvc = await getUserBinance(userId);
       await syncClosed(userId, binanceSvc, broadcast);
       await fillLiveGrids(userId, binanceSvc, broadcast);
+      await resyncFullyFilledPositions(userId, binanceSvc, broadcast);
       await closeOnRsiReversal(userId, binanceSvc, broadcast);
       await closeTimedOut(userId, binanceSvc, broadcast);
     }
