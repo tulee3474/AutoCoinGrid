@@ -127,6 +127,8 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
         // ── 그리드 추가진입 체크 (RSI 과열 시 그리드 포기 + 즉시 전체 청산) ──
         const gridPrices = Array.isArray(pos.gridPrices) ? (pos.gridPrices as number[]) : [];
         const currentGridsFilled = pos.gridsFilled;
+        // 그리드 체결로 TP/SL이 바뀌면 소급 감지(아래)에 반영할 "현재 TP/SL이 유효해진 시점" 계산에 사용
+        let effectiveGridsFilled = currentGridsFilled;
 
         if (gridPrices.length > 0 && currentGridsFilled < gridPrices.length) {
           let gridsToFill = 0;
@@ -214,6 +216,7 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
                 // 이번 사이클의 아래 TP/SL 체크에도 갱신된 값을 바로 반영
                 pos.takeProfitPrice = newTpPrice;
                 pos.stopLossPrice   = newSlPrice;
+                effectiveGridsFilled = newGridsFilled;
               }
             }
           }
@@ -235,8 +238,23 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
         }
 
         // 60초 폴링 사이에 놓친 SL/TP: 캔들 HIGH/LOW로 소급 감지
+        // 그리드가 체결될 때마다 TP/SL 가격 자체가 바뀌므로, 그리드 체결 "전" 캔들까지 지금(그리드
+        // 체결 후)의 TP/SL로 검사하면 안 됨 — 그 시점엔 포지션이 아직 작았고 실제 적용 중이던 문턱값도
+        // 달랐는데, 나중에 낮아진(숏 기준) TP를 그 이전 캔들 저가와 비교해 실제로는 없었던 익절을
+        // 만들어내는 버그가 있었음(TUT 실사례로 확인 — 그리드 체결 전 캔들의 저가가 우연히 그리드
+        // 체결 후 TP보다 낮아 그 시점에 익절된 것으로 잘못 기록됨). 마지막으로 체결된 그리드의 트리거
+        // 캔들 이후만 검사 대상으로 좁힘(그리드 안 채워졌으면 기존과 동일하게 오픈 시점부터).
         if (!exitReason) {
-          for (const k of posKlines) {
+          let tpSlEffectiveFrom = pos.openedAt.getTime();
+          if (effectiveGridsFilled > 0 && gridPrices.length > 0) {
+            const lastGridPrice = gridPrices[effectiveGridsFilled - 1];
+            const triggerCandle = posKlines.find(k =>
+              posSide === 'SHORT' ? k.high >= lastGridPrice : k.low <= lastGridPrice
+            );
+            if (triggerCandle) tpSlEffectiveFrom = triggerCandle.closeTime;
+          }
+          const tpSlKlines = posKlines.filter(k => k.openTime >= tpSlEffectiveFrom);
+          for (const k of tpSlKlines) {
             if (posSide === 'SHORT') {
               if (k.high >= pos.stopLossPrice)   { exitReason = 'stopLoss';   exitPrice = pos.stopLossPrice;   break; }
               if (k.low  <= pos.takeProfitPrice) { exitReason = 'takeProfit'; exitPrice = pos.takeProfitPrice; break; }
