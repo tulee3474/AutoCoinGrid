@@ -7,6 +7,7 @@ import { isLiveRunning, startLiveScanner, stopLiveScanner, getRunningLiveUserIds
 import { binance } from '../services/binance';
 import { dirSign } from '../services/gridUtils';
 import { Side } from '../types';
+import { auditPhantomTakeProfits } from '../services/paperAudit';
 
 const noop = () => {};
 
@@ -231,6 +232,18 @@ router.post('/scanners/live/:userId/start', requireAdmin, (req: Request, res: Re
 router.post('/scanners/live/:userId/stop', requireAdmin, (req: Request, res: Response) => {
   stopLiveScanner(req.params.userId, noop);
   res.json({ ok: true, message: '실거래 스캐너 중지됨' });
+});
+
+// POST /api/admin/audit-phantom-takeprofits — 1회성 감사: 그리드 1회 체결 후 "가짜 익절"로
+// 잘못 기록된 과거 가상거래를 바이낸스 과거 캔들로 재검증해 통계에서 제거 (6cae548의 근본 원인은
+// 이미 수정됐으므로 이후 신규 거래엔 영향 없음 — 이 엔드포인트는 과거 기록 정리 전용)
+router.post('/audit-phantom-takeprofits', requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const result = await auditPhantomTakeProfits();
+    res.json(result);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 export default router;
