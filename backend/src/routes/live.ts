@@ -4,7 +4,7 @@ import { Side } from '../types';
 import {
   startLiveScanner, stopLiveScanner, forceStopLiveScanner,
   isLiveRunning, isLiveStopping,
-  getLiveLog, getLivePositionsEnriched, getLiveTradeLogs, closeLivePositionManual,
+  getLiveLog, getLivePositionsEnriched, getLiveTradeLogs, getLiveTradeLogsPaginated, closeLivePositionManual,
   getLiveAccountInfo
 } from '../services/liveTrader';
 import prisma from '../lib/prisma';
@@ -144,6 +144,14 @@ router.get('/positions', requireAuth, async (req: AuthRequest, res: Response) =>
 router.get('/logs', requireAuth, async (req: AuthRequest, res: Response) => {
   const limit = parseInt((req.query.limit as string) || '50');
   res.json(await getLiveTradeLogs(req.userId!, limit));
+});
+
+// GET /api/live/logs/all — 전체 거래 로그 페이지네이션 조회 (limit 상한 없이 전체 이력 탐색용)
+router.get('/logs/all', requireAuth, async (req: AuthRequest, res: Response) => {
+  const page        = Math.max(1, parseInt((req.query.page as string) || '1'));
+  const pageSize     = Math.min(200, Math.max(1, parseInt((req.query.pageSize as string) || '50')));
+  const strategyName = (req.query.strategyName as string) || undefined;
+  res.json(await getLiveTradeLogsPaginated(req.userId!, page, pageSize, strategyName));
 });
 
 // GET /api/live/scan-log

@@ -295,6 +295,38 @@ export interface LiveTradeLog {
   strategyName: string;
 }
 
+export interface PaperTradeLog {
+  id: string;
+  symbol: string;
+  side: string;
+  entryTime: string;
+  exitTime: string;
+  entryPrice: number;
+  exitPrice: number;
+  pnlPct: number;
+  pnlUsdt: number;
+  exitReason: 'takeProfit' | 'stopLoss' | 'timeout' | 'manual' | 'signalReversal' | 'rsiOverheat';
+  entryAmountUsdt: number;
+  leverage: number;
+  strategyName: string;
+}
+
+export interface PaginatedLogs<T> {
+  logs: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+  strategyNames: string[];
+}
+
+export const getPaperLogsPage = (page: number, pageSize: number, strategyName?: string) =>
+  api.get('/paper/logs/all', { params: { page, pageSize, strategyName } })
+    .then(r => r.data as PaginatedLogs<PaperTradeLog>);
+
+export const getLiveLogsPage = (page: number, pageSize: number, strategyName?: string) =>
+  api.get('/live/logs/all', { params: { page, pageSize, strategyName } })
+    .then(r => r.data as PaginatedLogs<LiveTradeLog>);
+
 export interface ScanLogEntry {
   time: number;
   message: string;

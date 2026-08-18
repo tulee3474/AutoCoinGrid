@@ -513,13 +513,16 @@ export default function LiveTrading() {
               거래 로그
               <span className="text-gray-500 font-normal ml-2 text-xs">최근 50건</span>
             </h2>
-            <button
-              onClick={handleClearLogs}
-              disabled={clearingLogs || logs.length === 0}
-              className="text-xs px-2 py-1 rounded border border-border text-gray-500 hover:text-down hover:border-down/40 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-            >
-              {clearingLogs ? '삭제 중...' : '로그 초기화'}
-            </button>
+            <div className="flex items-center gap-2">
+              <Link to="/logs?type=live" className="text-xs text-accent hover:underline">전체 로그 보기 →</Link>
+              <button
+                onClick={handleClearLogs}
+                disabled={clearingLogs || logs.length === 0}
+                className="text-xs px-2 py-1 rounded border border-border text-gray-500 hover:text-down hover:border-down/40 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                {clearingLogs ? '삭제 중...' : '로그 초기화'}
+              </button>
+            </div>
           </div>
           {logs.length === 0 ? (
             <p className="text-gray-500 text-sm text-center py-6">거래 없음</p>

@@ -1334,3 +1334,14 @@ export async function getLiveTradeLogs(userId: string, limit = 50) {
     take:    limit
   });
 }
+
+// 전체 거래 로그 페이지네이션 조회 (limit 상한 없이 전체 이력 탐색용)
+export async function getLiveTradeLogsPaginated(userId: string, page: number, pageSize: number, strategyName?: string) {
+  const where = { userId, ...(strategyName ? { strategyName } : {}) };
+  const [logs, total, strategyNames] = await Promise.all([
+    prisma.liveTradeLog.findMany({ where, orderBy: { exitTime: 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
+    prisma.liveTradeLog.count({ where }),
+    prisma.liveTradeLog.findMany({ where: { userId }, distinct: ['strategyName'], select: { strategyName: true }, orderBy: { strategyName: 'asc' } })
+  ]);
+  return { logs, total, page, pageSize, strategyNames: strategyNames.map(s => s.strategyName) };
+}

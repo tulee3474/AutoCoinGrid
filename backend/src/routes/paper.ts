@@ -111,6 +111,24 @@ router.get('/logs', requireAuth, async (req: AuthRequest, res: Response) => {
   res.json(wallet.tradeLogs.slice(0, limit));
 });
 
+// GET /api/paper/logs/all — 전체 거래 로그 페이지네이션 조회 (500건 제한 없음)
+router.get('/logs/all', requireAuth, async (req: AuthRequest, res: Response) => {
+  const page         = Math.max(1, parseInt((req.query.page as string) || '1'));
+  const pageSize      = Math.min(200, Math.max(1, parseInt((req.query.pageSize as string) || '50')));
+  const strategyName  = (req.query.strategyName as string) || undefined;
+
+  const wallet = await prisma.paperWallet.upsert({
+    where: { userId: req.userId! }, create: { userId: req.userId! }, update: {}
+  });
+  const where = { walletId: wallet.id, ...(strategyName ? { strategyName } : {}) };
+  const [logs, total, strategyNames] = await Promise.all([
+    prisma.paperTradeLog.findMany({ where, orderBy: { exitTime: 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
+    prisma.paperTradeLog.count({ where }),
+    prisma.paperTradeLog.findMany({ where: { walletId: wallet.id }, distinct: ['strategyName'], select: { strategyName: true }, orderBy: { strategyName: 'asc' } })
+  ]);
+  res.json({ logs, total, page, pageSize, strategyNames: strategyNames.map(s => s.strategyName) });
+});
+
 // ── 지갑 초기화 ────────────────────────────────────────────────
 router.post('/reset', requireAuth, async (req: AuthRequest, res: Response) => {
   await resetPaperWallet(req.userId!);
