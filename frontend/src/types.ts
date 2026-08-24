@@ -15,6 +15,8 @@ export interface StrategyConditions {
   btcDominanceMax: number;   // 현재 비활성 (주석 처리)
   minListingDays?: number | null;  // null/0/미설정 = 비활성, 숫자 = 선물 상장일 기준 이 일수 미만이면 제외
   noRecentCrash?: { days: number; dropPct: number } | null;  // null/미설정 = 비활성. 최근 days일 내 일봉 기준 dropPct% 이상 급락한 적 있으면 제외
+  // null/미설정 = 비활성. BTC 자체의 지정 기간 변동률이 [min, max] 범위 밖이면 신규 진입을 건너뜀
+  btcChangeFilter?: { timeframe: '1h' | '4h' | '24h'; min: number; max: number } | null;
   // 하위 호환성
   priceAboveMa200?: boolean;
 }
@@ -64,7 +66,10 @@ export function mirrorConditionsForSide(c: StrategyConditions, fromSide: Side, t
     rsi: toSide === 'SHORT'
       ? { ...c.rsi, min: mirroredRsi, max: 100 }
       : { ...c.rsi, min: 0, max: mirroredRsi },
-    priceChange24h: { min: -c.priceChange24h.max, max: -c.priceChange24h.min }
+    priceChange24h: { min: -c.priceChange24h.max, max: -c.priceChange24h.min },
+    btcChangeFilter: c.btcChangeFilter
+      ? { ...c.btcChangeFilter, min: -c.btcChangeFilter.max, max: -c.btcChangeFilter.min }
+      : c.btcChangeFilter
   };
 }
 

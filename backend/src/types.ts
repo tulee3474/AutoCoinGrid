@@ -15,6 +15,10 @@ export interface StrategyConditions {
   btcDominanceMax: number;   // 현재 비활성 (주석 처리)
   minListingDays?: number | null;  // null/0/미설정 = 비활성, 숫자 = 선물 상장일 기준 이 일수 미만이면 제외
   noRecentCrash?: { days: number; dropPct: number } | null;  // null/미설정 = 비활성. 최근 days일 내 일봉 기준 dropPct% 이상 급락한 적 있으면 제외
+  // null/미설정 = 비활성. BTC 자체의 지정 기간 변동률이 [min, max] 범위 밖이면 이 전략은 이번 스캔에서
+  // 신규 진입을 전부 건너뜀(시장 전체가 트렌드로 움직이는 구간에 개별 코인 평균회귀 베팅을 막기 위함).
+  // min/max에 자유롭게 음수/양수를 넣을 수 있어 롱/숏 어느 쪽에도(예: 숏은 max만 낮게, 롱은 min만 높게) 적용 가능
+  btcChangeFilter?: { timeframe: '1h' | '4h' | '24h'; min: number; max: number } | null;
   // 하위 호환성 유지
   priceAboveMa200?: boolean;
 }

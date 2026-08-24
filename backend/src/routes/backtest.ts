@@ -1,9 +1,18 @@
 import { Router } from 'express';
 import { binance } from '../services/binance';
 import { runBacktest } from '../services/backtest';
-import { StrategyConditions, TradeConfig } from '../types';
+import { StrategyConditions, TradeConfig, Kline } from '../types';
 
 const router = Router();
+
+// btcKlinesFull(끝 시점이 대상 코인과 동일하다고 가정)을 대상 코인의 klines 길이에 맞춰 뒤에서부터
+// 잘라 정렬 — 대상 코인이 BTC보다 늦게 상장돼 캔들 수가 적은 경우를 위함
+function alignBtcKlines(btcKlinesFull: Kline[] | undefined, targetLength: number): Kline[] | undefined {
+  if (!btcKlinesFull) return undefined;
+  return btcKlinesFull.length >= targetLength
+    ? btcKlinesFull.slice(btcKlinesFull.length - targetLength)
+    : btcKlinesFull;
+}
 
 // 안전한 병렬 처리 헬퍼: 최대 concurrency 개 동시 실행
 async function batchSettled<T>(
@@ -39,7 +48,13 @@ router.post('/run', async (req, res) => {
     // 선물 전용 상장 코인(예: TAIKO)은 스팟에 없어 getKlines(스팟) 호출 시 400 Invalid symbol —
     // 스캐너/실거래와 동일하게 선물 캔들 사용
     const klines = await binance.getFuturesKlines(symbol, interval, limit);
-    const result = await runBacktest(klines, { conditions, trade, interval, side }, symbol);
+
+    let btcKlines: Kline[] | undefined;
+    if (conditions.btcChangeFilter) {
+      btcKlines = alignBtcKlines(await binance.getFuturesKlines('BTCUSDT', interval, limit).catch(() => undefined), klines.length);
+    }
+
+    const result = await runBacktest(klines, { conditions, trade, interval, side, btcKlines }, symbol);
     res.json(result);
   } catch (e: any) {
     res.status(500).json({ error: e.response?.data?.msg ?? e.message });
@@ -83,6 +98,12 @@ router.post('/validate', async (req, res) => {
       })
       .map(t => t.symbol);
 
+    // BTC 변동률 필터가 설정돼 있으면 심볼당 한 번씩 다시 받을 필요 없이 여기서 한 번만 조회 —
+    // 코인별로는 klines 길이에 맞춰 뒤에서부터 잘라 정렬해서 씀 (상장일이 BTC보다 늦은 코인 대응)
+    const btcKlinesFull = conditions.btcChangeFilter
+      ? await binance.getFuturesKlines('BTCUSDT', interval, 1500).catch(() => undefined)
+      : undefined;
+
     // 배치 처리 (40개씩, Binance rate limit 보호)
     // interval에 따라 1500캔들이 커버하는 기간이 자동으로 달라짐
     // 1h=62일, 4h=250일, 1d=약 4년
@@ -90,7 +111,8 @@ router.post('/validate', async (req, res) => {
       allAlt,
       async (symbol) => {
         const klines = await binance.getFuturesKlines(symbol, interval, 1500);
-        return await runBacktest(klines, { conditions, trade, interval, side }, symbol);
+        const btcKlines = alignBtcKlines(btcKlinesFull, klines.length);
+        return await runBacktest(klines, { conditions, trade, interval, side, btcKlines }, symbol);
       },
       40,
       300

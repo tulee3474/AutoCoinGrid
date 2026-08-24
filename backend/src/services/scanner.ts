@@ -26,6 +26,22 @@ function isPrefilterCycle(): boolean {
   return Math.floor(Date.now() / SCAN_CYCLE_WINDOW_MS) % 2 === 0;
 }
 
+// BTC 자체의 변동률 계산 — 시장 전체가 트렌드로 움직이는 구간에 개별 코인 평균회귀 베팅(숏/롱
+// 둘 다)이 위험해지는 걸 막기 위한 매크로 게이트. 후보 코인별이 아니라 사이클당 1번만 계산.
+async function getBtcChangePct(timeframe: '1h' | '4h' | '24h', tickers: any[]): Promise<number> {
+  if (timeframe === '24h') {
+    const btcTicker = tickers.find(t => t.symbol === 'BTCUSDT');
+    return btcTicker ? parseFloat(btcTicker.priceChangePercent) : 0;
+  }
+  const n = timeframe === '1h' ? 1 : 4;
+  const klines = await binance.getFuturesKlines('BTCUSDT', '1h', n + 1);
+  if (klines.length <= n) return 0;
+  const closes = klines.map(k => k.close);
+  const latest = closes[closes.length - 1];
+  const base   = closes[closes.length - 1 - n];
+  return base > 0 ? ((latest - base) / base) * 100 : 0;
+}
+
 export async function scanMarket(
   conditions: StrategyConditions,
   side: Side,
@@ -40,6 +56,17 @@ export async function scanMarket(
     binance.getFuturesSymbols(),
     binance.getFuturesOnboardDates()
   ]);
+
+  // BTC 변동률 게이트 — 시장 전체가 트렌드로 크게 움직이는 구간엔 개별 코인 신규 진입을 전부 보류
+  // (범위를 코인별이 아니라 전략 하나 전체에 적용 — 실패 시 필터 없이 진행해 조회 오류로 진입이
+  // 영구히 막히는 사고 방지)
+  if (conditions.btcChangeFilter) {
+    try {
+      const { timeframe, min, max } = conditions.btcChangeFilter;
+      const btcChange = await getBtcChangePct(timeframe, tickers as any[]);
+      if (btcChange < min || btcChange > max) return [];
+    } catch { /* 조회 실패 시 필터 없이 계속 진행 */ }
+  }
 
   const minListingMs = conditions.minListingDays ? conditions.minListingDays * 86_400_000 : 0;
   const prefilterActive = priceChangeTf !== '24h' && isPrefilterCycle();

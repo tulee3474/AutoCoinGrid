@@ -737,6 +737,50 @@ export default function Strategy() {
               </div>
             )}
           </div>
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <input type="checkbox" id="btcChangeFilter" className="w-4 h-4 accent-accent"
+                checked={draftConditions.btcChangeFilter != null}
+                onChange={e => setDraftConditions({
+                  btcChangeFilter: e.target.checked
+                    ? { timeframe: '24h', min: -100, max: draftSide === 'SHORT' ? 5 : 100 }
+                    : null
+                })} />
+              <label htmlFor="btcChangeFilter" className="text-sm text-gray-300 cursor-pointer">
+                BTC 변동률 필터 <span className="text-gray-500 text-xs">(시장 전체가 트렌드로 움직이는 구간엔 신규 진입 보류)</span>
+              </label>
+            </div>
+            {draftConditions.btcChangeFilter != null && (
+              <div className="ml-7 space-y-2">
+                <RangeInput label="BTC 변동률 이 범위 안일 때만 진입" unit="%"
+                  minVal={draftConditions.btcChangeFilter!.min} maxVal={draftConditions.btcChangeFilter!.max}
+                  onMinChange={v => setDraftConditions({ btcChangeFilter: { ...draftConditions.btcChangeFilter!, min: v } })}
+                  onMaxChange={v => setDraftConditions({ btcChangeFilter: { ...draftConditions.btcChangeFilter!, max: v } })}
+                  fieldIdMin="btc-change-min" fieldIdMax="btc-change-max" emptyTracker={emptyFields} />
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-500">기준 시간</span>
+                  <div className="flex gap-1">
+                    {(['1h', '4h', '24h'] as const).map(tf => (
+                      <button key={tf} type="button"
+                        onClick={() => setDraftConditions({ btcChangeFilter: { ...draftConditions.btcChangeFilter!, timeframe: tf } })}
+                        className={`px-3 py-1 text-xs rounded-lg border transition-colors ${
+                          draftConditions.btcChangeFilter!.timeframe === tf
+                            ? 'border-accent bg-accent/10 text-accent'
+                            : 'border-border text-gray-400 hover:border-gray-500'
+                        }`}>
+                        {CHANGE_TF_LABEL[tf]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-xs text-gray-600">
+                  {draftSide === 'SHORT'
+                    ? '예: 최소 -100, 최대 +5 → BTC가 5% 넘게 오른 상태면(트렌드 상승장) 숏 신규 진입 보류'
+                    : '예: 최소 -5, 최대 +100 → BTC가 5% 넘게 빠진 상태면(트렌드 하락장) 롱 신규 진입 보류'}
+                </p>
+              </div>
+            )}
+          </div>
           {/* BTC 도미넌스 조건 — 비활성 (나중에 추가 예정)
           <div className="flex items-center gap-3 opacity-40 pointer-events-none">
             <input type="checkbox" className="w-4 h-4" disabled />

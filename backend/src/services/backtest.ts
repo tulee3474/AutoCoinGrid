@@ -8,6 +8,9 @@ interface BacktestOptions {
   trade: TradeConfig;
   interval: string;
   side?: Side;
+  // BTC 변동률 필터용 — 대상 코인 klines와 동일한 개수/끝 시점으로 정렬된 BTCUSDT 캔들
+  // (호출부에서 정렬해서 넘겨줌 — 대상 코인이 BTC보다 상장이 늦어 캔들 수가 적을 수 있음)
+  btcKlines?: Kline[];
 }
 
 // kline 간격(분) 맵
@@ -28,7 +31,8 @@ function checkConditions(
   idx: number,
   conditions: StrategyConditions,
   interval: string,
-  side: Side
+  side: Side,
+  btcKlines?: Kline[]
 ): boolean {
   const closes  = klines.slice(0, idx + 1).map(k => k.close);
   const cpd = candlesPerDay(interval);
@@ -48,6 +52,18 @@ function checkConditions(
   // const historicalDom = getDominanceAt(klines[idx].openTime);
   // const btcDomPass = historicalDom === null || historicalDom <= conditions.btcDominanceMax;
 
+  // BTC 자체 변동률 게이트 (live/paper의 scanMarket과 동일 로직) — btcKlines가 klines와 동일하게
+  // 정렬돼 있다고 가정하고 같은 idx를 사용
+  let btcChangePass = true;
+  if (conditions.btcChangeFilter && btcKlines && btcKlines.length > idx) {
+    const btcCloses = btcKlines.slice(0, idx + 1).map(k => k.close);
+    const btcPeriod = conditions.btcChangeFilter.timeframe === '24h'
+      ? cpd
+      : candlesForPeriod(conditions.btcChangeFilter.timeframe, interval);
+    const btcChange = calc24hChange(btcCloses, btcPeriod);
+    btcChangePass = btcChange >= conditions.btcChangeFilter.min && btcChange <= conditions.btcChangeFilter.max;
+  }
+
   const rsiPass = side === 'SHORT'
     ? rsi >= conditions.rsi.min
     : rsi <= (conditions.rsi.max ?? 100);
@@ -55,7 +71,8 @@ function checkConditions(
   return (
     rsiPass &&
     priceChange >= conditions.priceChange24h.min &&
-    priceChange <= conditions.priceChange24h.max
+    priceChange <= conditions.priceChange24h.max &&
+    btcChangePass
     // && btcDomPass
   );
 }
@@ -181,7 +198,7 @@ export async function runBacktest(
   options: BacktestOptions,
   symbol: string
 ): Promise<BacktestResult> {
-  const { conditions, trade, interval, side = 'SHORT' } = options;
+  const { conditions, trade, interval, side = 'SHORT', btcKlines } = options;
   const trades: BacktestTrade[] = [];
 
   // 유지증거금률 구간표는 심볼당 하나(포지션 규모별 상수)라 캔들 루프 전에 한 번만 조회 —
@@ -192,7 +209,7 @@ export async function runBacktest(
 
   let i = 20; // MA20 기준으로 워밍업
   while (i < klines.length - 1) {
-    if (checkConditions(klines, i, conditions, interval, side)) {
+    if (checkConditions(klines, i, conditions, interval, side, btcKlines)) {
       const tradeSim = simulateTrade(klines, i, trade, interval, brackets, side);
       if (tradeSim) {
         trades.push(tradeSim);
