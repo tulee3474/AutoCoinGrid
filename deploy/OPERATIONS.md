@@ -153,7 +153,44 @@ docker system prune -f
 
 ---
 
-## 9. 자주 쓰는 명령어 요약
+## 9. DB 백업/복원 (RDS 제거 후 — EC2 컨테이너 MySQL 자체 백업)
+
+RDS를 없애고 `docker-compose.prod.yml`의 `mysql` 서비스로 통합한 뒤로는 자동 백업이 없어져서
+`deploy/backup-db.sh`로 매일 자동 덤프를 받는다.
+
+```bash
+# 최초 1회: 스크립트 실행 권한 부여
+chmod +x deploy/backup-db.sh
+
+# crontab 등록 (매일 새벽 4시 자동 실행)
+crontab -e
+# 아래 한 줄 추가:
+# 0 4 * * * /home/ubuntu/autocoin/deploy/backup-db.sh >> /home/ubuntu/autocoin/backend/data/backups/backup.log 2>&1
+
+# 수동으로 즉시 백업하고 싶을 때
+./deploy/backup-db.sh
+
+# 백업 목록 확인
+ls -lh backend/data/backups/
+```
+
+**복원**(장애 발생 시):
+```bash
+docker compose -f docker-compose.prod.yml down
+docker compose -f docker-compose.prod.yml up -d mysql
+# healthy 확인 후:
+gunzip -c backend/data/backups/db-2026-01-01.sql.gz | \
+  docker compose -f docker-compose.prod.yml exec -T mysql mysql -u autocoin -p<비번> autocoin
+docker compose -f docker-compose.prod.yml up -d
+```
+
+> MySQL 컨테이너 자격증명은 저장소 루트의 `.env`(git 미추적)에 있음: `MYSQL_ROOT_PASSWORD`,
+> `MYSQL_DATABASE`, `MYSQL_USER`, `MYSQL_PASSWORD`. 서버 최초 셋업 시 `cp env.example .env` 후
+> 값 채워서 1회만 생성하면 됨.
+
+---
+
+## 10. 자주 쓰는 명령어 요약
 
 | 목적 | 명령어 |
 |------|--------|
@@ -162,3 +199,4 @@ docker system prune -f
 | 재시작 | `docker compose -f docker-compose.prod.yml restart` |
 | 코드 업데이트 배포 | `git pull && ./deploy/deploy.sh` |
 | 헬스 체크 | `curl http://localhost:3001/api/health` |
+| DB 수동 백업 | `./deploy/backup-db.sh` |

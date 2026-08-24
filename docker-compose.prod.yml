@@ -1,7 +1,26 @@
-# 프로덕션용 — RDS MySQL 사용 (MySQL 컨테이너 없음)
+# 프로덕션용 — MySQL을 같은 EC2에 컨테이너로 통합 (RDS 비용 절감을 위해 제거)
 # 사용: docker compose -f docker-compose.prod.yml up -d
+# 최초 1회: cp env.example .env 후 MYSQL_ROOT_PASSWORD/MYSQL_DATABASE/MYSQL_USER/MYSQL_PASSWORD
+# 채우기 (docker compose가 같은 디렉토리의 .env를 자동으로 읽어 아래 ${..} 치환함, .env는 git에 안 올라감)
 
 services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE:      ${MYSQL_DATABASE:-autocoin}
+      MYSQL_USER:          ${MYSQL_USER:-autocoin}
+      MYSQL_PASSWORD:      ${MYSQL_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    # 프로덕션 DB라 호스트/인터넷에 포트 노출하지 않음 — backend가 도커 내부 네트워크로만 접근
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     image: autocoin-backend:latest
     restart: unless-stopped
@@ -9,7 +28,10 @@ services:
     ports:
       - "3001:3001"
     volumes:
-      - ./backend/data:/app/data   # BTC 도미넌스 CSV 등 영구 저장
+      - ./backend/data:/app/data   # BTC 도미넌스 CSV, DB 백업 덤프 등 영구 저장
+    depends_on:
+      mysql:
+        condition: service_healthy
     command: sh -c "npx prisma db push && node dist/index.js"
 
   frontend:
@@ -19,3 +41,6 @@ services:
       - "80:80"
     depends_on:
       - backend
+
+volumes:
+  mysql_data:
