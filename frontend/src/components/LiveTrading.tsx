@@ -209,15 +209,15 @@ export default function LiveTrading() {
             </button>
           )}
           <button
-            onClick={isRunning ? handleStop : handleStart}
+            onClick={isRunning && !isStopping ? handleStop : handleStart}
             disabled={!hasApiKeys}
             className={`text-sm px-4 py-2 rounded-lg font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-              isRunning
+              isRunning && !isStopping
                 ? 'bg-warn/20 text-warn border border-warn/30 hover:bg-warn/30'
                 : 'bg-up/20 text-up border border-up/30 hover:bg-up/30'
             }`}
           >
-            {isRunning ? (isStopping ? '⏸ 중지 예정' : '⏹ 스캐너 중지') : '▶ 스캐너 시작'}
+            {isRunning ? (isStopping ? '▶ 중지 취소' : '⏹ 스캐너 중지') : '▶ 스캐너 시작'}
           </button>
         </div>
       </div>

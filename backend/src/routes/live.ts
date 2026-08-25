@@ -82,9 +82,15 @@ router.get('/status', requireAuth, async (req: AuthRequest, res: Response) => {
 
 // POST /api/live/start
 router.post('/start', requireAuth, (req: AuthRequest, res: Response) => {
-  if (isLiveRunning(req.userId!)) return res.json({ ok: true, message: '이미 실행 중' });
-  startLiveScanner(req.userId!, broadcastFn);
-  res.json({ ok: true, message: '실거래 스캐너 시작됨' });
+  const userId = req.userId!;
+  // isLiveRunning은 "중지 예정"(포지션 정리 대기) 동안에도 true라서 그 상태까지 걸러버리면
+  // 중지 예정을 취소하고 계속 실행할 방법이 없어짐 — stopping이 아닐 때만 "이미 실행 중"으로 조기 종료
+  if (isLiveRunning(userId) && !isLiveStopping(userId)) {
+    return res.json({ ok: true, message: '이미 실행 중' });
+  }
+  const wasStopping = isLiveStopping(userId);
+  startLiveScanner(userId, broadcastFn);
+  res.json({ ok: true, message: wasStopping ? '중지 예정 취소 — 계속 실행됩니다' : '실거래 스캐너 시작됨' });
 });
 
 // POST /api/live/stop — 중지 예정

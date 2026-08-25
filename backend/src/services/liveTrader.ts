@@ -1143,7 +1143,16 @@ export function getRunningLiveUserIds(): string[] {
 
 export function startLiveScanner(userId: string, broadcast: (data: unknown) => void) {
   const state = ensureState(userId);
-  if (state.interval) return;
+  if (state.interval) {
+    // 이미 도는 중 — "중지 예정"(포지션 정리 후 자동 종료 대기) 상태였다면 그 예약만 취소하고 계속 실행
+    if (state.isStopping) {
+      state.isStopping = false;
+      prisma.user.update({ where: { id: userId }, data: { liveActive: true } }).catch(() => {});
+      addLog(userId, '▶ 중지 예정 취소 — 계속 실행합니다', 'info');
+      broadcast({ type: 'live_status', data: { stopping: false } });
+    }
+    return;
+  }
   state.isStopping = false;
   state.isSyncing  = false;
   prisma.user.update({ where: { id: userId }, data: { liveActive: true } }).catch(() => {});
