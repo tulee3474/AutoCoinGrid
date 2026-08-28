@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useWebSocket } from '../hooks/useWebSocket';
 import {
   getPaperWallet, getPaperPositions, getPaperLogs,
-  resetPaperWallet, closePaperPosition, clearPaperLogs,
+  resetPaperWallet, closePaperPosition, extendPaperPosition, clearPaperLogs,
   getPaperScannerStatus, startPaperScanner, stopPaperScanner,
   getStrategies, toggleStrategy, deleteStrategy, getPaperStrategyStats
 } from '../utils/api';
@@ -193,6 +193,11 @@ export default function PaperTrading() {
   const handleClose = async (id: string) => {
     if (!confirm('이 포지션을 현재가로 청산하겠습니까?')) return;
     await closePaperPosition(id);
+    await refresh();
+  };
+
+  const handleExtend = async (id: string) => {
+    await extendPaperPosition(id);
     await refresh();
   };
 
@@ -457,12 +462,21 @@ export default function PaperTrading() {
                       {fmtDate(pos.expiresAt)}
                     </td>
                     <td className="py-2">
-                      <button
-                        onClick={() => handleClose(pos.id)}
-                        className="text-xs px-2 py-1 rounded border border-border text-gray-400 hover:text-down hover:border-down transition-colors"
-                      >
-                        청산
-                      </button>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => handleExtend(pos.id)}
+                          title="청산(타임아웃) 시간 24시간 연장"
+                          className="text-xs px-2 py-1 rounded border border-border text-gray-400 hover:text-accent hover:border-accent transition-colors"
+                        >
+                          +24h
+                        </button>
+                        <button
+                          onClick={() => handleClose(pos.id)}
+                          className="text-xs px-2 py-1 rounded border border-border text-gray-400 hover:text-down hover:border-down transition-colors"
+                        >
+                          청산
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

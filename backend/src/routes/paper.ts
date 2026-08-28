@@ -159,6 +159,17 @@ router.delete('/positions/:id', requireAuth, async (req: AuthRequest, res: Respo
   }
 });
 
+// ── 청산(타임아웃) 시간 24시간 연장 ──────────────────────────────
+router.patch('/positions/:id/extend', requireAuth, async (req: AuthRequest, res: Response) => {
+  const wallet = await getOrCreateWallet(req.userId!);
+  const pos    = wallet.openPositions.find(p => p.id === req.params.id);
+  if (!pos) return res.status(404).json({ error: 'position not found' });
+
+  const newExpiresAt = new Date(pos.expiresAt.getTime() + 24 * 3_600_000);
+  await prisma.paperPosition.update({ where: { id: pos.id }, data: { expiresAt: newExpiresAt } });
+  res.json({ ok: true, expiresAt: newExpiresAt });
+});
+
 // ── 전략별 승률 통계 ───────────────────────────────────────────
 router.get('/strategy-stats', requireAuth, async (req: AuthRequest, res: Response) => {
   const wallet = await getOrCreateWallet(req.userId!);

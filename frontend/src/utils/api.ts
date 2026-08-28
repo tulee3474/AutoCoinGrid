@@ -177,6 +177,9 @@ export const resetPaperWallet = () =>
 export const closePaperPosition = (id: string) =>
   api.delete(`/paper/positions/${id}`).then(r => r.data);
 
+export const extendPaperPosition = (id: string) =>
+  api.patch(`/paper/positions/${id}/extend`).then(r => r.data);
+
 export const getPaperScannerStatus = () =>
   api.get('/paper/scanner/status').then(r => r.data);
 
@@ -248,6 +251,9 @@ export const getPaperStrategyStats = () =>
 
 export const closeLivePosition = (symbol: string, side: Side = 'SHORT') =>
   api.delete(`/live/position/${symbol}?side=${side}`).then(r => r.data);
+
+export const extendLivePosition = (symbol: string, side: Side = 'SHORT') =>
+  api.patch(`/live/position/${symbol}/extend?side=${side}`).then(r => r.data);
 
 export const clearLiveLogs = () =>
   api.delete('/live/logs').then(r => r.data);

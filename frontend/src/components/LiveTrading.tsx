@@ -4,7 +4,7 @@ import { useWebSocket } from '../hooks/useWebSocket';
 import {
   getLiveStatus, startLiveScanner, stopLiveScanner, forceStopLiveScanner,
   getLivePositions, getLiveLogs, getLiveScanLog, getLiveStats, getLiveStrategyStats,
-  getLiveAccount, closeLivePosition, clearLiveLogs, getStrategies, toggleStrategy, deleteStrategy, getMe,
+  getLiveAccount, closeLivePosition, extendLivePosition, clearLiveLogs, getStrategies, toggleStrategy, deleteStrategy, getMe,
   LivePosition, LiveTradeLog, ScanLogEntry, LiveAccountInfo
 } from '../utils/api';
 import { StrategyConfig, Side } from '../types';
@@ -154,6 +154,11 @@ export default function LiveTrading() {
   const handleClose = async (symbol: string, side: Side) => {
     if (!confirm(`${symbol} 포지션을 시장가로 즉시 청산합니까?`)) return;
     await closeLivePosition(symbol, side);
+    await refresh();
+  };
+
+  const handleExtend = async (symbol: string, side: Side) => {
+    await extendLivePosition(symbol, side);
     await refresh();
   };
 
@@ -489,12 +494,21 @@ export default function LiveTrading() {
                         {hoursLeft}h 후
                       </td>
                       <td className="py-2">
-                        <button
-                          onClick={() => handleClose(pos.symbol, pos.side as Side)}
-                          className="text-xs px-2 py-1 rounded border border-border text-gray-400 hover:text-down hover:border-down transition-colors"
-                        >
-                          청산
-                        </button>
+                        <div className="flex gap-1">
+                          <button
+                            onClick={() => handleExtend(pos.symbol, pos.side as Side)}
+                            title="청산(타임아웃) 시간 24시간 연장"
+                            className="text-xs px-2 py-1 rounded border border-border text-gray-400 hover:text-accent hover:border-accent transition-colors"
+                          >
+                            +24h
+                          </button>
+                          <button
+                            onClick={() => handleClose(pos.symbol, pos.side as Side)}
+                            className="text-xs px-2 py-1 rounded border border-border text-gray-400 hover:text-down hover:border-down transition-colors"
+                          >
+                            청산
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

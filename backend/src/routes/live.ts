@@ -179,4 +179,15 @@ router.delete('/position/:symbol', requireAuth, async (req: AuthRequest, res: Re
   res.json({ ok: true });
 });
 
+// PATCH /api/live/position/:symbol/extend?side=SHORT|LONG — 청산(타임아웃) 시간 24시간 연장
+router.patch('/position/:symbol/extend', requireAuth, async (req: AuthRequest, res: Response) => {
+  const side = (req.query.side as Side) ?? 'SHORT';
+  const pos = await prisma.livePosition.findFirst({ where: { userId: req.userId!, symbol: req.params.symbol, side } });
+  if (!pos) return res.status(404).json({ error: `포지션 없음: ${req.params.symbol}` });
+
+  const newExpiresAt = new Date(pos.expiresAt.getTime() + 24 * 3_600_000);
+  await prisma.livePosition.update({ where: { id: pos.id }, data: { expiresAt: newExpiresAt } });
+  res.json({ ok: true, expiresAt: newExpiresAt });
+});
+
 export default router;
