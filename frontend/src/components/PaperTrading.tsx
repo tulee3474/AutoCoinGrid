@@ -424,7 +424,14 @@ export default function PaperTrading() {
                 {positions.map(pos => (
                   <tr key={pos.id} className="border-b border-border/40 hover:bg-white/3">
                     <td className="py-2 pr-3">
-                      <span className={`text-[10px] px-1 py-0.5 rounded mr-1 ${(pos.side ?? 'SHORT') === 'LONG' ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`}>
+                      <span
+                        title={pos.gridsFilled > 0 ? '그리드 추가진입 있음' : '그리드 미체결(최초 진입만)'}
+                        className={`text-[10px] px-1 py-0.5 rounded mr-1 ${
+                          (pos.side ?? 'SHORT') === 'LONG'
+                            ? (pos.gridsFilled > 0 ? 'bg-up/35 text-up font-semibold' : 'bg-up/10 text-up/70')
+                            : (pos.gridsFilled > 0 ? 'bg-down/35 text-down font-semibold' : 'bg-down/10 text-down/70')
+                        }`}
+                      >
                         {(pos.side ?? 'SHORT') === 'LONG' ? '롱' : '숏'}
                       </span>
                       <span className="font-bold text-gray-200">{pos.symbol.replace('USDT', '')}</span>
