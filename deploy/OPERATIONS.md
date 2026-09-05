@@ -135,7 +135,7 @@ docker compose -f docker-compose.prod.yml up -d
 
 ---
 
-## 8. 디스크/메모리 확인
+## 8. 디스크/메모리 확인 + 자동 정리
 
 ```bash
 # 디스크 사용량
@@ -147,9 +147,25 @@ free -h
 # Docker가 차지하는 용량
 docker system df
 
-# 사용하지 않는 이미지/컨테이너 정리
-docker system prune -f
+# 컨테이너 로그 파일이 큰지 확인 (기본 설정은 무제한 — 아래 자동 정리로도 안 지워짐,
+# docker-compose.prod.yml에 로그 회전 설정(max-size 10m × max-file 3)이 이미 적용돼 있어
+# 새로 뜬 컨테이너부터는 자동으로 제한되지만, 기존 로그 파일 자체는 재시작 전까진 그대로 남음)
+sudo du -sh /var/lib/docker/containers/*/*-json.log 2>/dev/null | sort -rh | head -10
+
+# 사용하지 않는 이미지/빌드 캐시/중지된 컨테이너 수동 정리 (볼륨은 안 건드림)
+docker system prune -a -f
 ```
+
+**자동 정리 등록** (매주 일요일 새벽 3시, 최초 1회만):
+```bash
+chmod +x deploy/docker-cleanup.sh
+crontab -e
+# 아래 한 줄 추가:
+# 0 3 * * 0 /home/ubuntu/autocoin/deploy/docker-cleanup.sh >> /home/ubuntu/autocoin/backend/data/backups/docker-cleanup.log 2>&1
+```
+
+> 근본적으로 루트 볼륨이 6.7GB로 작아서 자꾸 꽉 참 — 위 자동 정리는 임시방편이고,
+> AWS 콘솔에서 EBS 볼륨 자체를 20GB 이상으로 늘리는 걸 권장 (무중단 가능).
 
 ---
 

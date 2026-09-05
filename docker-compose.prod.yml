@@ -3,10 +3,18 @@
 # 최초 1회: cp env.example .env 후 MYSQL_ROOT_PASSWORD/MYSQL_DATABASE/MYSQL_USER/MYSQL_PASSWORD
 # 채우기 (docker compose가 같은 디렉토리의 .env를 자동으로 읽어 아래 ${..} 치환함, .env는 git에 안 올라감)
 
+# 컨테이너 로그가 기본값(무제한)으로 쌓이면 디스크를 서서히 다 채움 — 서비스당 최대 30MB(10MB×3개)로 제한
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   mysql:
     image: mysql:8.0
     restart: unless-stopped
+    logging: *default-logging
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE:      ${MYSQL_DATABASE:-autocoin}
@@ -24,6 +32,7 @@ services:
   backend:
     image: autocoin-backend:latest
     restart: unless-stopped
+    logging: *default-logging
     env_file: ./backend/.env
     ports:
       - "3001:3001"
@@ -37,6 +46,7 @@ services:
   frontend:
     image: autocoin-frontend:latest
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "80:80"
     depends_on:
