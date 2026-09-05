@@ -446,7 +446,14 @@ export default function PaperTrading() {
                     </td>
                     <td className="py-2 pr-3 text-gray-300 num">${pos.currentPrice.toPrecision(5)}</td>
                     <td className="py-2 pr-3">
-                      <span className={`font-bold num ${pos.pnlUsdt >= 0 ? 'text-up' : 'text-down'}`}>
+                      <span
+                        title={pos.gridsFilled > 0 ? '그리드 추가진입 있음' : '그리드 미체결(최초 진입만)'}
+                        className={`font-bold num px-1 rounded ${
+                          pos.pnlUsdt >= 0
+                            ? (pos.gridsFilled > 0 ? 'bg-up/15 text-up' : 'text-up/70')
+                            : (pos.gridsFilled > 0 ? 'bg-down/15 text-down' : 'text-down/70')
+                        }`}
+                      >
                         {pos.pnlUsdt >= 0 ? '+' : ''}{pos.pnlPct.toFixed(2)}%
                         <span className="font-normal opacity-70">({pos.pnlUsdt >= 0 ? '+' : ''}{(pos.pnlPct / pos.leverage).toFixed(2)}%)</span>
                       </span>
