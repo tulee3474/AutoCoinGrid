@@ -1,6 +1,6 @@
 #!/bin/bash
 # DB 전체 백업 — crontab에 등록해서 매일 자동 실행 (RDS 자동 백업 대체용)
-# 최초 1회 등록: crontab -e 에 아래 한 줄 추가
+# 최근 3일치만 보관(디스크 용량이 빠듯해 보관 기간을 짧게 잡음) — 최초 1회 등록:
 #   0 4 * * * /home/ubuntu/autocoin/deploy/backup-db.sh >> /home/ubuntu/autocoin/backend/data/backups/backup.log 2>&1
 set -e
 
@@ -29,5 +29,5 @@ docker compose -f docker-compose.prod.yml exec -T mysql \
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 백업 완료: $DUMP_FILE ($(du -h "$DUMP_FILE" | cut -f1))"
 
-# 7일 지난 백업 자동 삭제
-find "$BACKUP_DIR" -name "db-*.sql.gz" -mtime +7 -delete
+# 3일 지난 백업 자동 삭제
+find "$BACKUP_DIR" -name "db-*.sql.gz" -mtime +3 -delete
