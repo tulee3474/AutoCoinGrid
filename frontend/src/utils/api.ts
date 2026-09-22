@@ -258,6 +258,9 @@ export const extendLivePosition = (symbol: string, side: Side = 'SHORT') =>
 export const clearLiveLogs = () =>
   api.delete('/live/logs').then(r => r.data);
 
+export const editLiveLog = (id: string, patch: { exitPrice?: number; exitReason?: string; pnlPct?: number; pnlUsdt?: number }) =>
+  api.patch(`/live/logs/${id}`, patch).then(r => r.data);
+
 export const clearPaperLogs = () =>
   api.delete('/paper/logs').then(r => r.data);
 

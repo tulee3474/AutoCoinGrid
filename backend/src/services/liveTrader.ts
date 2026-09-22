@@ -264,8 +264,13 @@ async function syncClosed(userId: string, binanceSvc: BinanceService, broadcast:
 
     // Binance에서 포지션이 사라짐 → TP 또는 SL 체결됨
     // TP/SL 각각 독립적으로 조회 — 한 주문 조회가 실패해도 나머지를 반드시 확인
-    let exitPrice  = pos.takeProfitPrice;
-    let exitReason: 'takeProfit' | 'stopLoss' = 'takeProfit';
+    // 주의: 예전엔 여기 exitPrice/exitReason이 'takeProfit'+tpPrice로 초기화돼 있어서, 아래 세
+    // 방법이 전부 실패(조회 오류 등)하면 실제로는 손절인데도 "가짜 익절"로 잘못 기록되는 심각한
+    // 버그가 있었음(FF/MUBARAK 실거래로 확인 — 손절인데 정확히 설정된 익절 목표가로 기록됨).
+    // 이제 셋 다 실패하면 아예 기록하지 않고 다음 사이클(15초 후)에 재시도 — 잘못된 값을
+    // 기록하는 것보다 늦게라도 정확히 기록하는 게 훨씬 안전함.
+    let exitPrice: number | null = null;
+    let exitReason: 'takeProfit' | 'stopLoss' | null = null;
 
     let tpOrderData: any = null;
     let slOrderData: any = null;
@@ -281,10 +286,13 @@ async function syncClosed(userId: string, binanceSvc: BinanceService, broadcast:
       exitReason = 'stopLoss';
       await binanceSvc.cancelAlgoOrder(Number(pos.tpOrderId)).catch(() => {});
     } else {
-      // 청산(Liquidation) 또는 기타 — TP/SL 알고 주문이 모두 미체결이면
-      // userTrades로 실제 체결가 조회
+      // 청산(Liquidation) 또는 기타 — TP/SL 알고 주문이 모두 미체결(또는 조회 실패)이면
+      // userTrades로 실제 체결가 조회. Binance userTrades는 조회 구간이 7일을 넘으면 에러가
+      // 나므로(예전엔 pos.openedAt을 그대로 써서 오래 보유한 포지션에서 항상 실패했음), 최근
+      // 6일로 제한해서 조회 — 어차피 찾는 건 "방금 일어난" 청산 체결이라 최근 구간이면 충분
       try {
-        const trades = await binanceSvc.getUserTrades(pos.symbol, pos.openedAt.getTime());
+        const lookbackStart = Math.max(pos.openedAt.getTime(), Date.now() - 6 * 24 * 3_600_000);
+        const trades = await binanceSvc.getUserTrades(pos.symbol, lookbackStart);
         // 포지션을 닫는 방향 체결(숏 청산=BUY, 롱 청산=SELL) 중 가장 최신
         const closeSide = posSide === 'SHORT' ? 'BUY' : 'SELL';
         const closeTrades = (trades as any[]).filter(t => t.side === closeSide);
@@ -296,7 +304,14 @@ async function syncClosed(userId: string, binanceSvc: BinanceService, broadcast:
           const isLoss = posSide === 'SHORT' ? exitPrice > pos.entryPrice : exitPrice < pos.entryPrice;
           exitReason = isLoss ? 'stopLoss' : 'takeProfit';
         }
-      } catch { /* 조회 실패 시 기본값 유지 */ }
+      } catch (e: any) {
+        addLog(userId, `${pos.symbol} 청산 사유 조회 실패 — 다음 사이클에 재시도: ${e.response?.data?.msg ?? e.message}`, 'error');
+      }
+    }
+
+    if (exitReason === null || exitPrice === null) {
+      addLog(userId, `⚠ ${pos.symbol} 실제 종료 사유를 아직 확정 못함 — 다음 사이클에 재시도 (잘못된 값 기록 방지)`, 'error');
+      continue;
     }
 
     await recordClose(userId, pos.id, exitPrice, exitReason, broadcast);

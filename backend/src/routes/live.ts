@@ -165,6 +165,34 @@ router.get('/scan-log', requireAuth, (req: AuthRequest, res: Response) => {
   res.json(getLiveLog(req.userId!));
 });
 
+// PATCH /api/live/logs/:id — 거래 로그 실현 손익 수동 보정
+// (동기화 버그 등으로 exitReason/exitPrice/손익이 실제 바이낸스 기록과 다르게 저장된 경우
+// 사용자가 직접 바로잡을 수 있게 함 — 실거래는 실제 자금이 이미 바이낸스 계좌에서 정산 완료된
+// 상태라 잔고 조정 없이 순수하게 우리 쪽 기록만 고치면 됨)
+router.patch('/logs/:id', requireAuth, async (req: AuthRequest, res: Response) => {
+  const { exitPrice, exitReason, pnlPct, pnlUsdt } = req.body as {
+    exitPrice?: number; exitReason?: string; pnlPct?: number; pnlUsdt?: number;
+  };
+  const log = await prisma.liveTradeLog.findFirst({ where: { id: req.params.id, userId: req.userId } });
+  if (!log) return res.status(404).json({ error: '거래 로그 없음' });
+
+  const validReasons = ['takeProfit', 'stopLoss', 'timeout', 'manual', 'signalReversal', 'rsiOverheat'];
+  if (exitReason !== undefined && !validReasons.includes(exitReason)) {
+    return res.status(400).json({ error: `exitReason은 ${validReasons.join('/')} 중 하나여야 합니다` });
+  }
+
+  const updated = await prisma.liveTradeLog.update({
+    where: { id: log.id },
+    data: {
+      ...(exitPrice !== undefined ? { exitPrice } : {}),
+      ...(exitReason !== undefined ? { exitReason } : {}),
+      ...(pnlPct !== undefined ? { pnlPct } : {}),
+      ...(pnlUsdt !== undefined ? { pnlUsdt } : {}),
+    }
+  });
+  res.json(updated);
+});
+
 // DELETE /api/live/logs — 거래 로그 전체 삭제
 router.delete('/logs', requireAuth, async (req: AuthRequest, res: Response) => {
   await prisma.liveTradeLog.deleteMany({ where: { userId: req.userId } });

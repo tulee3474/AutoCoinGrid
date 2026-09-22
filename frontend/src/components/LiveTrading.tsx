@@ -4,7 +4,7 @@ import { useWebSocket } from '../hooks/useWebSocket';
 import {
   getLiveStatus, startLiveScanner, stopLiveScanner, forceStopLiveScanner,
   getLivePositions, getLiveLogs, getLiveScanLog, getLiveStats, getLiveStrategyStats,
-  getLiveAccount, closeLivePosition, extendLivePosition, clearLiveLogs, getStrategies, toggleStrategy, deleteStrategy, getMe,
+  getLiveAccount, closeLivePosition, extendLivePosition, clearLiveLogs, editLiveLog, getStrategies, toggleStrategy, deleteStrategy, getMe,
   LivePosition, LiveTradeLog, ScanLogEntry, LiveAccountInfo
 } from '../utils/api';
 import { StrategyConfig, Side } from '../types';
@@ -60,6 +60,8 @@ export default function LiveTrading() {
   const [stopping, setStopping]           = useState(false);
   const [clearingLogs, setClearingLogs]   = useState(false);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+  const [editingLogId, setEditingLogId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ exitReason: 'takeProfit', exitPrice: '', pnlPct: '', pnlUsdt: '' });
   const [lastRefreshAt, setLastRefreshAt] = useState(Date.now());
   const [lastManualAt, setLastManualAt]   = useState(0);
   const [, setTick]                       = useState(0);
@@ -159,6 +161,27 @@ export default function LiveTrading() {
 
   const handleExtend = async (symbol: string, side: Side) => {
     await extendLivePosition(symbol, side);
+    await refresh();
+  };
+
+  const startEditLog = (log: LiveTradeLog) => {
+    setEditingLogId(log.id);
+    setEditForm({
+      exitReason: log.exitReason,
+      exitPrice:  String(log.exitPrice),
+      pnlPct:     String(log.pnlPct),
+      pnlUsdt:    String(log.pnlUsdt),
+    });
+  };
+
+  const saveEditLog = async (id: string) => {
+    await editLiveLog(id, {
+      exitReason: editForm.exitReason,
+      exitPrice:  parseFloat(editForm.exitPrice),
+      pnlPct:     parseFloat(editForm.pnlPct),
+      pnlUsdt:    parseFloat(editForm.pnlUsdt),
+    });
+    setEditingLogId(null);
     await refresh();
   };
 
@@ -584,6 +607,32 @@ export default function LiveTrading() {
                       <div className="px-2 pb-2 pt-0 text-gray-500 border-t border-border/40 space-y-0.5">
                         <div>진입: <span className="text-gray-300 num">${log.entryPrice.toPrecision(4)}</span> @ <span className="text-gray-300">{fmtDt(log.entryTime)}</span></div>
                         <div>청산: <span className="text-gray-300 num">${log.exitPrice.toPrecision(4)}</span> @ <span className="text-gray-300">{fmtDt(log.exitTime)}</span></div>
+                        {editingLogId === log.id ? (
+                          <div className="flex flex-wrap items-center gap-1 pt-1" onClick={e => e.stopPropagation()}>
+                            <select
+                              value={editForm.exitReason}
+                              onChange={e => setEditForm({ ...editForm, exitReason: e.target.value })}
+                              className="bg-card border border-border rounded px-1 py-0.5 text-gray-200"
+                            >
+                              {Object.entries(EXIT_LABEL).map(([k, v]) => <option key={k} value={k}>{v.text}</option>)}
+                            </select>
+                            <input value={editForm.exitPrice} onChange={e => setEditForm({ ...editForm, exitPrice: e.target.value })}
+                              placeholder="청산가" className="w-20 bg-card border border-border rounded px-1 py-0.5 text-gray-200 num" />
+                            <input value={editForm.pnlPct} onChange={e => setEditForm({ ...editForm, pnlPct: e.target.value })}
+                              placeholder="손익%" className="w-16 bg-card border border-border rounded px-1 py-0.5 text-gray-200 num" />
+                            <input value={editForm.pnlUsdt} onChange={e => setEditForm({ ...editForm, pnlUsdt: e.target.value })}
+                              placeholder="손익$" className="w-16 bg-card border border-border rounded px-1 py-0.5 text-gray-200 num" />
+                            <button onClick={() => saveEditLog(log.id)} className="text-accent hover:underline">저장</button>
+                            <button onClick={() => setEditingLogId(null)} className="text-gray-500 hover:underline">취소</button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={e => { e.stopPropagation(); startEditLog(log); }}
+                            className="text-[10px] text-gray-600 hover:text-accent underline pt-0.5"
+                          >
+                            실현손익 수정
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
