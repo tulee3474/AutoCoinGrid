@@ -527,7 +527,7 @@ export default function LiveTrading() {
                           );
                         })()}
                       </td>
-                      <td className={`py-2 pr-3 num ${hoursLeft < 2 ? 'text-warn' : 'text-gray-500'}`}>
+                      <td className={`py-2 pr-3 num ${hoursLeft < 24 ? 'text-warn' : 'text-gray-500'}`}>
                         {hoursLeft}h 후
                       </td>
                       <td className="py-2">
