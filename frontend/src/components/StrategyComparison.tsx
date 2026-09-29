@@ -13,7 +13,6 @@ interface Row {
 }
 
 function fmtPct(v: number) { return `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`; }
-function fmtPlainPct(v: number) { return `${(v * 100).toFixed(1)}%`; }
 
 export default function StrategyComparison() {
   const [strategies, setStrategies] = useState<StrategyConfig[]>([]);
@@ -53,8 +52,10 @@ export default function StrategyComparison() {
     }
   };
 
+  // 승률(winRate)은 0~1 소수, 나머지 세 지표는 이미 퍼센트 숫자라 스케일이 다름 —
+  // "차이(%p)"를 일관되게 계산하려면 전부 퍼센트 숫자 스케일로 맞춰서 저장해야 함
   const rows: Row[] | null = (backtest && actual) ? [
-    { label: '승률', backtest: backtest.winRate, actual: actual.actual.winRate, fmt: fmtPlainPct, higherIsBetter: true },
+    { label: '승률', backtest: backtest.winRate * 100, actual: actual.actual.winRate * 100, fmt: v => `${v.toFixed(1)}%`, higherIsBetter: true },
     { label: '평균 수익', backtest: backtest.avgProfitPct, actual: actual.actual.avgProfitPct, fmt: fmtPct, higherIsBetter: true },
     { label: '평균 손실', backtest: backtest.avgLossPct, actual: actual.actual.avgLossPct, fmt: v => `-${v.toFixed(2)}%`, higherIsBetter: false },
     { label: '기댓값 (EV)', backtest: backtest.expectedValuePct, actual: actual.actual.expectedValuePct, fmt: fmtPct, higherIsBetter: true },
