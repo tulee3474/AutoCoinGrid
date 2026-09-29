@@ -152,6 +152,15 @@ export const validateStrategy = (params: {
   side?: Side;
 }) => api.post('/backtest/validate', params).then(r => r.data);
 
+// 백테스트 예측치 vs 실제 거래 로그 집계 비교용 — 전략의 conditions/trade/side + 실제 통계를 함께 반환
+export const getStrategyComparisonActual = (strategyId: string, type: 'live' | 'paper') =>
+  api.get(`/strategy/${strategyId}/comparison`, { params: { type } }).then(r => r.data as {
+    id: string; name: string; side: Side;
+    conditions: StrategyConditions; trade: TradeConfig;
+    type: 'live' | 'paper';
+    actual: { trades: number; winRate: number; avgProfitPct: number; avgLossPct: number; expectedValuePct: number };
+  });
+
 export const runMultiBacktest = (params: {
   symbols: string[];
   interval: string;

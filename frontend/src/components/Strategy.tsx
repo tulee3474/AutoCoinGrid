@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { useStore } from '../store';
 import { createStrategy, updateStrategy, getStrategies, deleteStrategy, toggleStrategy, validateStrategy, runBacktest, getPresets, AdminPreset } from '../utils/api';
 import { ValidationResult, BacktestResult, StrategyConditions, TradeConfig, Side, mirrorConditionsForSide, mirrorTradeForSide } from '../types';
@@ -965,6 +965,9 @@ export default function Strategy() {
             <p className="text-xs text-gray-600 mt-0.5">
               ※ 분석 기간 내 상장폐지된 코인도 포함 — 코인별 상세에서 최근 62일 신호 수로 현재 활성 여부 확인 가능
             </p>
+            <Link to="/comparison" className="text-xs text-accent hover:underline mt-1 inline-block">
+              저장된 전략의 백테스트 vs 실제 거래 비교 →
+            </Link>
           </div>
           <button onClick={handleValidate} disabled={validating} className="btn-outline flex-shrink-0 disabled:opacity-50">
             {validating ? '분석 중...' : '승률 검증'}
