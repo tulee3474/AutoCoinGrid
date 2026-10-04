@@ -515,6 +515,14 @@ export class BinanceService {
     return data;
   }
 
+  // 펀딩피(FUNDING_FEE)·수수료(COMMISSION) 등 손익 내역 — 구간은 호출측에서 7일 이하로 나눠서 호출
+  async getIncome(symbol: string, incomeType: string, startTime: number, endTime: number): Promise<any[]> {
+    const { data } = await this.futuresClient.get('/fapi/v1/income', {
+      params: this.signedParams({ symbol, incomeType, startTime, endTime, limit: 1000 })
+    });
+    return data;
+  }
+
   // 전체 심볼 유지증거금률(MMR) 구간표를 한 번에 캐시 — 심볼 지정 호출도 weight 1이지만
   // 심볼 없이 호출하면 전체 심볼을 단 1번(weight 1)으로 받아올 수 있어 이 방식 사용
   // (승률검증처럼 후보 코인 수백 개를 백테스트할 때도 조회는 총 1번). 계좌별로 다르지 않고

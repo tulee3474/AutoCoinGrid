@@ -311,6 +311,9 @@ export interface LiveTradeLog {
   entryAmountUsdt: number;
   leverage: number;
   strategyName: string;
+  fundingFee: number;   // 펀딩피 합계 (음수=지불)
+  commission: number;   // 수수료 합계 (음수)
+  feesSynced: boolean;  // 바이낸스 income으로 위 두 값이 채워졌는지
 }
 
 export interface PaperTradeLog {

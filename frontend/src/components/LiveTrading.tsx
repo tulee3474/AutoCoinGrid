@@ -607,6 +607,17 @@ export default function LiveTrading() {
                       <div className="px-2 pb-2 pt-0 text-gray-500 border-t border-border/40 space-y-0.5">
                         <div>진입: <span className="text-gray-300 num">${log.entryPrice.toPrecision(4)}</span> @ <span className="text-gray-300">{fmtDt(log.entryTime)}</span></div>
                         <div>청산: <span className="text-gray-300 num">${log.exitPrice.toPrecision(4)}</span> @ <span className="text-gray-300">{fmtDt(log.exitTime)}</span></div>
+                        {log.feesSynced ? (
+                          <div>
+                            펀딩피 <span className="num text-gray-300">{log.fundingFee >= 0 ? '+' : ''}${log.fundingFee.toFixed(2)}</span>
+                            {' · '}수수료 <span className="num text-gray-300">${log.commission.toFixed(2)}</span>
+                            {' · '}순손익 <span className={`num font-semibold ${(log.pnlUsdt + log.fundingFee + log.commission) >= 0 ? 'text-up' : 'text-down'}`}>
+                              {(log.pnlUsdt + log.fundingFee + log.commission) >= 0 ? '+' : ''}${(log.pnlUsdt + log.fundingFee + log.commission).toFixed(2)}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="text-gray-600">펀딩피/수수료 집계 대기 중 (바이낸스 조회 후 자동 반영)</div>
+                        )}
                         {editingLogId === log.id ? (
                           <div className="flex flex-wrap items-center gap-1 pt-1" onClick={e => e.stopPropagation()}>
                             <select

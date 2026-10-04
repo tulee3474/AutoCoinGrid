@@ -160,6 +160,9 @@ model LiveTradeLog {
   entryAmountUsdt Float
   leverage        Int
   strategyName    String
+  fundingFee      Float    @default(0)   // 보유 중 펀딩피 합계 (바이낸스 income, 음수=지불)
+  commission      Float    @default(0)   // 진입+청산 수수료 합계 (음수)
+  feesSynced      Boolean  @default(false) // 바이낸스 income 조회로 위 두 값이 채워졌는지
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

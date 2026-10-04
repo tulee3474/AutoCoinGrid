@@ -1067,6 +1067,58 @@ async function resyncFullyFilledPositions(userId: string, binanceSvc: BinanceSer
   }
 }
 
+// ── 펀딩피·수수료 보충 (바이낸스 income 조회) ──────────────────
+// 15초 사이클마다 조회하면 요청 한도(weight)를 금방 잡아먹으므로 5분에 한 번, 최대 20건만 처리.
+// 종료 직후엔 income 반영이 늦을 수 있어 종료 2분이 지난 로그만 대상으로 함.
+const FEE_SYNC_INTERVAL_MS = 5 * 60_000;
+const FEE_SYNC_CHUNK_MS    = 7 * 86_400_000;
+const feeSyncLastRun = new Map<string, number>();
+
+async function syncTradeFees(userId: string, broadcast: (data: unknown) => void) {
+  const last = feeSyncLastRun.get(userId) ?? 0;
+  if (Date.now() - last < FEE_SYNC_INTERVAL_MS) return;
+  feeSyncLastRun.set(userId, Date.now());
+
+  const pending = await prisma.liveTradeLog.findMany({
+    where:   { userId, feesSynced: false, exitTime: { lt: new Date(Date.now() - 2 * 60_000) } },
+    orderBy: { exitTime: 'asc' },
+    take:    20
+  });
+  if (pending.length === 0) return;
+
+  let binanceSvc: BinanceService;
+  try { binanceSvc = await getUserBinance(userId); } catch { return; }
+
+  for (const log of pending) {
+    const start = log.entryTime.getTime() - 60_000;
+    const end   = log.exitTime.getTime() + 60_000;
+    let fundingFee = 0;
+    let commission = 0;
+    try {
+      for (let s = start; s < end; s += FEE_SYNC_CHUNK_MS) {
+        const e = Math.min(s + FEE_SYNC_CHUNK_MS, end);
+        const [funding, comms] = await Promise.all([
+          binanceSvc.getIncome(log.symbol, 'FUNDING_FEE', s, e),
+          binanceSvc.getIncome(log.symbol, 'COMMISSION', s, e),
+        ]);
+        // 헤지 모드면 같은 심볼의 반대 방향 포지션 내역이 섞이므로 방향으로 거른다 (원웨이는 BOTH)
+        const mine = (r: any) => r.positionSide === log.side || r.positionSide === 'BOTH';
+        fundingFee += (funding as any[]).filter(mine).reduce((a, r) => a + parseFloat(r.income || '0'), 0);
+        commission += (comms as any[]).filter(mine).reduce((a, r) => a + parseFloat(r.income || '0'), 0);
+      }
+      await prisma.liveTradeLog.update({
+        where: { id: log.id },
+        data:  { fundingFee, commission, feesSynced: true }
+      });
+    } catch (e: any) {
+      // 조회 실패 시 이번 회차는 중단하고 다음 5분 주기에 재시도
+      addLog(userId, `펀딩피/수수료 조회 실패 ${log.symbol}: ${e.response?.data?.msg ?? e.message} — 다음 주기 재시도`, 'error');
+      break;
+    }
+  }
+  broadcast({ type: 'live_fees_synced', data: { count: pending.length } });
+}
+
 // ── TP/SL 동기화 + 타임아웃 (mutex 보호) ─────────────────────
 
 async function runSync(userId: string, broadcast: (data: unknown) => void) {
@@ -1085,6 +1137,8 @@ async function runSync(userId: string, broadcast: (data: unknown) => void) {
       await closeOnRsiReversal(userId, binanceSvc, broadcast);
       await closeTimedOut(userId, binanceSvc, broadcast);
     }
+    // 방금 종료된 거래는 포지션이 이미 0이어도 펀딩피/수수료를 채워야 하므로 이 블록 밖에서 처리
+    await syncTradeFees(userId, broadcast);
 
     // 중지 예정: 포지션이 모두 닫혔으면 완전 중지
     if (state.isStopping) {
