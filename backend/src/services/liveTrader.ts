@@ -1117,7 +1117,11 @@ async function syncTradeFees(userId: string, broadcast: (data: unknown) => void)
       });
     } catch (e: any) {
       // 조회 실패 시 이번 회차는 중단하고 다음 5분 주기에 재시도
-      addLog(userId, `펀딩피/수수료 조회 실패 ${log.symbol}: ${e.response?.data?.msg ?? e.message} — 다음 주기 재시도`, 'error');
+      const msg = e.response?.data?.msg ?? e.message;
+      const throttled = e.response?.status === 429 || e.response?.status === 418 || /Too many requests/i.test(msg);
+      // IP 요청 한도에 걸린 경우 5분 뒤가 아니라 15분 뒤에 재시도해서 전체 스캐너 요청 부담을 줄임
+      if (throttled) feeSyncLastRun.set(userId, Date.now() + 10 * 60_000);
+      addLog(userId, `펀딩피/수수료 조회 실패 ${log.symbol}: ${msg} — ${throttled ? '요청 한도 초과로 15분 뒤 재시도' : '다음 주기 재시도'}`, 'error');
       break;
     }
   }
