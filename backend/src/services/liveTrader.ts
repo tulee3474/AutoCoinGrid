@@ -1080,7 +1080,8 @@ async function syncTradeFees(userId: string, broadcast: (data: unknown) => void)
   feeSyncLastRun.set(userId, Date.now());
 
   const pending = await prisma.liveTradeLog.findMany({
-    where:   { userId, feesSynced: false, exitTime: { lt: new Date(Date.now() - 2 * 60_000) } },
+    // 수수료가 0으로 저장된 기존 로그(이전 필터 버그로 잘못 채워진 것)도 다시 채우도록 함께 조회
+    where:   { userId, exitTime: { lt: new Date(Date.now() - 2 * 60_000) }, OR: [{ feesSynced: false }, { feesSynced: true, commission: 0 }] },
     orderBy: { exitTime: 'asc' },
     take:    20
   });
@@ -1094,6 +1095,7 @@ async function syncTradeFees(userId: string, broadcast: (data: unknown) => void)
     const end   = log.exitTime.getTime() + 60_000;
     let fundingFee = 0;
     let commission = 0;
+    let commissionRows = 0;
     try {
       for (let s = start; s < end; s += FEE_SYNC_CHUNK_MS) {
         const e = Math.min(s + FEE_SYNC_CHUNK_MS, end);
@@ -1101,11 +1103,14 @@ async function syncTradeFees(userId: string, broadcast: (data: unknown) => void)
           binanceSvc.getIncome(log.symbol, 'FUNDING_FEE', s, e),
           binanceSvc.getIncome(log.symbol, 'COMMISSION', s, e),
         ]);
-        // 헤지 모드면 같은 심볼의 반대 방향 포지션 내역이 섞이므로 방향으로 거른다 (원웨이는 BOTH)
-        const mine = (r: any) => r.positionSide === log.side || r.positionSide === 'BOTH';
-        fundingFee += (funding as any[]).filter(mine).reduce((a, r) => a + parseFloat(r.income || '0'), 0);
-        commission += (comms as any[]).filter(mine).reduce((a, r) => a + parseFloat(r.income || '0'), 0);
+        // income 응답에는 positionSide가 없어서 방향 필터를 걸 수 없음 — 심볼+시간 구간으로만 집계
+        // (같은 심볼을 헤지 모드에서 롱/숏 동시 보유한 극히 드문 경우는 구간이 겹치면 섞일 수 있음)
+        fundingFee += (funding as any[]).reduce((a, r) => a + parseFloat(r.income || '0'), 0);
+        commission += (comms as any[]).reduce((a, r) => a + parseFloat(r.income || '0'), 0);
+        commissionRows += (comms as any[]).length;
       }
+      // 체결이 있었던 거래는 수수료 내역이 반드시 있음 — 0건이면 조회가 덜 반영된 것이므로 확정하지 않고 재시도
+      if (commissionRows === 0) continue;
       await prisma.liveTradeLog.update({
         where: { id: log.id },
         data:  { fundingFee, commission, feesSynced: true }
