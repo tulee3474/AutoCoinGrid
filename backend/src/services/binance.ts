@@ -548,12 +548,23 @@ export class BinanceService {
     return data;
   }
 
-  // 펀딩피(FUNDING_FEE)·수수료(COMMISSION) 등 손익 내역 — 구간은 호출측에서 7일 이하로 나눠서 호출
-  async getIncome(symbol: string, incomeType: string, startTime: number, endTime: number): Promise<any[]> {
-    const { data } = await this.futuresClient.get('/fapi/v1/income', {
-      params: this.signedParams({ symbol, incomeType, startTime, endTime, limit: 1000 })
-    });
-    return data;
+  // 펀딩피(FUNDING_FEE)·수수료(COMMISSION) 등 손익 내역 — 심볼을 지정하지 않고 구간 전체를 받음
+  // (심볼별 호출은 로그 건수 × 타입 × 구간만큼 요청이 쌓여 IP 한도를 잡아먹음). 구간은 7일 이하로 호출측에서 나눔.
+  // 1000건이 넘으면 마지막 시각 이후부터 이어서 받음 — 반환 행에는 symbol이 포함되어 호출측에서 필터링
+  async getIncomeAll(incomeType: string, startTime: number, endTime: number): Promise<any[]> {
+    const all: any[] = [];
+    let from = startTime;
+    while (true) {
+      const { data } = await this.futuresClient.get('/fapi/v1/income', {
+        params: this.signedParams({ incomeType, startTime: from, endTime, limit: 1000 })
+      });
+      all.push(...data);
+      if (data.length < 1000) break;
+      const next = Math.max(...data.map((r: any) => Number(r.time))) + 1;
+      if (next <= from) break;   // 같은 시각 행이 1000건 넘게 몰린 극단적 경우 무한 루프 방지
+      from = next;
+    }
+    return all;
   }
 
   // 전체 심볼 유지증거금률(MMR) 구간표를 한 번에 캐시 — 심볼 지정 호출도 weight 1이지만

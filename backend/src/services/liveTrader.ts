@@ -1090,39 +1090,49 @@ async function syncTradeFees(userId: string, broadcast: (data: unknown) => void)
   let binanceSvc: BinanceService;
   try { binanceSvc = await getUserBinance(userId); } catch { return; }
 
+  // 대상 로그 전체를 감싸는 구간을 한 번에 조회 — 심볼별·로그별 호출 대신 구간당 타입별 1~2회로 끝냄
+  // (구간은 7일 단위로 나누고, 경계 중복을 피하려고 다음 청크는 e+1부터 시작)
+  const windowStart = Math.min(...pending.map(l => l.entryTime.getTime())) - 60_000;
+  const windowEnd   = Math.max(...pending.map(l => l.exitTime.getTime())) + 60_000;
+  const fundingRows: any[] = [];
+  const commissionAll: any[] = [];
+  try {
+    let s = windowStart;
+    while (s < windowEnd) {
+      const e = Math.min(s + FEE_SYNC_CHUNK_MS - 1, windowEnd);
+      fundingRows.push(...await binanceSvc.getIncomeAll('FUNDING_FEE', s, e));
+      commissionAll.push(...await binanceSvc.getIncomeAll('COMMISSION', s, e));
+      s = e + 1;
+    }
+  } catch (e: any) {
+    // 조회 실패 시 이번 회차는 중단하고 다음 주기에 재시도
+    const msg = e.response?.data?.msg ?? e.message;
+    const throttled = e.response?.status === 429 || e.response?.status === 418 || /Too many requests/i.test(msg);
+    // IP 요청 한도에 걸린 경우 5분 뒤가 아니라 15분 뒤에 재시도해서 전체 스캐너 요청 부담을 줄임
+    if (throttled) feeSyncLastRun.set(userId, Date.now() + 10 * 60_000);
+    addLog(userId, `펀딩피/수수료 조회 실패: ${msg} — ${throttled ? '요청 한도 초과로 15분 뒤 재시도' : '다음 주기 재시도'}`, 'error');
+    broadcast({ type: 'live_fees_synced', data: { count: 0 } });
+    return;
+  }
+
   for (const log of pending) {
     const start = log.entryTime.getTime() - 60_000;
     const end   = log.exitTime.getTime() + 60_000;
-    let fundingFee = 0;
-    let commission = 0;
-    let commissionRows = 0;
+    // 심볼 + 거래 구간으로 필터. income 응답에는 positionSide가 없어서 방향 필터는 불가 —
+    // 같은 심볼을 헤지 모드에서 롱/숏 동시 보유한 극히 드문 경우는 구간이 겹치면 섞일 수 있음
+    const inLog = (r: any) => r.symbol === log.symbol && Number(r.time) >= start && Number(r.time) <= end;
+    const fundingFee = fundingRows.filter(inLog).reduce((a, r) => a + parseFloat(r.income || '0'), 0);
+    const comms      = commissionAll.filter(inLog);
+    const commission = comms.reduce((a, r) => a + parseFloat(r.income || '0'), 0);
+    // 체결이 있었던 거래는 수수료 내역이 반드시 있음 — 0건이면 조회가 덜 반영된 것이므로 확정하지 않고 재시도
+    if (comms.length === 0) continue;
     try {
-      for (let s = start; s < end; s += FEE_SYNC_CHUNK_MS) {
-        const e = Math.min(s + FEE_SYNC_CHUNK_MS, end);
-        const [funding, comms] = await Promise.all([
-          binanceSvc.getIncome(log.symbol, 'FUNDING_FEE', s, e),
-          binanceSvc.getIncome(log.symbol, 'COMMISSION', s, e),
-        ]);
-        // income 응답에는 positionSide가 없어서 방향 필터를 걸 수 없음 — 심볼+시간 구간으로만 집계
-        // (같은 심볼을 헤지 모드에서 롱/숏 동시 보유한 극히 드문 경우는 구간이 겹치면 섞일 수 있음)
-        fundingFee += (funding as any[]).reduce((a, r) => a + parseFloat(r.income || '0'), 0);
-        commission += (comms as any[]).reduce((a, r) => a + parseFloat(r.income || '0'), 0);
-        commissionRows += (comms as any[]).length;
-      }
-      // 체결이 있었던 거래는 수수료 내역이 반드시 있음 — 0건이면 조회가 덜 반영된 것이므로 확정하지 않고 재시도
-      if (commissionRows === 0) continue;
       await prisma.liveTradeLog.update({
         where: { id: log.id },
         data:  { fundingFee, commission, feesSynced: true }
       });
     } catch (e: any) {
-      // 조회 실패 시 이번 회차는 중단하고 다음 5분 주기에 재시도
-      const msg = e.response?.data?.msg ?? e.message;
-      const throttled = e.response?.status === 429 || e.response?.status === 418 || /Too many requests/i.test(msg);
-      // IP 요청 한도에 걸린 경우 5분 뒤가 아니라 15분 뒤에 재시도해서 전체 스캐너 요청 부담을 줄임
-      if (throttled) feeSyncLastRun.set(userId, Date.now() + 10 * 60_000);
-      addLog(userId, `펀딩피/수수료 조회 실패 ${log.symbol}: ${msg} — ${throttled ? '요청 한도 초과로 15분 뒤 재시도' : '다음 주기 재시도'}`, 'error');
-      break;
+      addLog(userId, `펀딩피/수수료 저장 실패 ${log.symbol}: ${e.message}`, 'error');
     }
   }
   broadcast({ type: 'live_fees_synced', data: { count: pending.length } });
