@@ -20,6 +20,24 @@ const TESTNET_FUTURES = 'https://testnet.binancefuture.com';
 // "Way too many requests; IP(x.x.x.x) banned until 1782784293771. ..." 메시지에서 차단 해제 시각 추출
 const BAN_UNTIL_RE = /banned until (\d+)/;
 
+// ── 요청량 측정 (로그 전용) ─────────────────────────────────────
+const usageCounts = new Map<string, number>();
+let lastUsedWeight = '-';
+function recordApiUsage(kind: 'spot' | 'futures', url: string | undefined, headers: any) {
+  const key = `${kind}:${(url ?? '').split('?')[0]}`;
+  usageCounts.set(key, (usageCounts.get(key) ?? 0) + 1);
+  const w = headers?.['x-mbx-used-weight-1m'];
+  if (w !== undefined) lastUsedWeight = `${kind}=${w}`;
+}
+setInterval(() => {
+  const total = [...usageCounts.values()].reduce((a, b) => a + b, 0);
+  if (total > 0) {
+    const top = [...usageCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+    console.log(`[BinanceUsage] 최근 60초 요청 ${total}회 | 바이낸스 사용 weight(1m) ${lastUsedWeight} | 상위: ${top.map(([k, v]) => `${k}×${v}`).join(', ')}`);
+  }
+  usageCounts.clear();
+}, 60_000).unref();
+
 export class BinanceService {
   private apiKey: string;
   private apiSecret: string;
@@ -73,6 +91,17 @@ export class BinanceService {
 
     this.installBanGuard(this.spotClient, 'spot');
     this.installBanGuard(this.futuresClient, 'futures');
+    this.installUsageMeter(this.spotClient, 'spot');
+    this.installUsageMeter(this.futuresClient, 'futures');
+  }
+
+  // 요청량 측정 — 로그 전용, 요청 동작은 바꾸지 않음. 60초마다 엔드포인트별 호출 수와
+  // 바이낸스가 응답 헤더로 알려주는 분당 사용 weight를 [BinanceUsage] 로그로 남김
+  private installUsageMeter(client: AxiosInstance, kind: 'spot' | 'futures') {
+    client.interceptors.response.use(
+      res => { recordApiUsage(kind, res.config?.url, res.headers); return res; },
+      err => { if (err.response) recordApiUsage(kind, err.response.config?.url, err.response.headers); return Promise.reject(err); }
+    );
   }
 
   // 418 차단 응답을 감지해 해제 시각까지 동일 IP의 모든 후속 요청을 네트워크 호출 없이 즉시 실패시킴
