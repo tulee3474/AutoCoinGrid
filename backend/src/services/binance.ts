@@ -245,7 +245,10 @@ export class BinanceService {
         openTime: k[0], open: +k[1], high: +k[2], low: +k[3],
         close: +k[4], volume: +k[5], closeTime: k[6]
       }));
-      this.klinesCache.set(cacheKey, { data, ts: Date.now() });
+      // 1h 캐시는 같은 사이클에 받은 심볼들이 정확히 같은 시각에 만료돼 5분마다 수백 개가 한꺼번에 재조회됨
+      // → 만료 시점을 180~300초로 흩뿌려 피크 요청량을 낮춤 (ts를 과거로 밀면 그만큼 일찍 만료)
+      const jitterMs = interval === '1h' ? Math.random() * 120_000 : 0;
+      this.klinesCache.set(cacheKey, { data, ts: Date.now() - jitterMs });
       return data;
     })();
 
