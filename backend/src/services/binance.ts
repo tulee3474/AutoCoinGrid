@@ -309,15 +309,15 @@ export class BinanceService {
   }
 
   // 심볼 정밀도/상장일 등 메타데이터라 자주 안 바뀜 — 매 사이클(15초)마다 재조회하던 걸 1시간 캐시로 흡수
-  private futuresExchangeInfoCache: { data: any; ts: number } | null = null;
+  private static futuresExchangeInfoCache: { data: any; ts: number } | null = null;
   private static readonly EXCHANGE_INFO_CACHE_TTL = 3_600_000;
 
   async getFuturesExchangeInfo(): Promise<any> {
-    if (this.futuresExchangeInfoCache && Date.now() - this.futuresExchangeInfoCache.ts < BinanceService.EXCHANGE_INFO_CACHE_TTL) {
-      return this.futuresExchangeInfoCache.data;
+    if (BinanceService.futuresExchangeInfoCache && Date.now() - BinanceService.futuresExchangeInfoCache.ts < BinanceService.EXCHANGE_INFO_CACHE_TTL) {
+      return BinanceService.futuresExchangeInfoCache.data;
     }
     const { data } = await this.futuresClient.get('/fapi/v1/exchangeInfo');
-    this.futuresExchangeInfoCache = { data, ts: Date.now() };
+    BinanceService.futuresExchangeInfoCache = { data, ts: Date.now() };
     return data;
   }
 
