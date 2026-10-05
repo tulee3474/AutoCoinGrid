@@ -1,6 +1,7 @@
 import { binance } from './binance';
 import { computeIndicators } from './indicator';
 import { StrategyConditions, MarketSnapshot, Side } from '../types';
+import { selectTopVolume } from './candidateFilter';
 
 const EXCLUDE = new Set([
   'BTCUSDT', 'ETHUSDT', 'USDCUSDT', 'BUSDUSDT', 'TUSDUSDT',
@@ -71,16 +72,22 @@ export async function scanMarket(
   const minListingMs = conditions.minListingDays ? conditions.minListingDays * 86_400_000 : 0;
   const prefilterActive = priceChangeTf !== '24h' && isPrefilterCycle();
 
-  const candidates = (tickers as any[])
+  // 유동성·상장일 필터 통과 코인 중 거래량 상위 N%만 후보로 사용 (전략별 candidateTopPct, 미설정 = 전체)
+  // /validate와 같은 함수·같은 기준으로 자르므로 승률 검증 통계가 실제 진입 대상과 맞음
+  const universe = (tickers as any[]).filter(t => {
+    if (!t.symbol.endsWith('USDT') || EXCLUDE.has(t.symbol)) return false;
+    if (!futuresSymbols.has(t.symbol)) return false;              // 선물 거래 가능 코인만
+    if (parseFloat(t.quoteVolume) <= 200_000) return false;       // 하루 $200K 이상 거래
+    // 상장 초기 코인 제외 (변동성 과도 — 상장 빔 방지)
+    if (minListingMs > 0) {
+      const onboardDate = onboardDates.get(t.symbol);
+      if (onboardDate && Date.now() - onboardDate < minListingMs) return false;
+    }
+    return true;
+  });
+
+  const candidates = selectTopVolume(universe, conditions.candidateTopPct)
     .filter(t => {
-      if (!t.symbol.endsWith('USDT') || EXCLUDE.has(t.symbol)) return false;
-      if (!futuresSymbols.has(t.symbol)) return false;              // 선물 거래 가능 코인만
-      if (parseFloat(t.quoteVolume) <= 200_000) return false;       // 하루 $200K 이상 거래
-      // 상장 초기 코인 제외 (변동성 과도 — 상장 빔 방지)
-      if (minListingMs > 0) {
-        const onboardDate = onboardDates.get(t.symbol);
-        if (onboardDate && Date.now() - onboardDate < minListingMs) return false;
-      }
       // 24h 모드는 가격 변화율로 바로 필터 (weight 추가 소모 없음, 이미 받은 티커 데이터)
       if (priceChangeTf === '24h') {
         const ch = parseFloat(t.priceChangePercent);

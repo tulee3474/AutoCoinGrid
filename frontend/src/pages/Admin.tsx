@@ -362,6 +362,8 @@ function PresetForm({
     priceChangeTimeframe: (initial.conditions as any).priceChangeTimeframe ?? DEFAULT_CONDITIONS.priceChangeTimeframe,
     minListingDays:       (initial.conditions as any).minListingDays !== undefined ? (initial.conditions as any).minListingDays : null,
     noRecentCrash:        (initial.conditions as any).noRecentCrash !== undefined ? (initial.conditions as any).noRecentCrash : null,
+    // 기존 프리셋에 필드가 없으면 DEFAULT(50)가 아니라 null(=전체 100)로 유지해야 저장 시 동작이 바뀌지 않음
+    candidateTopPct:      (initial.conditions as any).candidateTopPct ?? null,
   });
   const [t, setT] = useState<TradeConfig>({
     ...DEFAULT_TRADE,

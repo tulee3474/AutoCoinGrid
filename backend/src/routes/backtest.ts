@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { binance } from '../services/binance';
 import { runBacktest } from '../services/backtest';
+import { selectTopVolume } from '../services/candidateFilter';
 import { StrategyConditions, TradeConfig, Kline } from '../types';
 
 const router = Router();
@@ -85,8 +86,9 @@ router.post('/validate', async (req, res) => {
       binance.getFuturesOnboardDates()
     ]);
     const minListingMs = conditions.minListingDays ? conditions.minListingDays * 86_400_000 : 0;
-    const allAlt = (tickers as any[])
-      .filter(t => {
+    // 스캐너와 동일하게 거래량 상위 N%만 — 스캐너가 실제로 보는 코인 풀과 맞춰야 승률 통계가 실거래와 일치
+    const allAlt = selectTopVolume(
+      (tickers as any[]).filter(t => {
         if (!t.symbol.endsWith('USDT') || EXCLUDE.has(t.symbol)) return false;
         if (parseFloat(t.quoteVolume) <= 200_000) return false;   // 최소 유동성 (하루 $200K 이상)
         // 실제 스캐너와 동일하게 상장 초기 코인 제외 — 반영 안 하면 승률 통계가 실거래와 어긋남
@@ -95,8 +97,9 @@ router.post('/validate', async (req, res) => {
           if (onboardDate && Date.now() - onboardDate < minListingMs) return false;
         }
         return true;
-      })
-      .map(t => t.symbol);
+      }),
+      conditions.candidateTopPct
+    ).map(t => t.symbol);
 
     // BTC 변동률 필터가 설정돼 있으면 심볼당 한 번씩 다시 받을 필요 없이 여기서 한 번만 조회 —
     // 코인별로는 klines 길이에 맞춰 뒤에서부터 잘라 정렬해서 씀 (상장일이 BTC보다 늦은 코인 대응)

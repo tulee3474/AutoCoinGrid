@@ -17,9 +17,15 @@ export interface StrategyConditions {
   noRecentCrash?: { days: number; dropPct: number } | null;  // null/미설정 = 비활성. 최근 days일 내 일봉 기준 dropPct% 이상 급락한 적 있으면 제외
   // null/미설정 = 비활성. BTC 자체의 지정 기간 변동률이 [min, max] 범위 밖이면 신규 진입을 건너뜀
   btcChangeFilter?: { timeframe: '1h' | '4h' | '24h'; min: number; max: number } | null;
+  // null/미설정 = 100(전체). 유동성 통과 코인 중 거래량 상위 N%만 스캔·검증 (백엔드와 동일 기준)
+  candidateTopPct?: number | null;
   // 하위 호환성
   priceAboveMa200?: boolean;
 }
+
+// 새로 만드는 전략의 기본 후보 비율 — 기존 저장 전략/프리셋에 필드가 없으면 백엔드와 같이 100(전체)로 처리
+export const DEFAULT_CANDIDATE_TOP_PCT = 50;
+export const FULL_CANDIDATE_TOP_PCT = 100;
 
 export interface TradeConfig {
   leverage: number;
@@ -177,7 +183,8 @@ export const DEFAULT_CONDITIONS: StrategyConditions = {
   priceChangeTimeframe: '24h',
   btcDominanceMax: 55,
   minListingDays: 30,
-  noRecentCrash: { days: 7, dropPct: 50 }
+  noRecentCrash: { days: 7, dropPct: 50 },
+  candidateTopPct: DEFAULT_CANDIDATE_TOP_PCT
 };
 
 export const DEFAULT_TRADE: TradeConfig = {

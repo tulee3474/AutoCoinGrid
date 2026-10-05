@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { useStore } from '../store';
 import { createStrategy, updateStrategy, getStrategies, deleteStrategy, toggleStrategy, validateStrategy, runBacktest, getPresets, AdminPreset } from '../utils/api';
-import { ValidationResult, BacktestResult, StrategyConditions, TradeConfig, Side, mirrorConditionsForSide, mirrorTradeForSide } from '../types';
+import { ValidationResult, BacktestResult, StrategyConditions, TradeConfig, Side, mirrorConditionsForSide, mirrorTradeForSide, DEFAULT_CANDIDATE_TOP_PCT, FULL_CANDIDATE_TOP_PCT } from '../types';
 import { fmtDate } from '../utils/datetime';
 
 // ── 공통 입력 ────────────────────────────────────────────────
@@ -454,7 +454,8 @@ export default function Strategy() {
         if (target) {
           setEditingId(editId);
           setStrategyName(target.name);
-          setDraftConditions(target.conditions);
+          // 저장된 전략에 필드가 없으면(기존 전략) 현재 draft의 기본값이 새어 들어오지 않도록 100으로 고정
+          setDraftConditions({ candidateTopPct: FULL_CANDIDATE_TOP_PCT, ...target.conditions });
           setDraftTrade(target.trade);
           setDraftSide(target.side ?? 'SHORT');
           defaultApplied = true; // 기본값 덮어쓰기 방지
@@ -466,7 +467,7 @@ export default function Strategy() {
       setRecommended(rec);
       if (!defaultApplied && def) {
         defaultApplied = true;
-        setDraftConditions(def.conditions as StrategyConditions);
+        setDraftConditions({ candidateTopPct: DEFAULT_CANDIDATE_TOP_PCT, ...(def.conditions as StrategyConditions) });
         setDraftTrade(def.trade as TradeConfig);
         setDraftSide(def.side ?? 'SHORT');
         setStrategyName(def.name);
@@ -475,7 +476,7 @@ export default function Strategy() {
   }, []);
 
   function applyPreset(p: AdminPreset) {
-    setDraftConditions(p.conditions as StrategyConditions);
+    setDraftConditions({ candidateTopPct: DEFAULT_CANDIDATE_TOP_PCT, ...(p.conditions as StrategyConditions) });
     setDraftTrade(p.trade as TradeConfig);
     setDraftSide(p.side ?? 'SHORT');
     setStrategyName(p.name);
@@ -532,7 +533,7 @@ export default function Strategy() {
     // 기본 프리셋으로 복원
     getPresets().then(({ default: def }) => {
       if (def) {
-        setDraftConditions(def.conditions as StrategyConditions);
+        setDraftConditions({ candidateTopPct: DEFAULT_CANDIDATE_TOP_PCT, ...(def.conditions as StrategyConditions) });
         setDraftTrade(def.trade as TradeConfig);
         setDraftSide(def.side ?? 'SHORT');
         setStrategyName(def.name);
@@ -544,7 +545,7 @@ export default function Strategy() {
   const handleStartEdit = (s: (typeof strategies)[0]) => {
     setEditingId(s.id);
     setStrategyName(s.name);
-    setDraftConditions(s.conditions);
+    setDraftConditions({ candidateTopPct: FULL_CANDIDATE_TOP_PCT, ...s.conditions });
     setDraftTrade(s.trade);
     setDraftSide(s.side ?? 'SHORT');
     setSearchParams({ edit: s.id });
@@ -698,6 +699,14 @@ export default function Strategy() {
 
         {/* 체크박스 조건들 */}
         <div className="space-y-3">
+          <div className="space-y-2">
+            <NumberInput label="후보 코인 범위" value={draftConditions.candidateTopPct ?? FULL_CANDIDATE_TOP_PCT}
+              onChange={v => setDraftConditions({ candidateTopPct: v })} min={10} max={100}
+              unit="% (거래량 상위 코인만 스캔 · 100 = 전체)" fieldId="candidate-top-pct" emptyTracker={emptyFields} />
+            <p className="text-xs text-gray-600">
+              거래량이 적은 코인을 빼 호가가 얕아 생기는 슬리피지 손실을 줄이고 캔들 조회량을 낮춥니다. 승률 검증·비교에도 같은 범위가 적용됩니다.
+            </p>
+          </div>
           <div className="space-y-2">
             <div className="flex items-center gap-3">
               <input type="checkbox" id="minListingDays" className="w-4 h-4 accent-accent"

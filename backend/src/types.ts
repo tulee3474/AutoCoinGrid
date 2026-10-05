@@ -19,6 +19,8 @@ export interface StrategyConditions {
   // 신규 진입을 전부 건너뜀(시장 전체가 트렌드로 움직이는 구간에 개별 코인 평균회귀 베팅을 막기 위함).
   // min/max에 자유롭게 음수/양수를 넣을 수 있어 롱/숏 어느 쪽에도(예: 숏은 max만 낮게, 롱은 min만 높게) 적용 가능
   btcChangeFilter?: { timeframe: '1h' | '4h' | '24h'; min: number; max: number } | null;
+  // null/미설정 = 100(전체 사용). 유동성 통과 코인 중 24h 거래량 상위 N%만 후보로 스캔·검증
+  candidateTopPct?: number | null;
   // 하위 호환성 유지
   priceAboveMa200?: boolean;
 }

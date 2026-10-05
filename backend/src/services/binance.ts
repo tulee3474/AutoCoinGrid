@@ -56,9 +56,10 @@ export class BinanceService {
 
   // 1d/4h처럼 느리게 바뀌는 캔들은 매 스캔 사이클(60s)마다 새로 받을 필요가 없음 —
   // 짧은 캐시로는 다음 사이클 전에 항상 만료돼 매번 재호출되므로, 긴 타임프레임은 캐시를 더 길게 유지
+  // 1h는 진행 중인 봉 가격을 쓰는 지표라 최대 5분 늦게 반응할 수 있음 (신호 품질은 거의 동일, 재조회 대폭 감소)
   private static klinesCacheTtlFor(interval: string): number {
     if (interval === '1d') return 600_000;
-    if (interval === '4h') return 300_000;
+    if (interval === '4h' || interval === '1h') return 300_000;
     return BinanceService.KLINES_CACHE_TTL;
   }
   private futuresTickersCache: { data: any[]; ts: number } | null = null;
