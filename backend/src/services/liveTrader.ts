@@ -1081,7 +1081,8 @@ async function syncTradeFees(userId: string, broadcast: (data: unknown) => void)
 
   const pending = await prisma.liveTradeLog.findMany({
     // 수수료가 0으로 저장된 기존 로그(이전 필터 버그로 잘못 채워진 것)도 다시 채우도록 함께 조회
-    where:   { userId, exitTime: { lt: new Date(Date.now() - 2 * 60_000) }, OR: [{ feesSynced: false }, { feesSynced: true, commission: 0 }] },
+    // 7일 넘은 로그는 income 조회 대상에서 제외 — 조회 불가능한 과거 로그가 take 20 슬롯을 차지해 새 로그를 막는 것 방지
+    where:   { userId, exitTime: { gte: new Date(Date.now() - 7 * 86_400_000), lt: new Date(Date.now() - 2 * 60_000) }, OR: [{ feesSynced: false }, { feesSynced: true, commission: 0 }] },
     orderBy: { exitTime: 'asc' },
     take:    20
   });
