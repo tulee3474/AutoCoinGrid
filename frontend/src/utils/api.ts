@@ -150,7 +150,7 @@ export const validateStrategy = (params: {
   conditions: StrategyConditions;
   trade: TradeConfig;
   side?: Side;
-}) => api.post('/backtest/validate', params).then(r => r.data);
+}) => api.post('/backtest/validate', params, { timeout: 600_000 }).then(r => r.data);   // 첫 실행 1~3분 (nginx도 /api/backtest/ 600초)
 
 // 백테스트 예측치 vs 실제 거래 로그 집계 비교용 — 전략의 conditions/trade/side + 실제 통계를 함께 반환
 export const getStrategyComparisonActual = (strategyId: string, type: 'live' | 'paper') =>
