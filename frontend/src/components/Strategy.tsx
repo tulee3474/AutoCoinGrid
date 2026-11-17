@@ -274,7 +274,7 @@ function ValidationPanel({ result, loading, conditions, trade, side }: {
       <div className="card text-center py-8">
         <div className="inline-block w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin mb-3" />
         <p className="text-sm text-gray-400">전체 알트코인 데이터 수집 중...</p>
-        <p className="text-xs text-gray-500 mt-1">코인 수에 따라 20~60초 소요됩니다</p>
+        <p className="text-xs text-gray-500 mt-1">처음 실행 시 코인 수에 따라 1~3분 (바이낸스 요청 한도 내에서 천천히 받음) · 30분 내 재실행은 빠름</p>
       </div>
     );
   }
@@ -317,6 +317,11 @@ function ValidationPanel({ result, loading, conditions, trade, side }: {
             {isPositiveEV ? '전략 유효' : '재검토 필요'}
           </span>
         </div>
+        {(result.coinsFailed ?? 0) > 0 && (
+          <div className="text-xs mb-3 p-2 rounded-lg bg-warn/10 text-warn">
+            ⚠ {result.coinsFailed}개 코인이 바이낸스 조회 실패로 빠졌습니다 — 표본이 불완전해 EV가 실제와 다를 수 있으니 잠시 후 다시 검증하세요.
+          </div>
+        )}
         <div className={`text-sm font-medium mb-4 p-3 rounded-lg ${isPositiveEV ? 'bg-up/10 text-up' : 'bg-down/10 text-down'}`}>
           조건이 과거에 <strong>{result.totalSignals}번</strong> 발생 →{' '}
           <strong>{netWins}번</strong> 수익 · <strong>{result.totalSignals - netWins}번</strong> 손실

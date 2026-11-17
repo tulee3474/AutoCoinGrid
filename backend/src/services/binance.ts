@@ -28,6 +28,43 @@ function recordApiUsage(kind: 'spot' | 'futures', url: string | undefined, heade
   usageCounts.set(key, (usageCounts.get(key) ?? 0) + 1);
   const w = headers?.['x-mbx-used-weight-1m'];
   if (w !== undefined) lastUsedWeight = `${kind}=${w}`;
+  if (kind === 'futures' && w !== undefined) {
+    const used = parseInt(w, 10);
+    const minute = Math.floor(Date.now() / 60_000);
+    if (Number.isFinite(used)) {
+      if (futuresWeight.minute !== minute) futuresWeight = { minute, used };
+      else futuresWeight.used = Math.max(futuresWeight.used, used);
+    }
+  }
+}
+
+// ── 선물 IP weight 예산 (대량 조회용 페이싱) ─────────────────────
+// 바이낸스 선물 IP 한도는 분(정각 기준 1분 창)당 weight 2400. 전략 검증처럼 코인 수백 개의 캔들
+// 1500개(weight 10)를 한꺼번에 받으면 10초 만에 한도를 넘어 429 → 모든 선물 요청이 잠시 막혀
+// 남은 코인이 결과에서 조용히 빠지고(실행할 때마다 표본이 달라져 EV가 크게 흔들림) 실거래 스캐너 요청까지 막힘.
+// 대량 조회는 요청 전에 이 예산을 받아 cap까지만 쓰고, 나머지는 실거래/스캐너 몫으로 남겨둠.
+// used = 바이낸스 응답 헤더(x-mbx-used-weight-1m) 값과, 아직 응답 안 온 요청의 예약분 중 큰 값
+let futuresWeight = { minute: 0, used: 0 };
+export const BULK_FUTURES_WEIGHT_CAP = 1400;
+
+export function klinesWeight(limit: number): number {
+  if (limit < 100) return 1;
+  if (limit < 500) return 2;
+  if (limit <= 1000) return 5;
+  return 10;
+}
+
+export async function acquireFuturesWeight(weight: number, cap = BULK_FUTURES_WEIGHT_CAP): Promise<void> {
+  for (;;) {
+    const now = Date.now();
+    const bannedUntil = BinanceService.getFuturesBannedUntil();
+    if (now < bannedUntil) { await new Promise(r => setTimeout(r, bannedUntil - now + 500)); continue; }
+    const minute = Math.floor(now / 60_000);
+    if (futuresWeight.minute !== minute) futuresWeight = { minute, used: 0 };
+    if (futuresWeight.used + weight <= cap) { futuresWeight.used += weight; return; }
+    // 이번 분 예산 소진 → 다음 분 시작(+여유 1초)까지 대기
+    await new Promise(r => setTimeout(r, (minute + 1) * 60_000 - now + 1000));
+  }
 }
 setInterval(() => {
   const total = [...usageCounts.values()].reduce((a, b) => a + b, 0);
@@ -63,7 +100,10 @@ export class BinanceService {
   // 1d/4h처럼 느리게 바뀌는 캔들은 매 스캔 사이클(60s)마다 새로 받을 필요가 없음 —
   // 짧은 캐시로는 다음 사이클 전에 항상 만료돼 매번 재호출되므로, 긴 타임프레임은 캐시를 더 길게 유지
   // 1h는 진행 중인 봉 가격을 쓰는 지표라 최대 5분 늦게 반응할 수 있음 (신호 품질은 거의 동일, 재조회 대폭 감소)
-  private static klinesCacheTtlFor(interval: string): number {
+  private static klinesCacheTtlFor(interval: string, limit = 0): number {
+    // 1000개 초과(백테스트/전략 검증용 장기 이력)는 스캐너가 쓰지 않고, 수십~수백 일 이력에서 최근 캔들
+    // 몇 개 차이는 결과에 영향이 미미 — 30분 캐시로 반복 검증/비교 시 weight 10짜리 재조회를 흡수
+    if (limit > 1000) return 1_800_000;
     if (interval === '1d') return 600_000;
     if (interval === '4h' || interval === '1h') return 300_000;
     return BinanceService.KLINES_CACHE_TTL;
@@ -259,6 +299,7 @@ export class BinanceService {
         BinanceService.fundingCallTimes = BinanceService.fundingCallTimes.filter(t => now - t < 300_000);
         if (BinanceService.fundingCallTimes.length >= BinanceService.FUNDING_CALLS_PER_5M) return null;
         BinanceService.fundingCallTimes.push(now);
+        await acquireFuturesWeight(1);
 
         const res = await this.futuresClient.get('/fapi/v1/fundingRate', { params: { symbol, startTime: cursor, limit: 1000 } });
         const batch: FundingRateRow[] = (res.data as any[]).map(r => ({
@@ -285,10 +326,32 @@ export class BinanceService {
     }
   }
 
+  static getFuturesBannedUntil(): number { return BinanceService.futuresBannedUntil; }
+
+  // 전략 검증 등 대량 조회용 — weight 예산(acquireFuturesWeight) 안에서만 요청하고, 일시 제한(429)에
+  // 걸리면 해제 후 재시도. 캐시/동시요청 공유는 getFuturesKlines 그대로 사용
+  async getFuturesKlinesPaced(symbol: string, interval: string, limit: number, retries = 2): Promise<Kline[]> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        if (!this.hasFreshKlines(symbol, interval, limit)) await acquireFuturesWeight(klinesWeight(limit));
+        return await this.getFuturesKlines(symbol, interval, limit);
+      } catch (e: any) {
+        const throttled = e.response?.status === 429 || /일시 제한|IP 차단/.test(e.message ?? '');
+        if (!throttled || attempt >= retries) throw e;
+        // acquireFuturesWeight가 차단 해제 시각까지 기다려줌
+      }
+    }
+  }
+
+  private hasFreshKlines(symbol: string, interval: string, limit: number): boolean {
+    const cached = this.klinesCache.get(`${symbol}|${interval}|${limit}`);
+    return !!cached && Date.now() - cached.ts < BinanceService.klinesCacheTtlFor(interval, limit);
+  }
+
   async getFuturesKlines(symbol: string, interval: string, limit = 500): Promise<Kline[]> {
     const cacheKey = `${symbol}|${interval}|${limit}`;
     const cached = this.klinesCache.get(cacheKey);
-    if (cached && Date.now() - cached.ts < BinanceService.klinesCacheTtlFor(interval)) return cached.data;
+    if (cached && Date.now() - cached.ts < BinanceService.klinesCacheTtlFor(interval, limit)) return cached.data;
 
     // 동시에 여러 전략/유저가 같은 심볼을 요청해도 실제 HTTP 호출은 1회만 — 진행 중인 요청을 공유
     const inflight = this.futuresKlinesInflight.get(cacheKey);

@@ -174,6 +174,7 @@ export interface ValidationResult {
   avgLossPct: number;
   coinsAnalyzed: number;
   coinsWithSignal: number;
+  coinsFailed?: number;            // 캔들 조회 실패로 결과에서 빠진 코인 수 (0이 아니면 표본 불완전)
   interval: string;
   recentTotalSignals: number;      // 최근 62일 신호 수
   recentWins: number;              // 최근 62일 수익 수

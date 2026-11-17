@@ -164,6 +164,11 @@ export default function StrategyComparison() {
             백테스트: 과거 {backtest!.coinsAnalyzed}개 알트코인 대상 {backtest!.totalSignals}건 신호 · 실제: {actual!.actual.trades}건 거래 기준.
             표본 수가 적으면(특히 실제 거래) 차이가 통계적으로 유의미하지 않을 수 있습니다.
           </p>
+          {(backtest!.coinsFailed ?? 0) > 0 && (
+            <p className="text-xs text-warn mt-1">
+              ⚠ 백테스트에서 {backtest!.coinsFailed}개 코인이 바이낸스 조회 실패로 빠졌습니다 — 표본이 불완전하니 잠시 후 다시 비교하세요.
+            </p>
+          )}
           {actual!.liveExtra && (
             <p className="text-xs text-gray-600 mt-1">
               양쪽 모두 펀딩피·수수료를 뺀 순손익 기준입니다 (증거금 대비).

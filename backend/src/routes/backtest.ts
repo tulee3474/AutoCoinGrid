@@ -110,16 +110,28 @@ router.post('/validate', async (req, res) => {
     // 배치 처리 (40개씩, Binance rate limit 보호)
     // interval에 따라 1500캔들이 커버하는 기간이 자동으로 달라짐
     // 1h=62일, 4h=250일, 1d=약 4년
+    // 캔들 조회는 weight 예산(getFuturesKlinesPaced) 안에서만 — 예전엔 40개씩 몰아 받다가 분당 한도를
+    // 넘어 429가 나면 남은 코인이 조용히 빠져서, 같은 전략도 실행할 때마다 표본이 달라져 EV가 크게 흔들렸음.
+    // 이제는 한도에 닿으면 기다렸다 받고, 그래도 실패한 코인 수는 응답(coinsFailed)으로 알려줌
+    const failedSymbols: string[] = [];
     const allResults = await batchSettled(
       allAlt,
       async (symbol) => {
-        const klines = await binance.getFuturesKlines(symbol, interval, 1500);
-        const btcKlines = alignBtcKlines(btcKlinesFull, klines.length);
-        return await runBacktest(klines, { conditions, trade, interval, side, btcKlines }, symbol);
+        try {
+          const klines = await binance.getFuturesKlinesPaced(symbol, interval, 1500);
+          const btcKlines = alignBtcKlines(btcKlinesFull, klines.length);
+          return await runBacktest(klines, { conditions, trade, interval, side, btcKlines }, symbol);
+        } catch (e) {
+          failedSymbols.push(symbol);
+          throw e;
+        }
       },
-      40,
-      300
+      10,
+      0
     );
+    if (failedSymbols.length > 0) {
+      console.warn(`[validate] 캔들 조회 실패로 제외된 코인 ${failedSymbols.length}개: ${failedSymbols.slice(0, 20).join(', ')}`);
+    }
 
     const validResults = allResults.filter(r => r.totalTrades > 0);
 
@@ -127,7 +139,7 @@ router.post('/validate', async (req, res) => {
       return res.json({
         totalSignals: 0, wins: 0, winRate: 0,
         expectedValuePct: 0, avgProfitPct: 0, avgLossPct: 0,
-        coinsAnalyzed: allAlt.length, coinsWithSignal: 0,
+        coinsAnalyzed: allAlt.length, coinsWithSignal: 0, coinsFailed: failedSymbols.length,
         interval, perCoin: [],
         recentTotalSignals: 0, recentWins: 0,
         message: '조건을 충족한 신호가 없습니다. 조건 범위를 넓혀보세요.'
@@ -168,6 +180,7 @@ router.post('/validate', async (req, res) => {
       totalSignals, wins, winRate,
       expectedValuePct, avgProfitPct, avgLossPct,
       coinsAnalyzed: allAlt.length,
+      coinsFailed: failedSymbols.length,
       coinsWithSignal: validResults.length,
       interval,
       recentTotalSignals,
