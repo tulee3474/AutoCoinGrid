@@ -4,6 +4,7 @@ import { useStore } from '../store';
 import { runBacktest } from '../utils/api';
 import { BacktestResult } from '../types';
 import { fmtDate } from '../utils/datetime';
+import { netStatsOf, costSummary } from '../utils/netPnl';
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   ReferenceLine, CartesianGrid
@@ -23,7 +24,8 @@ const LIMIT_OPTIONS = [
 ];
 
 function TradeRow({ trade, idx }: { trade: BacktestResult['trades'][0]; idx: number }) {
-  const isWin = trade.pnlPct > 0;
+  const pct   = trade.netPnlPct ?? trade.pnlPct;   // 순손익 기준 (옛 결과는 가격 기준)
+  const isWin = pct > 0;
   const exitLabel = { takeProfit: '익절', stopLoss: '손절', timeout: '타임아웃' }[trade.exitReason];
   const exitColor = { takeProfit: 'bg-up/15 text-up', stopLoss: 'bg-down/15 text-down', timeout: 'bg-border text-gray-400' }[trade.exitReason];
   return (
@@ -35,7 +37,14 @@ function TradeRow({ trade, idx }: { trade: BacktestResult['trades'][0]; idx: num
       <td className="py-2 text-yellow-400 num">${trade.avgEntryPrice.toFixed(5)}</td>
       <td className="py-2 text-gray-300 num">${trade.exitPrice.toFixed(5)}</td>
       <td className={`py-2 font-bold num ${isWin ? 'text-up' : 'text-down'}`}>
-        {isWin ? '+' : ''}{trade.pnlPct.toFixed(2)}%
+        {isWin ? '+' : ''}{pct.toFixed(2)}%
+        {trade.netPnlPct !== undefined && (
+          <div className="text-[10px] font-normal text-gray-500" title="가격 손익 / 수수료 / 펀딩피 (USDT)">
+            가격 {trade.pnlPct >= 0 ? '+' : ''}{trade.pnlPct.toFixed(1)}%
+            {' · '}수수료 ${(trade.commissionUsdt ?? 0).toFixed(2)}
+            {' · '}펀딩 {trade.fundingMissing ? '미반영' : `$${(trade.fundingUsdt ?? 0).toFixed(2)}`}
+          </div>
+        )}
       </td>
       <td className="py-2 text-gray-400 num">{trade.gridsFilled}개</td>
       <td className="py-2">
@@ -78,6 +87,9 @@ export default function Backtest() {
       setBacktesting(false);
     }
   };
+
+  // 승률·평균·EV는 순손익(펀딩피·수수료 반영) 기준 — 스토어에 남은 옛 결과면 가격 기준으로 폴백
+  const nb = backtestResult ? netStatsOf(backtestResult) : null;
 
   return (
     <div className="space-y-6">
@@ -206,7 +218,7 @@ export default function Backtest() {
       )}
 
       {/* 결과 */}
-      {backtestResult && (
+      {backtestResult && nb && (
         <>
           {/* 통계 */}
           <div className="card">
@@ -219,17 +231,17 @@ export default function Backtest() {
             </h2>
             <p className="text-xs text-gray-500 mb-5">
               이 전략 조건이 {backtestResult.symbol}에서 과거 {backtestResult.totalTrades}번 발생했고,
-              그 중 {backtestResult.winningTrades}번 수익이 났습니다.
+              그 중 {Math.round(nb.winRate * backtestResult.totalTrades)}번 {nb.isNet ? '순손익 기준으로 ' : ''}수익이 났습니다.
             </p>
             <div className="grid grid-cols-3 md:grid-cols-6 gap-4 text-center">
               {[
                 { label: '총 신호',   value: `${backtestResult.totalTrades}회` },
-                { label: '승률',      value: `${(backtestResult.winRate * 100).toFixed(1)}%`,
-                  color: backtestResult.winRate >= 0.5 ? 'text-up' : 'text-down' },
-                { label: '평균 수익', value: `+${backtestResult.avgProfitPct.toFixed(1)}%`, color: 'text-up' },
-                { label: '평균 손실', value: `-${backtestResult.avgLossPct.toFixed(1)}%`,   color: 'text-down' },
-                { label: '기댓값 EV', value: `${backtestResult.expectedValuePct >= 0 ? '+' : ''}${backtestResult.expectedValuePct.toFixed(2)}%`,
-                  color: backtestResult.expectedValuePct >= 0 ? 'text-up' : 'text-down' },
+                { label: '승률',      value: `${(nb.winRate * 100).toFixed(1)}%`,
+                  color: nb.winRate >= 0.5 ? 'text-up' : 'text-down' },
+                { label: '평균 수익', value: `+${nb.avgProfitPct.toFixed(1)}%`, color: 'text-up' },
+                { label: '평균 손실', value: `-${nb.avgLossPct.toFixed(1)}%`,   color: 'text-down' },
+                { label: nb.isNet ? '순손익 EV' : '기댓값 EV', value: `${nb.expectedValuePct >= 0 ? '+' : ''}${nb.expectedValuePct.toFixed(2)}%`,
+                  color: nb.expectedValuePct >= 0 ? 'text-up' : 'text-down' },
                 { label: '최대 낙폭', value: `-${backtestResult.maxDrawdownPct.toFixed(1)}%`, color: 'text-down' },
               ].map(({ label, value, color }) => (
                 <div key={label} className="bg-surface rounded-lg p-3">
@@ -239,16 +251,21 @@ export default function Backtest() {
               ))}
             </div>
 
+            {costSummary(backtestResult) && (
+              <p className="text-xs text-gray-500 mt-3">
+                승률·평균·EV는 펀딩피·수수료(시장가 0.05%)를 뺀 순손익 기준 · {costSummary(backtestResult)}
+              </p>
+            )}
             <div className={`mt-5 p-4 rounded-lg border text-sm ${
-              backtestResult.expectedValuePct > 0
+              nb.expectedValuePct > 0
                 ? 'bg-up/8 border-up/25 text-up'
                 : 'bg-down/8 border-down/25 text-down'
             }`}>
               <strong>베이지안 해석:</strong>{' '}
-              조건 충족 {backtestResult.totalTrades}번 중 {backtestResult.winningTrades}번 수익 ({(backtestResult.winRate * 100).toFixed(1)}% 승률).
-              거래당 기대 손익 <span className="font-bold">{backtestResult.expectedValuePct >= 0 ? '+' : ''}{backtestResult.expectedValuePct.toFixed(2)}%</span>.{' '}
-              {backtestResult.expectedValuePct > 2 ? '전략 유효. 실거래 가능.'
-                : backtestResult.expectedValuePct > 0 ? '소폭 양수. 수수료 감안 후 재검토.'
+              조건 충족 {backtestResult.totalTrades}번 중 {Math.round(nb.winRate * backtestResult.totalTrades)}번 수익 ({(nb.winRate * 100).toFixed(1)}% 승률).
+              거래당 기대 {nb.isNet ? '순손익' : '손익'} <span className="font-bold">{nb.expectedValuePct >= 0 ? '+' : ''}{nb.expectedValuePct.toFixed(2)}%</span>.{' '}
+              {nb.expectedValuePct > 2 ? '전략 유효. 실거래 가능.'
+                : nb.expectedValuePct > 0 ? (nb.isNet ? '소폭 양수. 표본 수·슬리피지 감안 후 재검토.' : '소폭 양수. 수수료 감안 후 재검토.')
                 : '이 코인에서는 손실 기대. 조건 재조정 필요.'}
             </div>
           </div>
@@ -256,7 +273,7 @@ export default function Backtest() {
           {/* 에퀴티 커브 */}
           {backtestResult.equityCurve.length > 1 && (
             <div className="card">
-              <h2 className="section-title mb-4">에퀴티 커브 (누적 손익 USDT)</h2>
+              <h2 className="section-title mb-4">에퀴티 커브 (누적 {nb.isNet ? '순손익' : '손익'} USDT)</h2>
               <ResponsiveContainer width="100%" height={200}>
                 <LineChart data={backtestResult.equityCurve.map(p => ({
                   time: fmtDate(p.time),

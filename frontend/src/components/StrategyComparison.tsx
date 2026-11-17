@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { getStrategies, getStrategyComparisonActual, validateStrategy } from '../utils/api';
 import { StrategyConfig, ValidationResult } from '../types';
+import { netStatsOf, costSummary } from '../utils/netPnl';
 
 type LogType = 'live' | 'paper';
 
@@ -54,13 +55,18 @@ export default function StrategyComparison() {
 
   // 승률(winRate)은 0~1 소수, 나머지 세 지표는 이미 퍼센트 숫자라 스케일이 다름 —
   // "차이(%p)"를 일관되게 계산하려면 전부 퍼센트 숫자 스케일로 맞춰서 저장해야 함
-  const rows: Row[] | null = (backtest && actual) ? [
-    { label: '승률', backtest: backtest.winRate * 100, actual: actual.actual.winRate * 100, fmt: v => `${v.toFixed(1)}%`, higherIsBetter: true },
-    { label: '평균 수익', backtest: backtest.avgProfitPct, actual: actual.actual.avgProfitPct, fmt: fmtPct, higherIsBetter: true },
-    { label: '평균 손실', backtest: backtest.avgLossPct, actual: actual.actual.avgLossPct, fmt: v => `-${v.toFixed(2)}%`, higherIsBetter: false },
-    { label: actual.liveExtra ? '기댓값 (EV, 순손익)' : '기댓값 (EV)', backtest: backtest.expectedValuePct, actual: actual.actual.expectedValuePct, fmt: fmtPct, higherIsBetter: true },
-    // 실거래: 비용 제외한 가격 기준 EV도 참고로 표시 — 백테스트와의 차이 중 얼마가 비용 때문인지 구분용
-    ...(actual.liveExtra ? [
+  // 실거래: 양쪽 다 순손익(펀딩피·수수료 반영) 기준으로 비교.
+  // 가상거래: 가상 로그엔 비용 데이터가 없어 양쪽 다 가격 기준으로 비교 (사과 대 사과)
+  const btNet = backtest ? netStatsOf(backtest) : null;
+  const useNet = !!actual?.liveExtra && !!btNet?.isNet;
+  const bt = backtest && btNet ? (useNet ? btNet : backtest) : null;
+  const rows: Row[] | null = (bt && backtest && actual) ? [
+    { label: '승률', backtest: bt.winRate * 100, actual: actual.actual.winRate * 100, fmt: v => `${v.toFixed(1)}%`, higherIsBetter: true },
+    { label: '평균 수익', backtest: bt.avgProfitPct, actual: actual.actual.avgProfitPct, fmt: fmtPct, higherIsBetter: true },
+    { label: '평균 손실', backtest: bt.avgLossPct, actual: actual.actual.avgLossPct, fmt: v => `-${v.toFixed(2)}%`, higherIsBetter: false },
+    { label: useNet ? '기댓값 (EV, 순손익)' : '기댓값 (EV)', backtest: bt.expectedValuePct, actual: actual.actual.expectedValuePct, fmt: fmtPct, higherIsBetter: true },
+    // 실거래: 비용 제외한 가격 기준 EV도 참고로 표시 — 차이 중 얼마가 비용 모델 오차 때문인지 구분용
+    ...(useNet && actual.liveExtra ? [
       { label: '└ 가격 기준 EV', backtest: backtest.expectedValuePct, actual: actual.liveExtra.gross.expectedValuePct, fmt: fmtPct, higherIsBetter: true },
     ] : []),
   ] : null;
@@ -160,8 +166,9 @@ export default function StrategyComparison() {
           </p>
           {actual!.liveExtra && (
             <p className="text-xs text-gray-600 mt-1">
-              실거래 지표는 펀딩피·수수료를 뺀 순손익 기준입니다 (건당 평균 비용 {fmtPct(actual!.liveExtra.avgCostPct)}, 증거금 대비).
-              백테스트에는 펀딩피·수수료가 반영되지 않습니다.
+              양쪽 모두 펀딩피·수수료를 뺀 순손익 기준입니다 (증거금 대비).
+              실거래 건당 평균 비용 {fmtPct(actual!.liveExtra.avgCostPct)}
+              {costSummary(backtest!) && <> · 백테스트 {costSummary(backtest!)}</>}.
               {actual!.liveExtra.unsyncedTrades > 0 && ` 펀딩피·수수료 미반영 거래 ${actual!.liveExtra.unsyncedTrades}건은 가격 손익으로만 집계됩니다.`}
             </p>
           )}

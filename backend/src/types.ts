@@ -78,6 +78,20 @@ export interface BacktestTrade {
   pnlUsdt: number;
   exitReason: 'takeProfit' | 'stopLoss' | 'timeout';
   gridsFilled: number;
+  // 순손익 (펀딩피·수수료 반영) — pnlPct와 같은 기준(투입 증거금 합계 대비 %)
+  commissionUsdt: number;        // 음수 (진입·그리드·청산 전부 시장가 수수료)
+  fundingUsdt: number;           // 음수=지불, fundingMissing이면 0
+  fundingMissing: boolean;       // 과거 펀딩비 조회 실패/생략으로 펀딩피 미반영
+  netPnlUsdt: number;
+  netPnlPct: number;
+}
+
+// 승률/평균손익/EV 묶음 — 가격 기준과 순손익 기준을 같은 형태로 계산
+export interface PnlStats {
+  winRate: number;
+  avgProfitPct: number;
+  avgLossPct: number;
+  expectedValuePct: number;
 }
 
 export interface BacktestResult {
@@ -92,8 +106,13 @@ export interface BacktestResult {
   expectedValuePct: number;
   maxDrawdownPct: number;
   totalPnlPct: number;
+  // 순손익(펀딩피·수수료 반영) 기준 통계 — 위 winRate/avg*/expectedValuePct는 가격 기준
+  net: PnlStats;
+  avgCommissionPct: number;      // 거래당 평균 수수료 (증거금 대비 %, 음수)
+  avgFundingPct: number;         // 거래당 평균 펀딩피 (증거금 대비 %, 음수=지불, 반영된 거래만)
+  fundingMissingTrades: number;
   trades: BacktestTrade[];
-  equityCurve: { time: number; equity: number }[];
+  equityCurve: { time: number; equity: number }[];   // 순손익 누적
 }
 
 export interface Position {

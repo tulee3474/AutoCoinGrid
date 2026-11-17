@@ -38,6 +38,12 @@ setInterval(() => {
   usageCounts.clear();
 }, 60_000).unref();
 
+export interface FundingRateRow {
+  fundingTime: number;
+  fundingRate: number;        // 예: -0.0075 = -0.75%
+  markPrice: number | null;   // 오래된 데이터는 비어있을 수 있음
+}
+
 export class BinanceService {
   private apiKey: string;
   private apiSecret: string;
@@ -218,6 +224,65 @@ export class BinanceService {
       from = batch[batch.length - 1].closeTime + 1;
     }
     return all;
+  }
+
+  // ── 과거 펀딩비 (백테스트 순손익 계산용) ───────────────────────
+  // /fapi/v1/fundingRate는 일반 weight 한도와 별개로 IP당 5분 500회 제한이 있어 아주 보수적으로 사용:
+  //  - 지난 펀딩비는 바뀌지 않으므로 심볼별로 1시간 캐시 (같은 전략 반복 검증/비교 화면에서 재호출 없음)
+  //  - 동시 요청 공유(inflight) + 최근 5분 호출 수가 FUNDING_CALLS_PER_5M를 넘으면 조회 생략(null) →
+  //    호출부는 해당 거래를 "펀딩 미반영"으로 표시하고 계속 진행 (한도 초과로 IP가 막히는 것보다 안전)
+  private static fundingCache = new Map<string, { from: number; rows: FundingRateRow[]; ts: number }>();
+  private static fundingInflight = new Map<string, Promise<FundingRateRow[] | null>>();
+  private static fundingCallTimes: number[] = [];
+  private static readonly FUNDING_CACHE_TTL = 3_600_000;
+  private static readonly FUNDING_CALLS_PER_5M = 300;   // 바이낸스 한도 500 중 여유 두고 사용
+  private static readonly FUNDING_MAX_PAGES = 8;        // 1시간 주기 코인 × 4h봉 백테스트(250일)도 커버
+
+  async getFundingRateHistory(symbol: string, startTime: number): Promise<FundingRateRow[] | null> {
+    const cached = BinanceService.fundingCache.get(symbol);
+    if (cached && cached.from <= startTime && Date.now() - cached.ts < BinanceService.FUNDING_CACHE_TTL) {
+      return cached.rows;
+    }
+    const inflight = BinanceService.fundingInflight.get(symbol);
+    if (inflight) {
+      const rows = await inflight;
+      // 진행 중이던 요청이 더 짧은 구간이었으면 아래에서 다시 받음
+      const c = BinanceService.fundingCache.get(symbol);
+      if (rows && c && c.from <= startTime) return rows;
+    }
+
+    const promise = (async (): Promise<FundingRateRow[] | null> => {
+      const rows: FundingRateRow[] = [];
+      let cursor = startTime;
+      for (let page = 0; page < BinanceService.FUNDING_MAX_PAGES; page++) {
+        const now = Date.now();
+        BinanceService.fundingCallTimes = BinanceService.fundingCallTimes.filter(t => now - t < 300_000);
+        if (BinanceService.fundingCallTimes.length >= BinanceService.FUNDING_CALLS_PER_5M) return null;
+        BinanceService.fundingCallTimes.push(now);
+
+        const res = await this.futuresClient.get('/fapi/v1/fundingRate', { params: { symbol, startTime: cursor, limit: 1000 } });
+        const batch: FundingRateRow[] = (res.data as any[]).map(r => ({
+          fundingTime: Number(r.fundingTime),
+          fundingRate: parseFloat(r.fundingRate),
+          markPrice:   r.markPrice ? parseFloat(r.markPrice) || null : null,
+        }));
+        rows.push(...batch);
+        if (batch.length < 1000) {
+          BinanceService.fundingCache.set(symbol, { from: startTime, rows, ts: Date.now() });
+          return rows;
+        }
+        cursor = batch[batch.length - 1].fundingTime + 1;
+      }
+      // 페이지 상한 도달 — 받은 구간만으로는 시작 부분이 비어있지 않으니 그대로 쓰되 최신 구간이 잘림 → 미반영 처리
+      return null;
+    })().catch(() => null);
+
+    BinanceService.fundingInflight.set(symbol, promise);
+    try {
+      return await promise;
+    } finally {
+      BinanceService.fundingInflight.delete(symbol);
+    }
   }
 
   async getFuturesKlines(symbol: string, interval: string, limit = 500): Promise<Kline[]> {

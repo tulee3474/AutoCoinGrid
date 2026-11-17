@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { binance } from '../services/binance';
-import { runBacktest } from '../services/backtest';
+import { runBacktest, computePnlStats } from '../services/backtest';
 import { selectTopVolume } from '../services/candidateFilter';
 import { StrategyConditions, TradeConfig, Kline } from '../types';
 
@@ -155,6 +155,15 @@ router.post('/validate', async (req, res) => {
     const recentAvgLossPct     = recentLossTrades.length > 0 ? Math.abs(recentLossTrades.reduce((s, t) => s + t.pnlPct, 0) / recentLossTrades.length) : 0;
     const recentExpectedValuePct = recentWinRate * recentAvgProfitPct - (1 - recentWinRate) * recentAvgLossPct;
 
+    // 순손익(펀딩피·수수료 반영) 기준 — 위 값들은 가격 기준(기존과 동일)
+    const net       = computePnlStats(allTrades.map(t => t.netPnlPct));
+    const recentNet = computePnlStats(recentAllTrades.map(t => t.netPnlPct));
+    const marginOf  = (t: typeof allTrades[number]) => trade.entryAmountUsdt * (1 + t.gridsFilled);
+    const fundedTrades = allTrades.filter(t => !t.fundingMissing);
+    const avgOf = (xs: number[]) => xs.length > 0 ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
+    const avgCommissionPct = avgOf(allTrades.map(t => t.commissionUsdt / marginOf(t) * 100));
+    const avgFundingPct    = avgOf(fundedTrades.map(t => t.fundingUsdt / marginOf(t) * 100));
+
     res.json({
       totalSignals, wins, winRate,
       expectedValuePct, avgProfitPct, avgLossPct,
@@ -167,6 +176,9 @@ router.post('/validate', async (req, res) => {
       recentAvgProfitPct,
       recentAvgLossPct,
       recentExpectedValuePct,
+      net, recentNet,
+      avgCommissionPct, avgFundingPct,
+      fundingMissingTrades: allTrades.length - fundedTrades.length,
       perCoin: validResults
         .map(r => {
           const recentTrades = r.trades.filter(t => t.entryTime >= recentCutoff);

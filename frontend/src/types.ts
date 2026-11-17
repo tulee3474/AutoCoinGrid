@@ -111,6 +111,19 @@ export interface BacktestTrade {
   pnlUsdt: number;
   exitReason: 'takeProfit' | 'stopLoss' | 'timeout';
   gridsFilled: number;
+  // 순손익 (펀딩피·수수료 반영) — 이전 버전 결과(스토어에 남은 것)엔 없을 수 있음
+  commissionUsdt?: number;
+  fundingUsdt?: number;
+  fundingMissing?: boolean;
+  netPnlUsdt?: number;
+  netPnlPct?: number;
+}
+
+export interface PnlStats {
+  winRate: number;
+  avgProfitPct: number;
+  avgLossPct: number;
+  expectedValuePct: number;
 }
 
 export interface BacktestResult {
@@ -125,6 +138,10 @@ export interface BacktestResult {
   expectedValuePct: number;
   maxDrawdownPct: number;
   totalPnlPct: number;
+  net?: PnlStats;               // 순손익 기준 (위 winRate/avg*/expectedValuePct는 가격 기준)
+  avgCommissionPct?: number;    // 거래당 평균 수수료 (증거금 대비 %, 음수)
+  avgFundingPct?: number;       // 거래당 평균 펀딩피 (증거금 대비 %, 음수=지불)
+  fundingMissingTrades?: number;
   trades: BacktestTrade[];
   equityCurve: { time: number; equity: number }[];
 }
@@ -164,6 +181,11 @@ export interface ValidationResult {
   recentAvgProfitPct: number;
   recentAvgLossPct: number;
   recentExpectedValuePct: number;
+  net?: PnlStats;               // 순손익 기준 (신호 없을 땐 없음)
+  recentNet?: PnlStats;
+  avgCommissionPct?: number;
+  avgFundingPct?: number;
+  fundingMissingTrades?: number;
   perCoin: {
     symbol: string;
     signals: number;

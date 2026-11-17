@@ -1,7 +1,24 @@
-import { Kline, StrategyConditions, TradeConfig, BacktestResult, BacktestTrade, Side } from '../types';
+import { Kline, StrategyConditions, TradeConfig, BacktestResult, BacktestTrade, Side, PnlStats } from '../types';
 import { calcRSI, calc24hChange, candlesPerDay } from './indicator';
 import { calcPdfGridPrices, calcPdfAvgEntry, calcPdfStopLoss, calcTakeProfitPrice, calcSimpleStopLoss, calcIsolatedLiquidationPrice, capSlWithLiquidation, truncateGridsToSafeZone, resolveReEntryCooldownHours, dirSign } from './gridUtils';
-import { binanceMaster, pickLeverageBracket, LeverageBracket } from './binance';
+import { binance, binanceMaster, pickLeverageBracket, LeverageBracket, FundingRateRow } from './binance';
+
+// 실거래는 진입·그리드 추가·TP/SL 전부 시장가(MARKET/STOP_MARKET/TAKE_PROFIT_MARKET)라 테이커 수수료 적용
+// (바이낸스 USDT-M 기본 테이커 0.05%, BNB 할인/VIP 미반영)
+const TAKER_FEE_RATE = 0.0005;
+
+// 시뮬레이션 내부용 — 펀딩피 계산에 필요한 체결 이력 (펀딩 시점의 보유 수량을 구하기 위함)
+interface SimFill { time: number; qty: number }
+type SimTrade = Omit<BacktestTrade, 'commissionUsdt' | 'fundingUsdt' | 'fundingMissing' | 'netPnlUsdt' | 'netPnlPct'>;
+
+export function computePnlStats(pcts: number[]): PnlStats {
+  const wins   = pcts.filter(p => p > 0);
+  const losses = pcts.filter(p => p <= 0);
+  const winRate      = pcts.length   > 0 ? wins.length / pcts.length : 0;
+  const avgProfitPct = wins.length   > 0 ? wins.reduce((a, b) => a + b, 0) / wins.length : 0;
+  const avgLossPct   = losses.length > 0 ? Math.abs(losses.reduce((a, b) => a + b, 0) / losses.length) : 0;
+  return { winRate, avgProfitPct, avgLossPct, expectedValuePct: winRate * avgProfitPct - (1 - winRate) * avgLossPct };
+}
 
 interface BacktestOptions {
   conditions: StrategyConditions;
@@ -86,10 +103,13 @@ function simulateTrade(
   interval: string,
   brackets: LeverageBracket[],
   side: Side
-): BacktestTrade | null {
+): { trade: SimTrade; fills: SimFill[] } | null {
   if (entryIdx + 1 >= klines.length) return null;
 
   const entryPrice = klines[entryIdx + 1].open;
+  // 펀딩피 계산용 체결 이력 — 진입·그리드 1건당 증거금(entryAmountUsdt) × 레버리지 만큼의 명목가치
+  const fillNotional = trade.entryAmountUsdt * trade.leverage;
+  const fills: SimFill[] = [{ time: klines[entryIdx + 1].openTime, qty: fillNotional / entryPrice }];
 
   // maxDurationHours: null = 캔들 끝까지, 숫자 = 시간 → 캔들 수 변환
   const maxCandles = trade.maxDurationHours != null
@@ -138,6 +158,8 @@ function simulateTrade(
     // 안 하면 SL이 최초 진입가 기준 캡에 고정돼 남은 그리드가 그 캡보다 먼 가격에 있으면
     // 절대 채워질 수 없는 문제가 생겨 실제 동작과 백테스트 결과가 어긋남
     if (filledNow > gridsFilled) {
+      // 그리드는 캔들 도중 체결 — 체결 시각을 캔들 시작으로 두고, 같은 시각의 펀딩은 체결 전으로 취급
+      for (let k = gridsFilled; k < filledNow; k++) fills.push({ time: candle.openTime, qty: fillNotional / gridPrices[k] });
       gridsFilled     = filledNow;
       avgEntryPrice   = calcPdfAvgEntry(entryPrice, gridPrices.slice(0, gridsFilled));
       const remainingLevels = gridPrices.length - gridsFilled;
@@ -179,16 +201,53 @@ function simulateTrade(
   const pnlUsdt = (trade.entryAmountUsdt * (1 + gridsFilled)) * (pnlPct / 100);
 
   return {
-    entryTime: klines[entryIdx + 1].openTime,
-    exitTime,
-    entryPrice,
-    exitPrice,
-    avgEntryPrice,
-    pnlPct,
-    pnlUsdt,
-    exitReason,
-    gridsFilled
+    trade: {
+      entryTime: klines[entryIdx + 1].openTime,
+      exitTime,
+      entryPrice,
+      exitPrice,
+      avgEntryPrice,
+      pnlPct,
+      pnlUsdt,
+      exitReason,
+      gridsFilled
+    },
+    fills
   };
+}
+
+// ── 순손익 (수수료 + 펀딩피) ───────────────────────────────────
+
+function applyCosts(
+  t: SimTrade,
+  fills: SimFill[],
+  trade: TradeConfig,
+  side: Side,
+  fundingRows: FundingRateRow[] | null,
+  priceAt: (time: number) => number
+): BacktestTrade {
+  const totalQty    = fills.reduce((a, f) => a + f.qty, 0);
+  const entryNotional = trade.entryAmountUsdt * trade.leverage * fills.length;
+  const commissionUsdt = -TAKER_FEE_RATE * (entryNotional + totalQty * t.exitPrice);
+
+  // 펀딩: 진입 시각 이후 ~ 청산 시각까지의 정산분. 시점별 보유 수량 × 마크가격 × 펀딩비,
+  // 숏은 펀딩비가 양수면 받고 음수면 냄 (롱은 반대) → income = rate × 명목가치 × dirSign
+  // (손절은 exitTime이 캔들 시작이라 그 시각 정산분까지 포함되도록 <=)
+  let fundingUsdt = 0;
+  const fundingMissing = fundingRows === null;
+  if (fundingRows) {
+    for (const r of fundingRows) {
+      if (r.fundingTime <= t.entryTime) continue;
+      if (r.fundingTime > t.exitTime) break;
+      const qty = fills.reduce((a, f) => a + (f.time < r.fundingTime ? f.qty : 0), 0);
+      const price = r.markPrice ?? priceAt(r.fundingTime);
+      fundingUsdt += r.fundingRate * qty * price * dirSign(side);
+    }
+  }
+
+  const margin     = trade.entryAmountUsdt * fills.length;
+  const netPnlUsdt = t.pnlUsdt + commissionUsdt + fundingUsdt;
+  return { ...t, commissionUsdt, fundingUsdt, fundingMissing, netPnlUsdt, netPnlPct: netPnlUsdt / margin * 100 };
 }
 
 // ── 메인 백테스트 함수 ──────────────────────────────────────
@@ -199,7 +258,7 @@ export async function runBacktest(
   symbol: string
 ): Promise<BacktestResult> {
   const { conditions, trade, interval, side = 'SHORT', btcKlines } = options;
-  const trades: BacktestTrade[] = [];
+  const simTrades: { trade: SimTrade; fills: SimFill[] }[] = [];
 
   // 유지증거금률 구간표는 심볼당 하나(포지션 규모별 상수)라 캔들 루프 전에 한 번만 조회 —
   // 마스터 키 미설정/조회 실패 시 빈 배열 → 안전마진 로직은 자동으로 no-op(기존 동작 유지)
@@ -210,9 +269,10 @@ export async function runBacktest(
   let i = 20; // MA20 기준으로 워밍업
   while (i < klines.length - 1) {
     if (checkConditions(klines, i, conditions, interval, side, btcKlines)) {
-      const tradeSim = simulateTrade(klines, i, trade, interval, brackets, side);
-      if (tradeSim) {
-        trades.push(tradeSim);
+      const sim = simulateTrade(klines, i, trade, interval, brackets, side);
+      if (sim) {
+        const tradeSim = sim.trade;
+        simTrades.push(sim);
         console.log(
           `[BT] ${symbol} | 진입: ${tradeSim.entryPrice.toFixed(6)}` +
           ` | 평균진입: ${tradeSim.avgEntryPrice.toFixed(6)}` +
@@ -242,18 +302,31 @@ export async function runBacktest(
     i++;
   }
 
+  // 펀딩비는 신호가 실제로 나온 코인만 조회 (전체 알트 검증에서도 호출 수가 신호 코인 수로 제한됨)
+  const fundingRows = simTrades.length > 0
+    ? await binance.getFundingRateHistory(symbol, simTrades[0].trade.entryTime)
+    : null;
+  const candleMs = (MINS_PER_CANDLE[interval] ?? 60) * 60_000;
+  const priceAt = (time: number) => {
+    const idx = Math.min(klines.length - 1, Math.max(0, Math.floor((time - klines[0].openTime) / candleMs)));
+    return klines[idx].open;
+  };
+  const trades: BacktestTrade[] = simTrades.map(s => applyCosts(s.trade, s.fills, trade, side, fundingRows, priceAt));
+
   const wins   = trades.filter(t => t.pnlPct > 0);
   const losses = trades.filter(t => t.pnlPct <= 0);
-  const winRate       = trades.length > 0 ? wins.length / trades.length : 0;
-  const avgProfitPct  = wins.length   > 0 ? wins.reduce((a, t)   => a + t.pnlPct, 0) / wins.length   : 0;
-  const avgLossPct    = losses.length > 0 ? Math.abs(losses.reduce((a, t) => a + t.pnlPct, 0) / losses.length) : 0;
-  const expectedValuePct = winRate * avgProfitPct - (1 - winRate) * avgLossPct;
+  const { winRate, avgProfitPct, avgLossPct, expectedValuePct } = computePnlStats(trades.map(t => t.pnlPct));
+  const net = computePnlStats(trades.map(t => t.netPnlPct));
+  const fundedTrades = trades.filter(t => !t.fundingMissing);
+  const commissionPcts = trades.map(t => t.commissionUsdt / (trade.entryAmountUsdt * (1 + t.gridsFilled)) * 100);
+  const fundingPcts    = fundedTrades.map(t => t.fundingUsdt / (trade.entryAmountUsdt * (1 + t.gridsFilled)) * 100);
+  const avg = (xs: number[]) => xs.length > 0 ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
 
   let equity = 0, peak = 0, maxDrawdown = 0;
   const equityCurve: { time: number; equity: number }[] = [{ time: klines[0].openTime, equity: 0 }];
 
   for (const t of trades) {
-    equity += t.pnlUsdt;
+    equity += t.netPnlUsdt;
     if (equity > peak) peak = equity;
     const dd = peak - equity;
     if (dd > maxDrawdown) maxDrawdown = dd;
@@ -274,6 +347,10 @@ export async function runBacktest(
       ? (maxDrawdown / (trade.entryAmountUsdt * trades.length)) * 100
       : 0,
     totalPnlPct: trades.reduce((a, t) => a + t.pnlPct, 0),
+    net,
+    avgCommissionPct: avg(commissionPcts),
+    avgFundingPct:    avg(fundingPcts),
+    fundingMissingTrades: trades.length - fundedTrades.length,
     trades,
     equityCurve
   };

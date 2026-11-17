@@ -4,6 +4,7 @@ import { useStore } from '../store';
 import { createStrategy, updateStrategy, getStrategies, deleteStrategy, toggleStrategy, validateStrategy, runBacktest, getPresets, AdminPreset } from '../utils/api';
 import { ValidationResult, BacktestResult, StrategyConditions, TradeConfig, Side, mirrorConditionsForSide, mirrorTradeForSide, DEFAULT_CANDIDATE_TOP_PCT, FULL_CANDIDATE_TOP_PCT } from '../types';
 import { fmtDate } from '../utils/datetime';
+import { netStatsOf, costSummary } from '../utils/netPnl';
 
 // ── 공통 입력 ────────────────────────────────────────────────
 
@@ -163,7 +164,8 @@ function CoinDetailModal({
       .finally(() => setLoading(false));
   }, [symbol]);
 
-  const isPositiveEV = (result?.expectedValuePct ?? 0) > 0;
+  const modalNet = result ? netStatsOf(result) : null;
+  const isPositiveEV = (modalNet?.expectedValuePct ?? 0) > 0;
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -197,9 +199,9 @@ function CoinDetailModal({
                   <div className="grid grid-cols-2 gap-3 mb-4">
                     {[
                       { label: '총 신호', value: `${result.totalTrades}회` },
-                      { label: '승률', value: `${(result.winRate * 100).toFixed(1)}%`, color: result.winRate >= 0.5 ? 'text-up' : 'text-down' },
-                      { label: '평균 수익', value: `+${result.avgProfitPct.toFixed(1)}%`, color: 'text-up' },
-                      { label: '기댓값 EV', value: `${result.expectedValuePct >= 0 ? '+' : ''}${result.expectedValuePct.toFixed(2)}%`, color: isPositiveEV ? 'text-up' : 'text-down' },
+                      { label: '승률', value: `${(modalNet!.winRate * 100).toFixed(1)}%`, color: modalNet!.winRate >= 0.5 ? 'text-up' : 'text-down' },
+                      { label: '평균 수익', value: `+${modalNet!.avgProfitPct.toFixed(1)}%`, color: 'text-up' },
+                      { label: modalNet!.isNet ? '순손익 EV' : '기댓값 EV', value: `${modalNet!.expectedValuePct >= 0 ? '+' : ''}${modalNet!.expectedValuePct.toFixed(2)}%`, color: isPositiveEV ? 'text-up' : 'text-down' },
                     ].map(({ label, value, color }) => (
                       <div key={label} className="bg-surface rounded-lg p-3 text-center">
                         <div className={`text-lg font-bold num ${color ?? 'text-gray-100'}`}>{value}</div>
@@ -207,14 +209,16 @@ function CoinDetailModal({
                       </div>
                     ))}
                   </div>
+                  {costSummary(result) && <p className="text-xs text-gray-500 mb-3">{costSummary(result)}</p>}
                   <div className="space-y-1.5 max-h-60 overflow-y-auto">
                     <p className="text-xs text-gray-500 mb-2">개별 거래 내역</p>
                     {result.trades.map((t, i) => (
                       <div key={i} className="text-xs p-2 bg-surface rounded-lg space-y-1">
                         <div className="flex items-center justify-between">
                           <span className="text-gray-400">{fmtDate(t.entryTime)}</span>
-                          <span className={`font-semibold num ${t.pnlPct > 0 ? 'text-up' : 'text-down'}`}>
-                            {t.pnlPct > 0 ? '+' : ''}{t.pnlPct.toFixed(2)}%
+                          <span className={`font-semibold num ${(t.netPnlPct ?? t.pnlPct) > 0 ? 'text-up' : 'text-down'}`}
+                            title={t.netPnlPct !== undefined ? `가격 ${t.pnlPct.toFixed(2)}% · 수수료 $${(t.commissionUsdt ?? 0).toFixed(2)} · 펀딩 ${t.fundingMissing ? '미반영' : '$' + (t.fundingUsdt ?? 0).toFixed(2)}` : undefined}>
+                            {(t.netPnlPct ?? t.pnlPct) > 0 ? '+' : ''}{(t.netPnlPct ?? t.pnlPct).toFixed(2)}%
                           </span>
                           <span className={`px-1.5 py-0.5 rounded ${
                             t.exitReason === 'takeProfit' ? 'bg-up/15 text-up' :
@@ -277,8 +281,12 @@ function ValidationPanel({ result, loading, conditions, trade, side }: {
 
   if (!result) return null;
 
-  const isPositiveEV = result.expectedValuePct > 0;
-  const winPct = (result.winRate * 100).toFixed(1);
+  // 승률·EV·평균은 순손익(펀딩피·수수료 반영) 기준 — 옛 응답이면 가격 기준으로 폴백
+  const nv  = netStatsOf(result);
+  const rnv = result.recentNet ?? { winRate: result.recentWinRate, avgProfitPct: result.recentAvgProfitPct, avgLossPct: result.recentAvgLossPct, expectedValuePct: result.recentExpectedValuePct };
+  const isPositiveEV = nv.expectedValuePct > 0;
+  const winPct = (nv.winRate * 100).toFixed(1);
+  const netWins = Math.round(nv.winRate * result.totalSignals);
 
   if (result.totalSignals === 0) {
     return (
@@ -311,7 +319,7 @@ function ValidationPanel({ result, loading, conditions, trade, side }: {
         </div>
         <div className={`text-sm font-medium mb-4 p-3 rounded-lg ${isPositiveEV ? 'bg-up/10 text-up' : 'bg-down/10 text-down'}`}>
           조건이 과거에 <strong>{result.totalSignals}번</strong> 발생 →{' '}
-          <strong>{result.wins}번</strong> 수익 · <strong>{result.totalSignals - result.wins}번</strong> 손실
+          <strong>{netWins}번</strong> 수익 · <strong>{result.totalSignals - netWins}번</strong> 손실
           <span className="text-gray-400 font-normal"> (승률 {winPct}%)</span>
         </div>
         {/* 전체 기간 통계 */}
@@ -320,22 +328,22 @@ function ValidationPanel({ result, loading, conditions, trade, side }: {
           <div className="text-xs text-gray-600 mb-2">※ 상장폐지 코인 포함 — 최근 62일에 신호 없으면 현재 비활성</div>
           <div className="grid grid-cols-2 gap-2">
             <div className="bg-surface rounded-lg p-3 text-center">
-              <div className={`text-lg font-bold num ${result.winRate >= 0.5 ? 'text-up' : 'text-down'}`}>{winPct}%</div>
+              <div className={`text-lg font-bold num ${nv.winRate >= 0.5 ? 'text-up' : 'text-down'}`}>{winPct}%</div>
               <div className="text-xs text-gray-500 mt-0.5">승률</div>
             </div>
             <div className="bg-surface rounded-lg p-3 text-center">
               <div className={`text-lg font-bold num ${isPositiveEV ? 'text-up' : 'text-down'}`}>
-                {result.expectedValuePct >= 0 ? '+' : ''}{result.expectedValuePct.toFixed(2)}%
+                {nv.expectedValuePct >= 0 ? '+' : ''}{nv.expectedValuePct.toFixed(2)}%
               </div>
-              <div className="text-xs text-gray-500 mt-0.5">기댓값 EV</div>
+              <div className="text-xs text-gray-500 mt-0.5">{nv.isNet ? '순손익 EV' : '기댓값 EV'}</div>
             </div>
           </div>
         </div>
 
         {/* 최근 62일 통계 */}
         {result.recentTotalSignals !== undefined && (() => {
-          const rWinPct = (result.recentWinRate * 100).toFixed(1);
-          const rIsPositiveEV = result.recentExpectedValuePct > 0;
+          const rWinPct = (rnv.winRate * 100).toFixed(1);
+          const rIsPositiveEV = rnv.expectedValuePct > 0;
           return (
             <div className="mb-4">
               <div className="text-xs text-gray-500 mb-2">
@@ -347,14 +355,14 @@ function ValidationPanel({ result, loading, conditions, trade, side }: {
               {result.recentTotalSignals > 0 ? (
                 <div className="grid grid-cols-2 gap-2">
                   <div className="bg-surface rounded-lg p-3 text-center">
-                    <div className={`text-lg font-bold num ${result.recentWinRate >= 0.5 ? 'text-up' : 'text-down'}`}>{rWinPct}%</div>
+                    <div className={`text-lg font-bold num ${rnv.winRate >= 0.5 ? 'text-up' : 'text-down'}`}>{rWinPct}%</div>
                     <div className="text-xs text-gray-500 mt-0.5">승률</div>
                   </div>
                   <div className="bg-surface rounded-lg p-3 text-center">
                     <div className={`text-lg font-bold num ${rIsPositiveEV ? 'text-up' : 'text-down'}`}>
-                      {result.recentExpectedValuePct >= 0 ? '+' : ''}{result.recentExpectedValuePct.toFixed(2)}%
+                      {rnv.expectedValuePct >= 0 ? '+' : ''}{rnv.expectedValuePct.toFixed(2)}%
                     </div>
-                    <div className="text-xs text-gray-500 mt-0.5">기댓값 EV</div>
+                    <div className="text-xs text-gray-500 mt-0.5">{nv.isNet ? '순손익 EV' : '기댓값 EV'}</div>
                   </div>
                 </div>
               ) : (
@@ -367,14 +375,19 @@ function ValidationPanel({ result, loading, conditions, trade, side }: {
         {/* 평균 수익/손실 */}
         <div className="grid grid-cols-2 gap-2 mb-4">
           <div className="bg-surface rounded-lg p-3 text-center">
-            <div className="text-lg font-bold num text-up">+{result.avgProfitPct.toFixed(1)}%</div>
+            <div className="text-lg font-bold num text-up">+{nv.avgProfitPct.toFixed(1)}%</div>
             <div className="text-xs text-gray-500 mt-0.5">평균 수익 (전체)</div>
           </div>
           <div className="bg-surface rounded-lg p-3 text-center">
-            <div className="text-lg font-bold num text-down">-{result.avgLossPct.toFixed(1)}%</div>
+            <div className="text-lg font-bold num text-down">-{nv.avgLossPct.toFixed(1)}%</div>
             <div className="text-xs text-gray-500 mt-0.5">평균 손실 (전체)</div>
           </div>
         </div>
+        {costSummary(result) && (
+          <p className="text-xs text-gray-500 mb-4">
+            승률·평균·EV는 펀딩피·수수료(시장가 0.05%)를 뺀 순손익 기준 · {costSummary(result)}
+          </p>
+        )}
         <button onClick={() => setShowPerCoin(v => !v)} className="text-xs text-accent hover:underline flex items-center gap-1">
           {showPerCoin ? '▲' : '▼'} 코인별 신호 상세 ({result.coinsWithSignal}개 코인)
           <span className="text-gray-500">· 클릭하면 상세 백테스트</span>
