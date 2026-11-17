@@ -453,6 +453,33 @@ export const downloadMlSamples = async (strategyId: string) => {
   a.click();
   URL.revokeObjectURL(url);
 };
+// ── AI 판정 기록 (실전 검증) ──
+export interface MlDecisionRow {
+  id: string; target: 'paper' | 'live'; symbol: string; side: string; decidedAt: number; price: number;
+  prob: number; threshold: number; pass: boolean; mlTarget: MlTarget; lossCutPct: number | null; modelTrainedAt: number;
+  evalStatus: 'pending' | 'done' | 'unresolved'; evalAt: number | null;
+  simExitPrice: number | null; simExitTime: number | null; simExitReason: 'takeProfit' | 'stopLoss' | 'timeout' | null;
+  simGrids: number | null; simNetPnlPct: number | null; simGrossPnlPct: number | null;
+  good: boolean | null; correct: boolean | null;
+}
+export interface MlDecisionGroup { total: number; evaluated: number; correct: number; goodCount: number; sumNetPct: number; avgNetPct: number }
+export interface MlDecisionSummary {
+  total: number; pending: number; unresolved: number;
+  blocked: MlDecisionGroup; passed: MlDecisionGroup;
+  aiEffectSumPct: number; auc: number | null;
+}
+export const getMlDecisions = (strategyId: string, target: 'all' | 'paper' | 'live') =>
+  api.get(`/ml/${strategyId}/decisions`, { params: { target } }).then(r => r.data as { summary: MlDecisionSummary; rows: MlDecisionRow[] });
+export const evaluateMlDecisions = (strategyId: string) =>
+  api.post(`/ml/${strategyId}/decisions/evaluate`, {}, { timeout: 300_000 }).then(r => r.data as { done: number; unresolved: number; pending: number });
+export const downloadMlDecisions = async (strategyId: string) => {
+  const r = await api.get(`/ml/${strategyId}/decisions.csv`, { responseType: 'blob', timeout: 120_000 });
+  const url = URL.createObjectURL(r.data as Blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `ml_decisions_${strategyId.slice(0, 8)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
 export const updateMlFilter = (strategyId: string, patch: { applyPaper?: boolean; applyLive?: boolean; threshold?: number; autoUpdate?: boolean }) =>
   api.patch(`/ml/${strategyId}`, patch).then(r => r.data as { filter: MlFilterInfo });
 export const deleteMlFilter = (strategyId: string) =>

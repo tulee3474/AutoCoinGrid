@@ -252,6 +252,30 @@ function applyCosts(
   return { ...t, commissionUsdt, fundingUsdt, fundingMissing, netPnlUsdt, netPnlPct: netPnlUsdt / margin * 100 };
 }
 
+// ── 특정 시각·가격에 진입했다고 가정한 단일 거래 시뮬레이션 (AI 판정 사후 평가용) ──────
+// 판정 시각이 속한 캔들을 "진입 캔들"로 보고 시가를 판정 가격으로 바꾼 뒤, 백테스트와 같은 규칙
+// (다음 캔들부터 그리드/TP/SL/시간 만료 확인, 수수료·펀딩 반영)으로 결과를 계산
+export async function simulateEntryAt(
+  klines: Kline[], entryTime: number, entryPrice: number, trade: TradeConfig, interval: string, side: Side,
+  symbol: string, fundingRows: FundingRateRow[] | null
+): Promise<BacktestTrade | null> {
+  const candleMs = (MINS_PER_CANDLE[interval] ?? 60) * 60_000;
+  const idx = klines.findIndex(k => k.openTime <= entryTime && entryTime < k.openTime + candleMs);
+  if (idx < 1) return null;
+  const ks = klines.slice();
+  ks[idx] = { ...ks[idx], open: entryPrice };
+  const brackets = trade.gridEnabled !== false
+    ? await binanceMaster.getLeverageBracket(symbol).catch(() => [])
+    : [];
+  const sim = simulateTrade(ks, idx - 1, trade, interval, brackets, side);
+  if (!sim) return null;
+  const priceAt = (time: number) => {
+    const i = Math.min(ks.length - 1, Math.max(0, Math.floor((time - ks[0].openTime) / candleMs)));
+    return ks[i].open;
+  };
+  return applyCosts(sim.trade, sim.fills, trade, side, fundingRows, priceAt);
+}
+
 // ── 메인 백테스트 함수 ──────────────────────────────────────
 
 export async function runBacktest(

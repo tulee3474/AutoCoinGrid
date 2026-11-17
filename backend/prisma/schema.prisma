@@ -36,13 +36,15 @@ model Strategy {
   conditions Json
   trade      Json
   coins      Json     @default("[]")
-  mlFilter   Json?    // AI 진입 필터 (모델+검증 결과+사용 여부/기준). null = 학습 안 함
+  mlFilter   Json?    // AI 진입 필터 (검증 결과+사용 여부/기준 — 모델 본체는 ml_models). null = 학습 안 함
   mlData     Json?    // AI 학습 데이터 수집 상태 (수집 구간·자동 업데이트 설정). null = 수집 안 함
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  mlSamples MlSample[]
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mlSamples   MlSample[]
+  mlModel     MlModel?
+  mlDecisions MlDecision[]
 
   @@map("strategies")
 }
@@ -205,4 +207,56 @@ model MlMarketHour {
   n    Int            // 계산에 쓴 코인 수
 
   @@map("ml_market_hours")
+}
+
+// AI 필터 모델 본체 (트리, 수백 KB~1MB) — 전략 테이블과 분리: 스캐너가 매분 전략을 읽을 때 같이 안 읽히도록.
+// 실제 판정이 필요할 때만 읽고 서버 메모리에 캐시 (trainedAt으로 버전 확인)
+model MlModel {
+  strategyId String   @id
+  trainedAt  Float    // MlFilterState.trainedAt (ms)
+  model      Json
+  updatedAt  DateTime @updatedAt
+
+  strategy Strategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+
+  @@map("ml_models")
+}
+
+// AI 판정 기록 — 스캐너가 AI로 판정할 때마다 1건(같은 전략·코인·대상은 4시간에 1번).
+// 나중에 "그 시점에 진입했다면?"을 같은 매매 설정으로 시뮬레이션해 AI가 맞았는지 자동 평가
+model MlDecision {
+  id             String    @id @default(uuid())
+  userId         String
+  strategyId     String
+  strategyName   String
+  target         String    // 'paper' | 'live'
+  symbol         String
+  side           String
+  decidedAt      DateTime
+  price          Float     // 판정 시점 가격 (= 진입했다면 진입가)
+  prob           Float     // AI 점수
+  threshold      Float
+  pass           Boolean   // true = 통과(진입), false = 차단
+  mlTarget       String    // 'profit' | 'avoidLoss' — 맞음/틀림 판단 기준
+  lossCutPct     Float?    // avoidLoss: 이 % 이하 순손익 = 큰 손실
+  modelTrainedAt Float
+  interval       String    // 시뮬레이션 캔들 (전략 타임프레임)
+  trade          Json      // 판정 당시 매매 설정 스냅샷
+  features       Json      // 판정 당시 AI 입력값 (FEATURE_NAMES 순서, null=결측)
+  evalStatus     String    @default("pending")   // pending | done | unresolved(30일 넘게 결과 확정 불가)
+  evalAt         DateTime?
+  simExitPrice   Float?
+  simExitTime    DateTime?
+  simExitReason  String?   // takeProfit | stopLoss | timeout
+  simGrids       Int?
+  simNetPnlPct   Float?    // 진입했다면 순손익 % (증거금 대비, 수수료+펀딩)
+  simGrossPnlPct Float?
+  good           Boolean?  // 결과가 좋은 거래였나 (avoidLoss: 큰 손실 아님 / profit: 순손익 > 0)
+  correct        Boolean?  // AI가 맞았나 (통과 & good, 또는 차단 & !good)
+
+  strategy Strategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+
+  @@index([strategyId, decidedAt])
+  @@index([evalStatus, decidedAt])
+  @@map("ml_decisions")
 }

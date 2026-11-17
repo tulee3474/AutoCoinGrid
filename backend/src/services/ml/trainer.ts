@@ -6,6 +6,8 @@ import { Kline, StrategyConditions, TradeConfig, Side, PnlStats } from '../../ty
 import {
   computeFeatures, fundingRateAt, FEATURE_NAMES, FEATURE_LABELS, BREADTH_IDX, breadthKey, breadthOf, Breadth, selectCandidateTickers,
 } from './features';
+import { forgetModel } from './filter';
+import { evaluatePendingDecisions } from './decisionEval';
 import { trainGbdtAsync, predictGbdt, auc, GbdtModel, GbdtParams, DEFAULT_PARAMS } from './gbdt';
 
 // ── AI 진입 필터 학습 ──────────────────────────────────────────
@@ -41,7 +43,7 @@ export interface MlFilterState {
   trainedFor: string;          // 학습 당시 전략 설정 해시 — 바뀌면 재학습 권장
   days: number;                // 학습 데이터 기간 (일)
   featureNames: string[];
-  model: GbdtModel;
+  model?: GbdtModel;           // 모델 본체는 ml_models 테이블 — 여기엔 이전 버전 데이터에만 남아 있음 (서버 시작 시 이전)
   metrics: {
     samples: number;
     trainSamples: number;
@@ -203,7 +205,7 @@ async function runTraining(userId: string, strategyId: string, opts: TrainOption
   } else {
     state.applyPaper = !!prev?.applyPaper && passed;
     state.applyLive  = !!prev?.applyLive  && passed;
-    await prisma.strategy.update({ where: { id: strategyId }, data: { mlFilter: state as any } });
+    await saveFilterState(strategyId, state);
     if (opts.mode === 'auto') {
       await saveData(strategyId, {
         lastAuto: { at: Date.now(), ok: true, message: passed ? `재학습 완료 — 기준 ${(state.threshold * 100).toFixed(1)}%` : `재학습 완료 — 추천 기준 없음 (AUC ${state.metrics.auc})` },
@@ -212,6 +214,34 @@ async function runTraining(userId: string, strategyId: string, opts: TrainOption
   }
   job.status = 'done';
   job.phase = '완료';
+}
+
+// 모델 본체는 ml_models, 나머지(사용 여부·기준·검증 결과)는 전략 테이블 mlFilter에 — 같은 trainedAt으로 짝을 맞춤
+async function saveFilterState(strategyId: string, state: MlFilterState) {
+  const { model, ...meta } = state;
+  await prisma.$transaction([
+    prisma.mlModel.upsert({
+      where: { strategyId },
+      create: { strategyId, trainedAt: state.trainedAt, model: model as any },
+      update: { trainedAt: state.trainedAt, model: model as any },
+    }),
+    prisma.strategy.update({ where: { id: strategyId }, data: { mlFilter: meta as any } }),
+  ]);
+  forgetModel(strategyId);
+}
+
+// 서버 시작 시 1회: 전략 테이블 mlFilter 안에 모델이 들어 있던 이전 형식 → ml_models로 옮기고 전략 쪽은 비움
+async function migrateLegacyModels() {
+  const ids = await prisma.strategy.findMany({ select: { id: true } });
+  let moved = 0;
+  for (const { id } of ids) {
+    const row = await prisma.strategy.findUnique({ where: { id }, select: { mlFilter: true } });
+    const f = row?.mlFilter as unknown as MlFilterState | null;
+    if (!f?.model) continue;
+    await saveFilterState(id, f);
+    moved++;
+  }
+  if (moved > 0) console.log(`[ml] AI 모델 ${moved}개를 ml_models 테이블로 이전`);
 }
 
 // ── 후보 코인: 전략 검증(validate)과 동일한 기준 ─────────────────────
@@ -579,4 +609,19 @@ export function startMlScheduler() {
   };
   setTimeout(tick, 10 * 60_000);   // 서버 시작 직후 스캐너 복구와 겹치지 않게 10분 뒤 첫 확인
   setInterval(tick, 60 * 60_000);
+
+  migrateLegacyModels().catch(e => console.error('[ml] 모델 이전 실패', e));
+
+  // AI 판정 사후 평가: 1시간마다 결과가 확정된 판정을 시뮬레이션해 맞음/틀림 기록 (학습 중엔 건너뜀 — 요청 한도 보호)
+  const evalTick = async () => {
+    if (anyRunning()) return;
+    try {
+      const r = await evaluatePendingDecisions();
+      if (r.done + r.unresolved > 0) console.log(`[ml] 판정 평가: 확정 ${r.done}건, 미확정 처리 ${r.unresolved}건, 대기 ${r.pending}건`);
+    } catch (e) {
+      console.error('[ml] 판정 평가 실패', e);
+    }
+  };
+  setTimeout(evalTick, 15 * 60_000);
+  setInterval(evalTick, 60 * 60_000);
 }

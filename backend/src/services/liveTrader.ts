@@ -1204,7 +1204,7 @@ async function runLiveScanCycle(userId: string, broadcast: (data: unknown) => vo
       addLog(userId, `전략 "${strategy.name}"(${strategy.side}): 후보 ${signals.length}개, 충족 ${fullSignals.length}개`);
       for (const signal of fullSignals) {
         // AI 진입 필터 (전략에 켜져 있을 때만) — 판정 실패 시 필터 없이 원래 전략대로 진입
-        const ml = await checkMlFilter(strategy, signal.symbol, 'live').catch((e: any) => {
+        const ml = await checkMlFilter(strategy, signal.symbol, 'live', { userId, price: signal.price }).catch((e: any) => {
           addLog(userId, `🤖 AI 필터 판정 실패 ${signal.symbol} — 필터 없이 진행: ${e.message}`, 'error');
           return null;
         });

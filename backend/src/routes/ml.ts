@@ -4,6 +4,8 @@ import prisma from '../lib/prisma';
 import { Prisma } from '@prisma/client';
 import { startTraining, getJob, strategyHash, MlFilterState, MlDataState, FEATURE_VER } from '../services/ml/trainer';
 import { FEATURE_NAMES } from '../services/ml/features';
+import { forgetModel } from '../services/ml/filter';
+import { summarizeDecisions, evaluatePendingDecisions } from '../services/ml/decisionEval';
 
 // ── AI 진입 필터 API ──────────────────────────────────────────
 // 학습은 수 분 걸리는 백그라운드 작업 → POST로 시작하고 GET으로 진행 상황/결과를 폴링
@@ -123,8 +125,70 @@ router.patch('/:strategyId', requireAuth, async (req: AuthRequest, res: Response
 router.delete('/:strategyId', requireAuth, async (req: AuthRequest, res: Response) => {
   const row = await findStrategy(req);
   if (!row) return res.status(404).json({ error: 'not found' });
-  await prisma.strategy.update({ where: { id: row.id }, data: { mlFilter: Prisma.DbNull } });
+  await prisma.$transaction([
+    prisma.mlModel.deleteMany({ where: { strategyId: row.id } }),
+    prisma.strategy.update({ where: { id: row.id }, data: { mlFilter: Prisma.DbNull } }),
+  ]);
+  forgetModel(row.id);
   res.json({ ok: true });
+});
+
+// ── AI 판정 기록 (실전 검증) ─────────────────────────────────────
+// 큰 JSON(features, trade)은 목록에서 제외 — CSV에서만
+const DECISION_LIST_FIELDS = {
+  id: true, target: true, symbol: true, side: true, decidedAt: true, price: true, prob: true, threshold: true, pass: true,
+  mlTarget: true, lossCutPct: true, modelTrainedAt: true, evalStatus: true, evalAt: true,
+  simExitPrice: true, simExitTime: true, simExitReason: true, simGrids: true, simNetPnlPct: true, simGrossPnlPct: true,
+  good: true, correct: true,
+} as const;
+
+function decisionWhere(strategyId: string, q: any) {
+  const where: any = { strategyId };
+  if (q.target === 'paper' || q.target === 'live') where.target = q.target;
+  return where;
+}
+
+// GET /api/ml/:strategyId/decisions?target=all|paper|live — 요약(전체 기간) + 최근 300건
+router.get('/:strategyId/decisions', requireAuth, async (req: AuthRequest, res: Response) => {
+  const row = await findStrategy(req);
+  if (!row) return res.status(404).json({ error: 'not found' });
+  const where = decisionWhere(row.id, req.query);
+  const all = await prisma.mlDecision.findMany({
+    where, select: { pass: true, evalStatus: true, correct: true, good: true, simNetPnlPct: true, prob: true },
+  });
+  const rows = await prisma.mlDecision.findMany({ where, orderBy: { decidedAt: 'desc' }, take: 300, select: DECISION_LIST_FIELDS });
+  res.json({ summary: summarizeDecisions(all), rows: rows.map(r => ({ ...r, decidedAt: r.decidedAt.getTime(), evalAt: r.evalAt?.getTime() ?? null, simExitTime: r.simExitTime?.getTime() ?? null })) });
+});
+
+// POST /api/ml/:strategyId/decisions/evaluate — 평가 지금 실행 (보통은 1시간마다 자동)
+router.post('/:strategyId/decisions/evaluate', requireAuth, async (req: AuthRequest, res: Response) => {
+  const row = await findStrategy(req);
+  if (!row) return res.status(404).json({ error: 'not found' });
+  res.json(await evaluatePendingDecisions(50));
+});
+
+// GET /api/ml/:strategyId/decisions.csv — 판정 기록 전체 (입력값 포함, 분석용)
+router.get('/:strategyId/decisions.csv', requireAuth, async (req: AuthRequest, res: Response) => {
+  const row = await findStrategy(req);
+  if (!row) return res.status(404).json({ error: 'not found' });
+  const rows = await prisma.mlDecision.findMany({ where: decisionWhere(row.id, req.query) });
+  rows.sort((a, b) => a.decidedAt.getTime() - b.decidedAt.getTime());   // JSON 컬럼 포함 조회라 DB 정렬 대신 메모리 정렬
+  const head = ['decided_at', 'target', 'symbol', 'side', 'price', 'ai_score', 'threshold', 'decision', 'ml_target', 'loss_cut_pct',
+    'eval_status', 'sim_exit_reason', 'sim_exit_time', 'sim_exit_price', 'sim_grids', 'sim_net_pnl_pct', 'sim_gross_pnl_pct', 'good', 'ai_correct', ...FEATURE_NAMES];
+  const b = (v: boolean | null) => (v === null ? '' : v ? 1 : 0);
+  const lines = [head.join(',')];
+  for (const r of rows) {
+    const feats = (r.features as (number | null)[]) ?? [];
+    lines.push([
+      r.decidedAt.toISOString(), r.target, r.symbol, r.side, r.price, r.prob.toFixed(4), r.threshold.toFixed(4), r.pass ? 'pass' : 'block',
+      r.mlTarget, r.lossCutPct ?? '', r.evalStatus, r.simExitReason ?? '', r.simExitTime?.toISOString() ?? '', r.simExitPrice ?? '',
+      r.simGrids ?? '', r.simNetPnlPct?.toFixed(4) ?? '', r.simGrossPnlPct?.toFixed(4) ?? '', b(r.good), b(r.correct),
+      ...FEATURE_NAMES.map((_, i) => (feats[i] === null || feats[i] === undefined ? '' : +feats[i]!.toFixed(6))),
+    ].join(','));
+  }
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="ml_decisions_${row.id.slice(0, 8)}.csv"`);
+  res.send(lines.join('\n'));
 });
 
 export default router;

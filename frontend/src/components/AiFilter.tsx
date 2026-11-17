@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { getStrategies, getMlFilter, trainMlFilter, updateMlFilter, deleteMlFilter, downloadMlSamples, MlFilterInfo, MlDataInfo, MlJobInfo, MlThresholdRow, MlTarget } from '../utils/api';
 import { StrategyConfig } from '../types';
 import { fmtDate, fmtDateTime } from '../utils/datetime';
+import AiDecisions from './AiDecisions';
 
 const pct = (v: number, d = 2) => `${v >= 0 ? '+' : ''}${v.toFixed(d)}%`;
 
@@ -359,6 +360,8 @@ export default function AiFilter() {
           </div>
         </>
       )}
+
+      {strategyId && <AiDecisions strategyId={strategyId} />}
 
       {!filter && !training && strategyId && (
         <div className="card text-sm text-gray-500 text-center py-6">이 전략은 아직 학습된 AI 필터가 없습니다.</div>

@@ -314,7 +314,7 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
 
       for (const signal of fullSignals) {
         // AI 진입 필터 (전략에 켜져 있을 때만) — 판정 실패 시 필터 없이 원래 전략대로 진입
-        const ml = await checkMlFilter(strategy, signal.symbol, 'paper').catch((e: any) => {
+        const ml = await checkMlFilter(strategy, signal.symbol, 'paper', { userId, price: signal.price }).catch((e: any) => {
           addLog(userId, `🤖 AI 필터 판정 실패 ${signal.symbol} — 필터 없이 진행: ${e.message}`, 'error');
           return null;
         });
