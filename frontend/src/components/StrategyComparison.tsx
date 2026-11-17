@@ -58,7 +58,11 @@ export default function StrategyComparison() {
     { label: '승률', backtest: backtest.winRate * 100, actual: actual.actual.winRate * 100, fmt: v => `${v.toFixed(1)}%`, higherIsBetter: true },
     { label: '평균 수익', backtest: backtest.avgProfitPct, actual: actual.actual.avgProfitPct, fmt: fmtPct, higherIsBetter: true },
     { label: '평균 손실', backtest: backtest.avgLossPct, actual: actual.actual.avgLossPct, fmt: v => `-${v.toFixed(2)}%`, higherIsBetter: false },
-    { label: '기댓값 (EV)', backtest: backtest.expectedValuePct, actual: actual.actual.expectedValuePct, fmt: fmtPct, higherIsBetter: true },
+    { label: actual.liveExtra ? '기댓값 (EV, 순손익)' : '기댓값 (EV)', backtest: backtest.expectedValuePct, actual: actual.actual.expectedValuePct, fmt: fmtPct, higherIsBetter: true },
+    // 실거래: 비용 제외한 가격 기준 EV도 참고로 표시 — 백테스트와의 차이 중 얼마가 비용 때문인지 구분용
+    ...(actual.liveExtra ? [
+      { label: '└ 가격 기준 EV', backtest: backtest.expectedValuePct, actual: actual.liveExtra.gross.expectedValuePct, fmt: fmtPct, higherIsBetter: true },
+    ] : []),
   ] : null;
 
   return (
@@ -154,6 +158,13 @@ export default function StrategyComparison() {
             백테스트: 과거 {backtest!.coinsAnalyzed}개 알트코인 대상 {backtest!.totalSignals}건 신호 · 실제: {actual!.actual.trades}건 거래 기준.
             표본 수가 적으면(특히 실제 거래) 차이가 통계적으로 유의미하지 않을 수 있습니다.
           </p>
+          {actual!.liveExtra && (
+            <p className="text-xs text-gray-600 mt-1">
+              실거래 지표는 펀딩피·수수료를 뺀 순손익 기준입니다 (건당 평균 비용 {fmtPct(actual!.liveExtra.avgCostPct)}, 증거금 대비).
+              백테스트에는 펀딩피·수수료가 반영되지 않습니다.
+              {actual!.liveExtra.unsyncedTrades > 0 && ` 펀딩피·수수료 미반영 거래 ${actual!.liveExtra.unsyncedTrades}건은 가격 손익으로만 집계됩니다.`}
+            </p>
+          )}
         </div>
       )}
     </div>

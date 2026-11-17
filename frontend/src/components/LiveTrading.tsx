@@ -5,7 +5,7 @@ import {
   getLiveStatus, startLiveScanner, stopLiveScanner, forceStopLiveScanner,
   getLivePositions, getLiveLogs, getLiveScanLog, getLiveStats, getLiveStrategyStats,
   getLiveAccount, closeLivePosition, extendLivePosition, clearLiveLogs, editLiveLog, getStrategies, toggleStrategy, deleteStrategy, getMe,
-  LivePosition, LiveTradeLog, ScanLogEntry, LiveAccountInfo
+  LivePosition, LiveTradeLog, ScanLogEntry, LiveAccountInfo, LiveStats
 } from '../utils/api';
 import { StrategyConfig, Side } from '../types';
 import { fmtDateTime, fmtTime } from '../utils/datetime';
@@ -30,6 +30,7 @@ function StatCard({ label, value, sub, valueClass }: { label: string; value: str
 }
 
 const fmtDt = fmtDateTime;
+const fmtSigned = (v: number) => `${v >= 0 ? '+' : '-'}$${Math.abs(v).toFixed(2)}`;
 
 const REFRESH_SEC = 10;
 const MANUAL_REFRESH_COOLDOWN_SEC = 5;
@@ -46,7 +47,7 @@ function ScanLogLine({ entry }: { entry: ScanLogEntry }) {
 
 export default function LiveTrading() {
   const [status, setStatus]               = useState<{ running: boolean; stopping: boolean; openCount: number; totalTrades: number } | null>(null);
-  const [stats, setStats]                 = useState<{ totalTrades: number; totalPnlUsdt: number; winRate: number } | null>(null);
+  const [stats, setStats]                 = useState<LiveStats | null>(null);
   const [strategyStats, setStrategyStats] = useState<Record<string, { winRate: number; trades: number }>>({});
   const [positions, setPositions]         = useState<LivePosition[]>([]);
   const [logs, setLogs]                   = useState<LiveTradeLog[]>([]);
@@ -412,8 +413,9 @@ export default function LiveTrading() {
               valueClass={totalUnrealizedPnl >= 0 ? 'text-up' : 'text-down'}
             />
             <StatCard
-              label="실현 손익 (전체)"
+              label="순손익 (전체)"
               value={`${(stats?.totalPnlUsdt ?? 0) >= 0 ? '+' : ''}$${(stats?.totalPnlUsdt ?? 0).toFixed(2)}`}
+              sub={stats ? `가격 ${fmtSigned(stats.grossPnlUsdt)} · 펀딩 ${fmtSigned(stats.totalFundingFee)} · 수수료 ${fmtSigned(stats.totalCommission)}${stats.unsyncedTrades > 0 ? ` (미반영 ${stats.unsyncedTrades}건)` : ''}` : undefined}
               valueClass={(stats?.totalPnlUsdt ?? 0) >= 0 ? 'text-up' : 'text-down'}
             />
             <StatCard

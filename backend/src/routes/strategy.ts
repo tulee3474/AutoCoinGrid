@@ -101,12 +101,25 @@ router.get('/:id/comparison', requireAuth, async (req: AuthRequest, res: Respons
   const type = (req.query.type as string) === 'paper' ? 'paper' : 'live';
 
   let pnlPcts: number[];
+  // 실거래 전용: 가격 기준(펀딩피·수수료 제외) 통계와 비용 정보 — 순손익 EV와 나란히 참고용
+  let liveExtra: { gross: ReturnType<typeof computeAggregateStats>; avgCostPct: number; unsyncedTrades: number } | null = null;
   if (type === 'live') {
     const logs = await prisma.liveTradeLog.findMany({
       where:  { userId: req.userId, strategyName: strategy.name },
-      select: { pnlPct: true }
+      select: { pnlPct: true, pnlUsdt: true, entryAmountUsdt: true, fundingFee: true, commission: true, feesSynced: true }
     });
-    pnlPcts = logs.map(l => l.pnlPct);
+    // 순손익 % = 가격 손익 % + (펀딩피+수수료)/투입 증거금. 그리드 추가진입 시 증거금이 entryAmountUsdt보다
+    // 커서(로그엔 totalEntryUsdt가 없음) pnlUsdt/pnlPct로 실제 기준 증거금을 역산 — pnlPct가 0이면 1차 진입액 사용
+    const costPcts = logs.map(l => {
+      const basis = Math.abs(l.pnlPct) > 1e-9 ? l.pnlUsdt * 100 / l.pnlPct : l.entryAmountUsdt;
+      return basis > 0 ? (l.fundingFee + l.commission) / basis * 100 : 0;
+    });
+    pnlPcts = logs.map((l, i) => l.pnlPct + costPcts[i]);
+    liveExtra = {
+      gross:          computeAggregateStats(logs.map(l => l.pnlPct)),
+      avgCostPct:     costPcts.length > 0 ? costPcts.reduce((a, b) => a + b, 0) / costPcts.length : 0,
+      unsyncedTrades: logs.filter(l => !l.feesSynced).length,
+    };
   } else {
     const wallet = await prisma.paperWallet.findUnique({ where: { userId: req.userId! } });
     const logs = wallet
@@ -121,7 +134,8 @@ router.get('/:id/comparison', requireAuth, async (req: AuthRequest, res: Respons
   res.json({
     ...toClientShape(strategy),
     type,
-    actual: computeAggregateStats(pnlPcts)
+    actual: computeAggregateStats(pnlPcts),   // 실거래는 순손익(펀딩피·수수료 반영) 기준
+    liveExtra
   });
 });
 

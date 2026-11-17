@@ -133,11 +133,17 @@ router.get('/stats', requireAuth, async (req: AuthRequest, res: Response) => {
   const logs = await prisma.liveTradeLog.findMany({
     where:   { userId: req.userId },
     orderBy: { exitTime: 'asc' },
-    select:  { symbol: true, strategyName: true, exitReason: true, pnlUsdt: true, exitTime: true }
+    select:  { symbol: true, strategyName: true, exitReason: true, pnlUsdt: true, exitTime: true, fundingFee: true, commission: true, feesSynced: true }
   });
-  const totalPnlUsdt = logs.reduce((s, t) => s + t.pnlUsdt, 0);
-  const winRate      = groupedWinRate(logs);
-  res.json({ totalTrades: logs.length, totalPnlUsdt, winRate });
+  // totalPnlUsdt = 순손익(가격 손익 + 펀딩피 + 수수료) — 바이낸스 지갑 잔고 변화와 맞추기 위함.
+  // 가격 손익만 보면 펀딩피·수수료만큼 지갑과 계속 어긋나 "원금이 줄어든 것처럼" 보임
+  const grossPnlUsdt    = logs.reduce((s, t) => s + t.pnlUsdt, 0);
+  const totalFundingFee = logs.reduce((s, t) => s + t.fundingFee, 0);
+  const totalCommission = logs.reduce((s, t) => s + t.commission, 0);
+  const totalPnlUsdt    = grossPnlUsdt + totalFundingFee + totalCommission;
+  const unsyncedTrades  = logs.filter(t => !t.feesSynced).length;
+  const winRate         = groupedWinRate(logs);
+  res.json({ totalTrades: logs.length, totalPnlUsdt, grossPnlUsdt, totalFundingFee, totalCommission, unsyncedTrades, winRate });
 });
 
 // GET /api/live/positions

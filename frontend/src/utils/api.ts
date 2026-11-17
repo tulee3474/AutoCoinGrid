@@ -159,6 +159,11 @@ export const getStrategyComparisonActual = (strategyId: string, type: 'live' | '
     conditions: StrategyConditions; trade: TradeConfig;
     type: 'live' | 'paper';
     actual: { trades: number; winRate: number; avgProfitPct: number; avgLossPct: number; expectedValuePct: number };
+    liveExtra: {
+      gross: { trades: number; winRate: number; avgProfitPct: number; avgLossPct: number; expectedValuePct: number };
+      avgCostPct: number;      // 건당 평균 펀딩피+수수료 (증거금 대비 %, 음수=비용)
+      unsyncedTrades: number;  // 펀딩피·수수료 미반영 로그 수
+    } | null;
   });
 
 export const runMultiBacktest = (params: {
@@ -240,7 +245,17 @@ export const getLiveScanLog = () =>
   api.get('/live/scan-log').then(r => r.data as ScanLogEntry[]);
 
 export const getLiveStats = () =>
-  api.get('/live/stats').then(r => r.data as { totalTrades: number; totalPnlUsdt: number; winRate: number });
+  api.get('/live/stats').then(r => r.data as LiveStats);
+
+export interface LiveStats {
+  totalTrades: number;
+  totalPnlUsdt: number;     // 순손익 (가격 손익 + 펀딩피 + 수수료)
+  grossPnlUsdt: number;     // 가격 손익만
+  totalFundingFee: number;
+  totalCommission: number;
+  unsyncedTrades: number;   // 펀딩피·수수료가 아직 반영 안 된 로그 수
+  winRate: number;
+}
 
 export const getLiveStrategyStats = () =>
   api.get('/live/strategy-stats').then(r => r.data as Record<string, { winRate: number; trades: number }>);
