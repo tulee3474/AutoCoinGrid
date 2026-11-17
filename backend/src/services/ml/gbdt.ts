@@ -37,11 +37,15 @@ function rng(seed: number) {
   return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
 }
 
-export function trainGbdt(X: number[][], y: number[], p: GbdtParams = DEFAULT_PARAMS): GbdtModel {
+// w: 표본 가중치 (생략 시 전부 1) — 실거래 표본을 백테스트 표본보다 무겁게 반영할 때 사용.
+// 로지스틱 손실의 1차/2차 미분(g, h)에 가중치를 곱하는 표준 방식 (XGBoost sample_weight와 동일)
+export function trainGbdt(X: number[][], y: number[], p: GbdtParams = DEFAULT_PARAMS, w?: number[]): GbdtModel {
   const n = X.length;
   const nf = X[0]?.length ?? 0;
-  const pos = y.reduce((a, b) => a + b, 0);
-  const prior = Math.min(0.99, Math.max(0.01, pos / Math.max(1, n)));
+  const W = w ?? new Array(n).fill(1);
+  const wSum = W.reduce((a, b) => a + b, 0);
+  const pos = y.reduce((a, b, i) => a + b * W[i], 0);
+  const prior = Math.min(0.99, Math.max(0.01, pos / Math.max(1e-9, wSum)));
   const base = Math.log(prior / (1 - prior));
   const F = new Array(n).fill(base);
   const gain = new Array(nf).fill(0);
@@ -52,8 +56,8 @@ export function trainGbdt(X: number[][], y: number[], p: GbdtParams = DEFAULT_PA
     const g = new Array(n), h = new Array(n);
     for (let i = 0; i < n; i++) {
       const pr = sigmoid(F[i]);
-      g[i] = pr - y[i];
-      h[i] = Math.max(1e-6, pr * (1 - pr));
+      g[i] = W[i] * (pr - y[i]);
+      h[i] = Math.max(1e-6, W[i] * pr * (1 - pr));
     }
     const rows: number[] = [];
     for (let i = 0; i < n; i++) if (rand() < p.subsample) rows.push(i);

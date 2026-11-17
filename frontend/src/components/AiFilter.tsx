@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { getStrategies, getMlFilter, trainMlFilter, updateMlFilter, deleteMlFilter, MlFilterInfo, MlJobInfo, MlThresholdRow } from '../utils/api';
+import { getStrategies, getMlFilter, trainMlFilter, updateMlFilter, deleteMlFilter, downloadMlSamples, MlFilterInfo, MlDataInfo, MlJobInfo, MlThresholdRow } from '../utils/api';
 import { StrategyConfig } from '../types';
 import { fmtDate, fmtDateTime } from '../utils/datetime';
 
@@ -10,8 +10,12 @@ export default function AiFilter() {
   const [strategies, setStrategies] = useState<StrategyConfig[]>([]);
   const [strategyId, setStrategyId] = useState('');
   const [filter, setFilter] = useState<MlFilterInfo | null>(null);
+  const [data, setData] = useState<MlDataInfo | null>(null);
   const [job, setJob] = useState<MlJobInfo | null>(null);
   const [days, setDays] = useState(180);
+  const [reset, setReset] = useState(false);
+  const [includeLive, setIncludeLive] = useState(true);
+  const [liveWeight, setLiveWeight] = useState(2);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -28,6 +32,7 @@ export default function AiFilter() {
     try {
       const r = await getMlFilter(id);
       setFilter(r.filter);
+      setData(r.data);
       setJob(r.job);
       return r.job;
     } catch (e: any) {
@@ -37,7 +42,7 @@ export default function AiFilter() {
 
   // 학습 중이면 3초마다 진행 상황 갱신
   useEffect(() => {
-    setFilter(null); setJob(null); setError('');
+    setFilter(null); setData(null); setJob(null); setError(''); setReset(false);
     load(strategyId);
     pollRef.current = setInterval(() => { load(strategyId); }, 3000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
@@ -52,6 +57,8 @@ export default function AiFilter() {
 
   const training = job?.status === 'running';
   const m = filter?.metrics;
+  const hasData = (data?.backtest.count ?? 0) > 0 && !data?.configChanged;
+  const pendingLive = Math.max(0, (data?.liveTradesAvailable ?? 0) - (data?.live.count ?? 0));
   const current: MlThresholdRow | undefined = m?.table.find(r => Math.abs(r.threshold - (filter?.threshold ?? -1)) < 1e-6);
 
   return (
@@ -75,28 +82,52 @@ export default function AiFilter() {
             </select>
           </div>
           <div>
-            <label className="label">학습 기간</label>
-            <select value={days} onChange={e => setDays(+e.target.value)} className="input" disabled={training}>
+            <label className="label">{hasData && !reset ? '처음 수집 기간' : '학습 기간'}</label>
+            <select value={days} onChange={e => setDays(+e.target.value)} className="input" disabled={training || (hasData && !reset)}>
               <option value={90}>90일</option>
               <option value={180}>180일 (권장)</option>
               <option value={365}>365일</option>
             </select>
           </div>
           <button
-            onClick={() => run(() => trainMlFilter(strategyId, days))}
+            onClick={() => run(() => trainMlFilter(strategyId, { days, reset, includeLive, liveWeight }))}
             disabled={!strategyId || training || busy}
             className="px-4 py-1.5 rounded-lg text-sm font-medium bg-accent/20 text-accent border border-accent/30 hover:bg-accent/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            {training ? '학습 중...' : filter ? '다시 학습' : '학습 시작'}
+            {training ? '학습 중...' : hasData && !reset ? '새 데이터 추가 + 재학습' : filter ? '다시 학습' : '학습 시작'}
           </button>
         </div>
+        <div className="flex flex-wrap gap-x-5 gap-y-2 text-xs text-gray-400">
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" checked={includeLive} onChange={e => setIncludeLive(e.target.checked)} disabled={training} />
+            내 실거래 기록도 학습
+          </label>
+          {includeLive && (
+            <label className="flex items-center gap-1.5">
+              실거래 가중치
+              <select value={liveWeight} onChange={e => setLiveWeight(+e.target.value)} className="input py-0.5 text-xs" disabled={training}>
+                {[1, 2, 3, 5].map(w => <option key={w} value={w}>{w}배</option>)}
+              </select>
+            </label>
+          )}
+          {hasData && (
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" checked={reset} onChange={e => setReset(e.target.checked)} disabled={training} />
+              백테스트 데이터 처음부터 다시 수집
+            </label>
+          )}
+        </div>
         <p className="text-xs text-gray-600">
-          학습은 전체 알트코인 장기 백테스트를 돌려서 하므로 5~15분 걸립니다. 이 페이지를 닫아도 서버에서 계속 진행됩니다.
+          {hasData && !reset
+            ? '저장된 학습 데이터에 마지막 수집 이후 기간만 추가하고, 누적된 전체 데이터로 다시 학습합니다 (보통 1~5분).'
+            : '처음에는 전체 알트코인 장기 백테스트로 학습 데이터를 만들어서 5~15분 걸립니다.'}
+          {' '}이 페이지를 닫아도 서버에서 계속 진행됩니다.
+          {data?.configChanged && ' 전략 설정이 바뀌어 백테스트 데이터를 새로 수집합니다 (실거래 데이터는 유지).'}
         </p>
         {training && job && (
           <div className="text-xs text-gray-400">
             <div className="flex justify-between mb-1">
-              <span>{job.phase}{job.total > 0 && ` · ${job.done}/${job.total} 코인`}</span>
+              <span>{job.mode === 'auto' && '[자동 업데이트] '}{job.phase}{job.total > 0 && ` · ${job.done}/${job.total}`}</span>
               <span>{Math.floor((Date.now() - job.startedAt) / 1000)}초 경과</span>
             </div>
             <div className="h-1.5 bg-border rounded-full overflow-hidden">
@@ -107,6 +138,52 @@ export default function AiFilter() {
         {job?.status === 'error' && <p className="text-sm text-down">학습 실패: {job.error}</p>}
         {error && <p className="text-sm text-down">{error}</p>}
       </div>
+
+      {data?.state && (
+        <div className="card space-y-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="section-title">저장된 학습 데이터</p>
+              <p className="text-xs text-gray-500 mt-1 space-x-3">
+                <span>백테스트 <span className="text-gray-200 num">{data.backtest.count.toLocaleString()}</span>건
+                  {data.backtest.from && <> ({fmtDate(data.backtest.from)} ~ {fmtDate(data.backtest.to!)})</>}</span>
+                <span>실거래 <span className="text-gray-200 num">{data.live.count.toLocaleString()}</span>건
+                  {pendingLive > 0 && <span className="text-warn"> (+{pendingLive}건 다음 학습 때 추가)</span>}</span>
+              </p>
+              {data.state.lastCollect && (
+                <p className="text-xs text-gray-600 mt-0.5">
+                  마지막 수집 {fmtDateTime(data.state.lastCollect.at)} · +{data.state.lastCollect.added}건 · 코인 {data.state.lastCollect.coins}개
+                  {data.state.lastCollect.failed > 0 && ` (실패 ${data.state.lastCollect.failed})`}
+                </p>
+              )}
+            </div>
+            <button
+              onClick={() => run(() => downloadMlSamples(strategyId))}
+              disabled={busy || data.backtest.count + data.live.count === 0}
+              className="px-3 py-1.5 rounded-lg text-xs border border-border text-gray-400 hover:text-gray-200 disabled:opacity-40"
+            >
+              CSV 내려받기
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-border/50">
+            <button
+              onClick={() => run(() => updateMlFilter(strategyId, { autoUpdate: !data.state!.autoUpdate }))}
+              disabled={busy || !filter}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors disabled:opacity-40 ${data.state.autoUpdate ? 'text-up border-up/40 bg-up/15' : 'text-gray-400 border-border hover:text-gray-200'}`}
+            >
+              자동 업데이트 {data.state.autoUpdate ? 'ON' : 'OFF'}
+            </button>
+            <p className="text-xs text-gray-500 flex-1 min-w-[200px]">
+              {data.state.autoEveryDays || 7}일마다 새 백테스트·실거래 데이터를 추가하고 재학습합니다. 사용 중인 필터는 새 모델이 검증을 통과할 때만 추천 기준으로 교체되고, 미달이면 기존 모델을 유지합니다.
+              {data.state.lastAuto && (
+                <span className={`block mt-0.5 ${data.state.lastAuto.ok ? 'text-gray-400' : 'text-warn'}`}>
+                  최근: {fmtDateTime(data.state.lastAuto.at)} — {data.state.lastAuto.message}
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+      )}
 
       {filter && m && (
         <>
@@ -216,7 +293,12 @@ export default function AiFilter() {
             </table>
             <p className="text-xs text-gray-600 mt-3">
               "순손익 합"은 진입 1건당 같은 금액을 넣었을 때의 총 수익(증거금 대비 %)입니다. 기준을 높이면 EV는 오르지만 진입 수가 줄어 총 수익은 줄 수 있습니다.
-              학습 데이터 {m.samples}건 · 코인 {m.coins}개{m.coinsFailed > 0 && ` (조회 실패 ${m.coinsFailed}개)`}.
+              학습 데이터 {m.samples}건
+              {m.sources && <> (백테스트 {m.sources.backtest} · 실거래 {m.sources.live}건 ×{m.sources.liveWeight}배 가중{m.sources.liveReplaced > 0 && ` · 같은 신호의 백테스트 ${m.sources.liveReplaced}건은 실거래로 대체`})</>}
+              {m.dataFrom && <> · {fmtDate(m.dataFrom)} ~ {fmtDate(m.dataTo!)}</>}.
+              {m.liveTest && m.liveTest.samples > 0 && (
+                <> 검증 구간 실거래 {m.liveTest.samples}건만 본 AUC: {m.liveTest.auc === null ? '표본 부족(20건 미만 또는 한쪽 결과만)' : m.liveTest.auc.toFixed(2)}.</>
+              )}
             </p>
           </div>
 

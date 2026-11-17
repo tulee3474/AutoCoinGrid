@@ -293,7 +293,8 @@ export class BinanceService {
   }
 
   // 장기 구간 캔들 (startTime ~ 현재) — 1500개씩 여러 페이지, weight 예산 안에서 받음. 캐시하지 않음(메모리 보호)
-  async getFuturesKlinesRange(symbol: string, interval: string, startTime: number): Promise<Kline[]> {
+  // endTime 지정 시 그 시각까지만 (실거래 표본 입력값 복원처럼 과거 일부 구간만 필요할 때)
+  async getFuturesKlinesRange(symbol: string, interval: string, startTime: number, endTime?: number): Promise<Kline[]> {
     const out: Kline[] = [];
     let cursor = startTime;
     for (let page = 0; page < 20; page++) {
@@ -301,7 +302,7 @@ export class BinanceService {
       for (let attempt = 0; attempt <= 2 && data === null; attempt++) {
         try {
           await acquireFuturesWeight(klinesWeight(1500));
-          data = (await this.futuresClient.get('/fapi/v1/klines', { params: { symbol, interval, startTime: cursor, limit: 1500 } })).data;
+          data = (await this.futuresClient.get('/fapi/v1/klines', { params: { symbol, interval, startTime: cursor, limit: 1500, ...(endTime ? { endTime } : {}) } })).data;
         } catch (e: any) {
           const throttled = e.response?.status === 429 || /일시 제한|IP 차단/.test(e.message ?? '');
           if (!throttled || attempt >= 2) throw e;

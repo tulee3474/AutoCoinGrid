@@ -413,15 +413,40 @@ export interface MlFilterInfo {
     recommended: number | null;
     importance: { name: string; label: string; pct: number }[];
     coins: number; coinsFailed: number;
+    sources?: { backtest: number; live: number; liveReplaced: number; liveWeight: number };
+    liveTest?: { samples: number; auc: number | null };
+    dataFrom?: number; dataTo?: number;
   };
 }
-export interface MlJobInfo { status: 'running' | 'done' | 'error'; phase: string; done: number; total: number; startedAt: number; error?: string }
+export interface MlJobInfo { status: 'running' | 'done' | 'error'; phase: string; done: number; total: number; startedAt: number; mode?: 'manual' | 'auto'; error?: string }
+interface MlSourceInfo { count: number; from: number | null; to: number | null }
+export interface MlDataInfo {
+  state: {
+    collectedFrom: number; collectedUntil: number; includeLive: boolean; liveWeight: number;
+    autoUpdate: boolean; autoEveryDays: number;
+    lastCollect?: { at: number; coins: number; failed: number; added: number };
+    lastAuto?: { at: number; ok: boolean; message: string };
+  } | null;
+  backtest: MlSourceInfo;
+  live: MlSourceInfo;
+  liveTradesAvailable: number;
+  configChanged: boolean;
+}
+export interface MlTrainOptions { days: number; reset?: boolean; includeLive?: boolean; liveWeight?: number }
 
 export const getMlFilter = (strategyId: string) =>
-  api.get(`/ml/${strategyId}`).then(r => r.data as { filter: MlFilterInfo | null; job: MlJobInfo | null });
-export const trainMlFilter = (strategyId: string, days: number) =>
-  api.post(`/ml/${strategyId}/train`, { days }).then(r => r.data as { job: MlJobInfo });
-export const updateMlFilter = (strategyId: string, patch: { applyPaper?: boolean; applyLive?: boolean; threshold?: number }) =>
+  api.get(`/ml/${strategyId}`).then(r => r.data as { filter: MlFilterInfo | null; data: MlDataInfo; job: MlJobInfo | null });
+export const trainMlFilter = (strategyId: string, opts: MlTrainOptions) =>
+  api.post(`/ml/${strategyId}/train`, opts).then(r => r.data as { job: MlJobInfo });
+export const downloadMlSamples = async (strategyId: string) => {
+  const r = await api.get(`/ml/${strategyId}/samples.csv`, { responseType: 'blob', timeout: 120_000 });
+  const url = URL.createObjectURL(r.data as Blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `ml_samples_${strategyId.slice(0, 8)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+export const updateMlFilter = (strategyId: string, patch: { applyPaper?: boolean; applyLive?: boolean; threshold?: number; autoUpdate?: boolean }) =>
   api.patch(`/ml/${strategyId}`, patch).then(r => r.data as { filter: MlFilterInfo });
 export const deleteMlFilter = (strategyId: string) =>
   api.delete(`/ml/${strategyId}`).then(r => r.data);

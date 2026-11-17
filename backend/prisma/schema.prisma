@@ -37,10 +37,12 @@ model Strategy {
   trade      Json
   coins      Json     @default("[]")
   mlFilter   Json?    // AI 진입 필터 (모델+검증 결과+사용 여부/기준). null = 학습 안 함
+  mlData     Json?    // AI 학습 데이터 수집 상태 (수집 구간·자동 업데이트 설정). null = 수집 안 함
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mlSamples MlSample[]
 
   @@map("strategies")
 }
@@ -168,4 +170,28 @@ model LiveTradeLog {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("live_trade_logs")
+}
+
+// AI 진입 필터 학습 데이터 — 거래 1건 = 진입 시점 입력값(features) + 결과(순손익)
+// 백테스트로 만든 표본(source=backtest)과 내 실거래 기록으로 만든 표본(source=live)을 누적 저장
+model MlSample {
+  id          String   @id @default(uuid())
+  strategyId  String
+  source      String   // 'backtest' | 'live'
+  symbol      String
+  entryTime   DateTime
+  exitTime    DateTime
+  features    Json     // FEATURE_NAMES 순서의 숫자 배열
+  featureVer  String   // FEATURE_NAMES 해시 — 입력 정의가 바뀌면 옛 표본은 학습에서 제외
+  configHash  String   // 백테스트 표본: 수집 당시 전략 설정 해시 / 실거래 표본: ''
+  netPnlPct   Float    // 순손익 % (증거금 대비, 수수료+펀딩 반영) — 라벨은 이 값 > 0
+  grossPnlPct Float
+  liveTradeId String?  // 실거래 표본의 원본 LiveTradeLog id
+  createdAt   DateTime @default(now())
+
+  strategy Strategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+
+  @@unique([strategyId, source, symbol, entryTime])
+  @@index([strategyId, source])
+  @@map("ml_samples")
 }

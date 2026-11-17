@@ -18,6 +18,7 @@ import { fetchFromCoinGecko } from './services/btcDominanceHistory';
 import { restoreScanners } from './services/autoScanner';
 import { restoreLiveScanners } from './services/liveTrader';
 import { startMarkPriceStream } from './services/binanceMarketStream';
+import { startMlScheduler } from './services/ml/trainer';
 
 const app = express();
 app.set('trust proxy', 1); // Docker/nginx 뒤에서 X-Forwarded-For 신뢰
@@ -89,4 +90,5 @@ server.listen(PORT, () => {
   scheduleDailyDomUpdate();
   restoreScanners();
   restoreLiveScanners(broadcast);
+  startMlScheduler();
 });
