@@ -415,7 +415,7 @@ export interface MlFilterInfo {
     recommended: number | null;
     importance: { name: string; label: string; pct: number }[];
     coins: number; coinsFailed: number;
-    sources?: { backtest: number; live: number; liveReplaced: number; liveWeight: number };
+    sources?: { backtest: number; live: number; liveReplaced: number; liveWeight: number; decision?: number; decisionReplaced?: number; liveRealtime?: number };
     liveTest?: { samples: number; auc: number | null };
     dataFrom?: number; dataTo?: number;
     lossCutPct?: number; labelPosPct?: number;
@@ -428,7 +428,7 @@ export interface MlJobInfo { status: 'running' | 'done' | 'error'; phase: string
 interface MlSourceInfo { count: number; from: number | null; to: number | null }
 export interface MlDataInfo {
   state: {
-    collectedFrom: number; collectedUntil: number; includeLive: boolean; liveWeight: number; target?: MlTarget;
+    collectedFrom: number; collectedUntil: number; includeLive: boolean; includeDecisions?: boolean; liveWeight: number; target?: MlTarget;
     autoUpdate: boolean; autoEveryDays: number;
     lastCollect?: { at: number; coins: number; failed: number; added: number };
     lastAuto?: { at: number; ok: boolean; message: string };
@@ -439,7 +439,14 @@ export interface MlDataInfo {
   configChanged: boolean;
   featureChanged: boolean;
 }
-export interface MlTrainOptions { days: number; reset?: boolean; includeLive?: boolean; liveWeight?: number; target?: MlTarget }
+export interface MlTrainOptions { days: number; reset?: boolean; includeLive?: boolean; includeDecisions?: boolean; liveWeight?: number; target?: MlTarget }
+export interface MlSkewFeature {
+  name: string; label: string; pairs: number; meanLive: number; meanTrain: number; meanAbsDiff: number;
+  stdDiff: number; corr: number | null; missingLive: number; missingTrain: number;
+}
+export interface MlSkewReport { decisions: number; comparable: number; matched: number; features: MlSkewFeature[] }
+export const getMlSkew = (strategyId: string) =>
+  api.get(`/ml/${strategyId}/skew`, { timeout: 120_000 }).then(r => r.data as MlSkewReport);
 
 export const getMlFilter = (strategyId: string) =>
   api.get(`/ml/${strategyId}`).then(r => r.data as { filter: MlFilterInfo | null; data: MlDataInfo; job: MlJobInfo | null });

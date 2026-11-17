@@ -243,6 +243,8 @@ model MlDecision {
   interval       String    // 시뮬레이션 캔들 (전략 타임프레임)
   trade          Json      // 판정 당시 매매 설정 스냅샷
   features       Json      // 판정 당시 AI 입력값 (FEATURE_NAMES 순서, null=결측)
+  featureVer     String    @default("")   // 입력값 정의 버전 — 학습에 쓸 때 현재 버전과 같은 것만
+  configHash     String    @default("")   // 판정 당시 전략 설정 해시 — 학습에 쓸 때 현재 설정과 같은 것만
   evalStatus     String    @default("pending")   // pending | done | unresolved(30일 넘게 결과 확정 불가)
   evalAt         DateTime?
   simExitPrice   Float?

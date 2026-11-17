@@ -7,6 +7,8 @@ import {
   computeFeatures, fundingRateAt, FEATURE_NAMES, FEATURE_LABELS, BREADTH_IDX, breadthKey, breadthOf, Breadth, selectCandidateTickers,
 } from './features';
 import { forgetModel } from './filter';
+import { FEATURE_VER, strategyHash } from './version';
+export { FEATURE_VER, strategyHash };
 import { evaluatePendingDecisions } from './decisionEval';
 import { trainGbdtAsync, predictGbdt, auc, GbdtModel, GbdtParams, DEFAULT_PARAMS } from './gbdt';
 
@@ -57,7 +59,12 @@ export interface MlFilterState {
     coins: number;
     coinsFailed: number;
     // 아래는 데이터 누적 기능 이후 추가 (옛 모델엔 없음)
-    sources?: { backtest: number; live: number; liveReplaced: number; liveWeight: number };
+    sources?: {
+      backtest: number; live: number; liveReplaced: number; liveWeight: number;
+      decision?: number;            // AI 판정 기록에서 온 표본 (차단 신호 포함, 실시간 입력값)
+      decisionReplaced?: number;    // 판정 기록으로 대체된 백테스트 표본
+      liveRealtime?: number;        // 실거래 표본 중 판정 기록의 실시간 입력값을 쓴 건수
+    };
     liveTest?: { samples: number; auc: number | null };   // 검증 구간 중 실거래 표본만의 AUC
     dataFrom?: number;
     dataTo?: number;
@@ -76,6 +83,7 @@ export interface MlDataState {
   collectedUntil: number;      // 다음 수집 시작점 (아직 안 끝난 거래가 있으면 그 진입 시각)
   includeLive: boolean;
   liveWeight: number;
+  includeDecisions?: boolean;
   target?: MlTarget;
   featureVer?: string;         // 표본 입력값 정의 버전 — 바뀌면 처음부터 다시 수집
   autoUpdate: boolean;         // 주기적으로 새 데이터 추가 + 재학습
@@ -88,6 +96,7 @@ export interface TrainOptions {
   days: number;                // 처음 수집(또는 reset) 시 백테스트 기간
   reset: boolean;              // 백테스트 표본을 지우고 처음부터 다시 수집
   includeLive: boolean;
+  includeDecisions: boolean;   // AI 판정 기록(채점 완료분)도 학습에 사용
   liveWeight: number;
   target: MlTarget;
   mode: 'manual' | 'auto';
@@ -106,7 +115,6 @@ export interface MlJob {
 
 export const MIN_SAMPLES = 80;
 export const MIN_AUC = 0.55;
-export const FEATURE_VER = crypto.createHash('sha1').update(FEATURE_NAMES.join(',')).digest('hex').slice(0, 12);
 const DAY = 86_400_000;
 const WARMUP = 9 * DAY;          // 입력값 계산에 최대 7일(168h) 과거 + 백테스트 포지션 상태 워밍업
 const MAX_CURSOR_LAG = 30 * DAY; // 안 끝난 거래 때문에 수집 시작점이 무한정 뒤에 머물지 않도록
@@ -117,9 +125,6 @@ const jobs = new Map<string, MlJob>();
 export const getJob = (strategyId: string) => jobs.get(strategyId) ?? null;
 const anyRunning = () => [...jobs.values()].some(j => j.status === 'running');
 
-export function strategyHash(s: { conditions: unknown; trade: unknown; side: string }): string {
-  return crypto.createHash('sha1').update(JSON.stringify([s.conditions, s.trade, s.side])).digest('hex').slice(0, 16);
-}
 
 function alignByTime(btc: Kline[], target: Kline[]): Kline[] {
   // 백테스트의 BTC 필터는 같은 인덱스를 씀 → 대상 코인 첫 캔들 시각부터 잘라 길이를 맞춤
@@ -176,10 +181,10 @@ async function runTraining(userId: string, strategyId: string, opts: TrainOption
     const from = runStart - opts.days * DAY;
     data = await saveData(strategyId, {
       configHash: hash, featureVer: FEATURE_VER, collectedFrom: from, collectedUntil: from, lastCollect: undefined,
-      includeLive: opts.includeLive, liveWeight: opts.liveWeight, target: opts.target,
+      includeLive: opts.includeLive, includeDecisions: opts.includeDecisions, liveWeight: opts.liveWeight, target: opts.target,
     });
   } else {
-    data = await saveData(strategyId, { includeLive: opts.includeLive, liveWeight: opts.liveWeight, target: opts.target });
+    data = await saveData(strategyId, { includeLive: opts.includeLive, includeDecisions: opts.includeDecisions, liveWeight: opts.liveWeight, target: opts.target });
   }
   if (runStart - data.collectedUntil > 3_600_000) {
     const r = await collectBacktestSamples(strategyId, conditions, trade, side, hash, data.collectedUntil, runStart, job);
@@ -449,18 +454,51 @@ async function trainFromSamples(
     select: { source: true, symbol: true, entryTime: true, features: true, netPnlPct: true },
   });
 
-  // 같은 신호를 백테스트와 실거래가 둘 다 가진 경우 → 실거래 결과만 사용 (슬리피지·실제 체결 반영)
+  // AI 판정 기록: 채점 완료 + 지금과 같은 입력값 정의·전략 설정으로 판정한 것만
+  const decs = opts.includeDecisions
+    ? await prisma.mlDecision.findMany({
+        where: { strategyId, evalStatus: 'done', featureVer: FEATURE_VER, configHash },
+        select: { symbol: true, decidedAt: true, features: true, simNetPnlPct: true },
+      })
+    : [];
+
+  // 같은 신호가 여러 출처에 있으면 하나만 사용. 우선순위: 실거래(실제 체결 결과) > 판정 기록(실시간 입력값) > 백테스트
+  //   · 실거래 + 판정 기록 → 실거래 결과 + 판정 기록의 실시간 입력값 (실거래 입력값은 나중에 과거 데이터로 복원한 값이라)
+  //   · 판정 기록만 (차단돼서 진입 안 한 신호 등) → 판정 기록 (결과는 사후 시뮬레이션)
   const ivMs = (MINS[interval] ?? 60) * 60_000;
   const win = Math.max(2 * 3_600_000, 2 * ivMs);
-  const liveTimes = new Map<string, number[]>();
-  for (const r of raw) if (r.source === 'live') (liveTimes.get(r.symbol) ?? liveTimes.set(r.symbol, []).get(r.symbol)!).push(r.entryTime.getTime());
-  let liveReplaced = 0;
+  const near = (list: { t: number }[] | undefined, t: number) => {
+    let best: { t: number } | null = null;
+    for (const c of list ?? []) if (Math.abs(c.t - t) <= win && (!best || Math.abs(c.t - t) < Math.abs(best.t - t))) best = c;
+    return best;
+  };
+  const bySym = <T extends { symbol: string }>(arr: T[], time: (r: T) => number) => {
+    const m = new Map<string, (T & { t: number })[]>();
+    for (const r of arr) (m.get(r.symbol) ?? m.set(r.symbol, []).get(r.symbol)!).push({ ...r, t: time(r) });
+    return m;
+  };
+  const liveRows = bySym(raw.filter(r => r.source === 'live').map(r => ({ ...r, x: fromJsonFeatures(r.features), rt: false })), r => r.entryTime.getTime());
+  const decOnly: { symbol: string; t: number; x: number[]; pnl: number }[] = [];
+  let liveRealtime = 0;
+  for (const d of decs) {
+    if (d.simNetPnlPct === null) continue;
+    const t = d.decidedAt.getTime();
+    const lv = near(liveRows.get(d.symbol), t) as any;
+    if (lv && !lv.rt) { lv.x = fromJsonFeatures(d.features); lv.rt = true; liveRealtime++; continue; }
+    decOnly.push({ symbol: d.symbol, t, x: fromJsonFeatures(d.features), pnl: d.simNetPnlPct });
+  }
+  const decBySym = bySym(decOnly, r => r.t);
+
+  let liveReplaced = 0, decisionReplaced = 0;
   const samples: Sample[] = [];
+  for (const list of liveRows.values()) for (const r of list) samples.push({ x: r.x, y: 0, pnl: r.netPnlPct, t: r.t, w: opts.liveWeight, live: true });
+  for (const d of decOnly) samples.push({ x: d.x, y: 0, pnl: d.pnl, t: d.t, w: 1, live: false });
   for (const r of raw) {
+    if (r.source !== 'backtest') continue;
     const t = r.entryTime.getTime();
-    const live = r.source === 'live';
-    if (!live && (liveTimes.get(r.symbol) ?? []).some(lt => Math.abs(lt - t) <= win)) { liveReplaced++; continue; }
-    samples.push({ x: fromJsonFeatures(r.features), y: 0, pnl: r.netPnlPct, t, w: live ? opts.liveWeight : 1, live });
+    if (near(liveRows.get(r.symbol), t)) { liveReplaced++; continue; }
+    if (near(decBySym.get(r.symbol), t)) { decisionReplaced++; continue; }
+    samples.push({ x: fromJsonFeatures(r.features), y: 0, pnl: r.netPnlPct, t, w: 1, live: false });
   }
 
   if (samples.length < MIN_SAMPLES) {
@@ -574,7 +612,10 @@ async function trainFromSamples(
       auc: +testAuc.toFixed(3),
       baseline, table, recommended, importance,
       coins: data.lastCollect?.coins ?? 0, coinsFailed: data.lastCollect?.failed ?? 0,
-      sources: { backtest: samples.length - liveCount, live: liveCount, liveReplaced, liveWeight: opts.liveWeight },
+      sources: {
+        backtest: samples.length - liveCount - decOnly.length, live: liveCount, liveReplaced, liveWeight: opts.liveWeight,
+        decision: decOnly.length, decisionReplaced, liveRealtime,
+      },
       liveTest: { samples: liveIdx.length, auc: liveAuc },
       dataFrom, dataTo,
       lossCutPct, labelPosPct: +(nPos / samples.length * 100).toFixed(1),
@@ -599,7 +640,7 @@ export function startMlScheduler() {
         if (now - last < (d.autoEveryDays || 7) * DAY) continue;
         console.log(`[ml] 자동 업데이트 시작: ${r.id}`);
         startTraining(r.userId, r.id, {
-          days: 180, reset: false, includeLive: d.includeLive ?? true, liveWeight: d.liveWeight ?? 2, target: d.target ?? 'profit', mode: 'auto',
+          days: 180, reset: false, includeLive: d.includeLive ?? true, includeDecisions: d.includeDecisions ?? true, liveWeight: d.liveWeight ?? 2, target: d.target ?? 'profit', mode: 'auto',
         });
         return;   // 한 번에 하나
       }

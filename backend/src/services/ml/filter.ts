@@ -4,6 +4,7 @@ import { StrategyConfig } from '../../types';
 import { computeFeatures, fundingRateAt, breadthOf, selectCandidateTickers, FEATURE_NAMES } from './features';
 import { predictGbdt, GbdtModel } from './gbdt';
 import type { MlFilterState } from './trainer';
+import { FEATURE_VER, strategyHash } from './version';
 
 // ── 실전 적용: 스캐너 신호 → 진입 직전에 AI 필터 판정 ──────────────
 // 같은 신호가 매 분 반복되므로 (전략, 대상, 코인)별 판정을 4시간 기억 — 매 분 다시 판정하면
@@ -109,6 +110,8 @@ export async function checkMlFilter(
         interval: strategy.conditions.rsi?.timeframe || '1h',
         trade: strategy.trade as any,
         features: x.map(v => (Number.isFinite(v) ? v : null)),
+        featureVer: FEATURE_VER,
+        configHash: strategyHash({ conditions: strategy.conditions, trade: strategy.trade, side: strategy.side }),
       },
     }).catch(e => console.error('[ml] 판정 기록 실패', e?.message ?? e));
   }

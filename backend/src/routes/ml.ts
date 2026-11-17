@@ -6,6 +6,7 @@ import { startTraining, getJob, strategyHash, MlFilterState, MlDataState, FEATUR
 import { FEATURE_NAMES } from '../services/ml/features';
 import { forgetModel } from '../services/ml/filter';
 import { summarizeDecisions, evaluatePendingDecisions } from '../services/ml/decisionEval';
+import { computeSkew } from '../services/ml/skew';
 
 // ── AI 진입 필터 API ──────────────────────────────────────────
 // 학습은 수 분 걸리는 백그라운드 작업 → POST로 시작하고 GET으로 진행 상황/결과를 폴링
@@ -58,7 +59,7 @@ router.get('/:strategyId', requireAuth, async (req: AuthRequest, res: Response) 
   res.json({ filter: publicState(row), data: await dataStatus(row), job: getJob(row.id) });
 });
 
-// POST /api/ml/:strategyId/train { days, reset, includeLive, liveWeight, target } — 학습 시작
+// POST /api/ml/:strategyId/train { days, reset, includeLive, includeDecisions, liveWeight, target } — 학습 시작
 // 저장된 데이터가 있으면 마지막 수집 이후분만 추가 수집 후 누적 전체로 학습 (reset=true면 처음부터)
 router.post('/:strategyId/train', requireAuth, async (req: AuthRequest, res: Response) => {
   const row = await findStrategy(req);
@@ -67,7 +68,8 @@ router.post('/:strategyId/train', requireAuth, async (req: AuthRequest, res: Res
   const liveWeight = Math.min(5, Math.max(1, Number(req.body?.liveWeight) || 2));
   try {
     res.json({ job: startTraining(req.userId!, row.id, {
-      days, reset: req.body?.reset === true, includeLive: req.body?.includeLive !== false, liveWeight,
+      days, reset: req.body?.reset === true, includeLive: req.body?.includeLive !== false,
+      includeDecisions: req.body?.includeDecisions !== false, liveWeight,
       target: req.body?.target === 'profit' ? 'profit' : 'avoidLoss', mode: 'manual',
     }) });
   } catch (e: any) {
@@ -165,6 +167,16 @@ router.post('/:strategyId/decisions/evaluate', requireAuth, async (req: AuthRequ
   const row = await findStrategy(req);
   if (!row) return res.status(404).json({ error: 'not found' });
   res.json(await evaluatePendingDecisions(50));
+});
+
+// GET /api/ml/:strategyId/skew — 학습–실전 입력값 차이 점검 (같은 신호의 판정 기록 vs 백테스트 표본)
+router.get('/:strategyId/skew', requireAuth, async (req: AuthRequest, res: Response) => {
+  const row = await findStrategy(req);
+  if (!row) return res.status(404).json({ error: 'not found' });
+  const hash = strategyHash({ conditions: row.conditions, trade: row.trade, side: row.side });
+  const d = row.mlData as MlDataState | null;
+  const interval = (row.conditions as any)?.rsi?.timeframe || '1h';
+  res.json(await computeSkew(row.id, hash, interval, d?.collectedUntil ?? 0));
 });
 
 // GET /api/ml/:strategyId/decisions.csv — 판정 기록 전체 (입력값 포함, 분석용)

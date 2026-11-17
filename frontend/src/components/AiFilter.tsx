@@ -4,6 +4,7 @@ import { getStrategies, getMlFilter, trainMlFilter, updateMlFilter, deleteMlFilt
 import { StrategyConfig } from '../types';
 import { fmtDate, fmtDateTime } from '../utils/datetime';
 import AiDecisions from './AiDecisions';
+import AiSkew from './AiSkew';
 
 const pct = (v: number, d = 2) => `${v >= 0 ? '+' : ''}${v.toFixed(d)}%`;
 
@@ -16,6 +17,7 @@ export default function AiFilter() {
   const [days, setDays] = useState(180);
   const [reset, setReset] = useState(false);
   const [includeLive, setIncludeLive] = useState(true);
+  const [includeDecisions, setIncludeDecisions] = useState(true);
   const [liveWeight, setLiveWeight] = useState(2);
   const [target, setTarget] = useState<MlTarget>('avoidLoss');
   const [error, setError] = useState('');
@@ -29,13 +31,20 @@ export default function AiFilter() {
     });
   }, []);
 
+  // 저장된 학습 설정(목표 등)은 전략을 바꿨을 때 한 번만 화면에 반영 — 3초 갱신마다 덮어쓰면 사용자가 고른 값이 되돌아감
+  const settingsLoadedFor = useRef('');
   const load = async (id: string) => {
     if (!id) return;
     try {
       const r = await getMlFilter(id);
       setFilter(r.filter);
       setData(r.data);
-      if (r.data?.state?.target) setTarget(r.data.state.target);
+      if (settingsLoadedFor.current !== id) {
+        settingsLoadedFor.current = id;
+        const st = r.data?.state;
+        if (st?.target) setTarget(st.target);
+        if (st) { setIncludeLive(st.includeLive ?? true); setIncludeDecisions(st.includeDecisions ?? true); setLiveWeight(st.liveWeight ?? 2); }
+      }
       setJob(r.job);
       return r.job;
     } catch (e: any) {
@@ -101,7 +110,7 @@ export default function AiFilter() {
             </select>
           </div>
           <button
-            onClick={() => run(() => trainMlFilter(strategyId, { days, reset, includeLive, liveWeight, target }))}
+            onClick={() => run(() => trainMlFilter(strategyId, { days, reset, includeLive, includeDecisions, liveWeight, target }))}
             disabled={!strategyId || training || busy}
             className="px-4 py-1.5 rounded-lg text-sm font-medium bg-accent/20 text-accent border border-accent/30 hover:bg-accent/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
@@ -112,6 +121,10 @@ export default function AiFilter() {
           <label className="flex items-center gap-1.5 cursor-pointer">
             <input type="checkbox" checked={includeLive} onChange={e => setIncludeLive(e.target.checked)} disabled={training} />
             내 실거래 기록도 학습
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer" title="채점이 끝난 AI 판정(차단 신호 포함)을 실시간 입력값 그대로 학습에 사용 — 같은 신호의 백테스트 데이터를 대체">
+            <input type="checkbox" checked={includeDecisions} onChange={e => setIncludeDecisions(e.target.checked)} disabled={training} />
+            AI 판정 기록도 학습
           </label>
           {includeLive && (
             <label className="flex items-center gap-1.5">
@@ -311,7 +324,7 @@ export default function AiFilter() {
             <p className="text-xs text-gray-600 mt-3">
               "순손익 합"은 진입 1건당 같은 금액을 넣었을 때의 총 수익(증거금 대비 %)입니다. 기준을 높이면 EV는 오르지만 진입 수가 줄어 총 수익은 줄 수 있습니다.
               학습 데이터 {m.samples}건
-              {m.sources && <> (백테스트 {m.sources.backtest} · 실거래 {m.sources.live}건 ×{m.sources.liveWeight}배 가중{m.sources.liveReplaced > 0 && ` · 같은 신호의 백테스트 ${m.sources.liveReplaced}건은 실거래로 대체`})</>}
+              {m.sources && <> (백테스트 {m.sources.backtest} · 실거래 {m.sources.live}건 ×{m.sources.liveWeight}배 가중{m.sources.liveReplaced > 0 && ` · 같은 신호의 백테스트 ${m.sources.liveReplaced}건은 실거래로 대체`}{(m.sources.decision ?? 0) > 0 && ` · AI 판정 기록 ${m.sources.decision}건(백테스트 ${m.sources.decisionReplaced ?? 0}건 대체)`}{(m.sources.liveRealtime ?? 0) > 0 && ` · 실거래 중 ${m.sources.liveRealtime}건은 판정 당시 실시간 입력값 사용`})</>}
               {m.dataFrom && <> · {fmtDate(m.dataFrom)} ~ {fmtDate(m.dataTo!)}</>}.
               {m.liveTest && m.liveTest.samples > 0 && (
                 <> 검증 구간 실거래 {m.liveTest.samples}건만 본 AUC: {m.liveTest.auc === null ? '표본 부족(20건 미만 또는 한쪽 결과만)' : m.liveTest.auc.toFixed(2)}.</>
@@ -362,6 +375,7 @@ export default function AiFilter() {
       )}
 
       {strategyId && <AiDecisions strategyId={strategyId} />}
+      {strategyId && <AiSkew strategyId={strategyId} />}
 
       {!filter && !training && strategyId && (
         <div className="card text-sm text-gray-500 text-center py-6">이 전략은 아직 학습된 AI 필터가 없습니다.</div>
