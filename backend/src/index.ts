@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import './lib/asyncErrors';   // async 라우트 에러로 서버가 죽지 않게 — 라우터보다 먼저
 import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
@@ -45,6 +46,12 @@ app.use('/api/presets', presetRoutes);
 app.use('/api/ml', mlRoutes);
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', time: Date.now() }));
+
+// 라우트에서 처리 못 한 에러 → 서버는 계속 살아 있고 해당 요청만 500
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error('[API 에러]', err?.stack ?? err);
+  if (!res.headersSent) res.status(500).json({ error: '서버 오류가 발생했습니다' });
+});
 
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });

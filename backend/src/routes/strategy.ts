@@ -5,6 +5,11 @@ import prisma from '../lib/prisma';
 
 const router = Router();
 
+// 화면에 내려주는 필드만 (toClientShape와 일치)
+const CLIENT_FIELDS = {
+  id: true, name: true, enabled: true, side: true, coins: true, conditions: true, trade: true, createdAt: true,
+} as const;
+
 function toClientShape(r: any) {
   return {
     id:         r.id,
@@ -20,16 +25,19 @@ function toClientShape(r: any) {
 
 // GET /api/strategy
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
+  // AI 모델(mlFilter)·학습 상태(mlData)는 큰 JSON이라 제외 — 같이 읽으면 ORDER BY 정렬 시
+  // MySQL 'Out of sort memory'(1038) 에러가 나고, 목록 조회 자체가 실패함
   const rows = await prisma.strategy.findMany({
     where:   { userId: req.userId },
-    orderBy: { createdAt: 'asc' }
+    orderBy: { createdAt: 'asc' },
+    select:  CLIENT_FIELDS,
   });
   res.json(rows.map(toClientShape));
 });
 
 // GET /api/strategy/:id
 router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
-  const row = await prisma.strategy.findFirst({ where: { id: req.params.id, userId: req.userId } });
+  const row = await prisma.strategy.findFirst({ where: { id: req.params.id, userId: req.userId }, select: CLIENT_FIELDS });
   if (!row) return res.status(404).json({ error: 'not found' });
   res.json(toClientShape(row));
 });
