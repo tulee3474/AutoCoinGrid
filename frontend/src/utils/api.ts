@@ -394,3 +394,34 @@ export interface AdminPreset {
   createdAt: string;
   updatedAt: string;
 }
+
+// ── AI 진입 필터 ──────────────────────────────────────────────
+export interface MlPnlStats { winRate: number; avgProfitPct: number; avgLossPct: number; expectedValuePct: number }
+export interface MlThresholdRow { threshold: number; keptPct: number; trades: number; stats: MlPnlStats; sumPct: number }
+export interface MlFilterInfo {
+  applyPaper: boolean;   // 가상 지갑에 적용
+  applyLive: boolean;    // 실제 거래에 적용
+  threshold: number;
+  trainedAt: number;
+  days: number;
+  stale: boolean;      // 학습 후 전략 설정이 바뀜 → 재학습 권장
+  outdated: boolean;   // 서버 업데이트로 모델 형식이 바뀜 → 재학습 필요 (그 전까지 자동으로 꺼짐)
+  metrics: {
+    samples: number; trainSamples: number; testSamples: number; testFrom: number; auc: number;
+    baseline: { trades: number; stats: MlPnlStats; sumPct: number };
+    table: MlThresholdRow[];
+    recommended: number | null;
+    importance: { name: string; label: string; pct: number }[];
+    coins: number; coinsFailed: number;
+  };
+}
+export interface MlJobInfo { status: 'running' | 'done' | 'error'; phase: string; done: number; total: number; startedAt: number; error?: string }
+
+export const getMlFilter = (strategyId: string) =>
+  api.get(`/ml/${strategyId}`).then(r => r.data as { filter: MlFilterInfo | null; job: MlJobInfo | null });
+export const trainMlFilter = (strategyId: string, days: number) =>
+  api.post(`/ml/${strategyId}/train`, { days }).then(r => r.data as { job: MlJobInfo });
+export const updateMlFilter = (strategyId: string, patch: { applyPaper?: boolean; applyLive?: boolean; threshold?: number }) =>
+  api.patch(`/ml/${strategyId}`, patch).then(r => r.data as { filter: MlFilterInfo });
+export const deleteMlFilter = (strategyId: string) =>
+  api.delete(`/ml/${strategyId}`).then(r => r.data);

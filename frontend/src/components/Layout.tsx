@@ -50,6 +50,20 @@ export default function Layout() {
             </NavLink>
           ))}
 
+          <NavLink
+            to="/ai-filter"
+            className={({ isActive }) =>
+              `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                isActive
+                  ? 'bg-accent/15 text-accent font-semibold'
+                  : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
+              }`
+            }
+          >
+            <span className="text-base w-5 text-center opacity-70">◆</span>
+            AI 진입 필터
+          </NavLink>
+
           <div className="border-t border-border my-2" />
 
           <NavLink

@@ -187,6 +187,41 @@ export default function Guide() {
         </InfoBox>
       </AccordionItem>
 
+      <AccordionItem icon="🤖" title="AI 진입 필터 사용법">
+        <p>
+          지금 전략은 그대로 두고, <Highlight>신호가 뜬 뒤 진입 직전</Highlight>에 AI가 한 번 더 판단합니다.
+          과거 비슷한 상황(상승률·거래량·RSI·펀딩비·상장 경과일·BTC 흐름 등)에서 손실로 끝난 경우가 많았다면 진입하지 않습니다.
+          급등이 멈추지 않아 크게 손절되는 거래를 줄이는 것이 목적입니다.
+        </p>
+        <div className="space-y-3">
+          <Step num={1} title="전략 저장 + 승률 검증으로 기본 성과 확인"
+            desc="AI 필터는 저장된 전략마다 따로 학습합니다. 먼저 전략 자체의 순손익 EV가 괜찮은지 확인하세요." />
+          <Step num={2} title="AI 진입 필터 → 전략 선택 → 학습 시작 (180일 권장)"
+            desc="전체 알트코인 장기 백테스트로 학습 데이터를 만들고 모델을 학습합니다. 5~15분 걸리며 페이지를 닫아도 계속 진행됩니다." />
+          <Step num={3} title="검증 결과 표 확인"
+            desc="학습에 안 쓴 최근 30% 기간에서 '필터 없음'과 기준별 성과를 비교합니다. 순손익 합이 '필터 없음'보다 확실히 높고 AUC가 0.55 이상인지 보세요." />
+          <Step num={4} title="기준 선택 → '가상 지갑 ON'만 켜기"
+            desc="'추천' 기준이 기본 선택됩니다. 기준을 높일수록 EV는 오르지만 진입이 줄어듭니다. 가상 지갑과 실제 거래는 따로 켜며, 다음 스캔(1분 이내)부터 적용됩니다." />
+          <Step num={5} title="2~4주 A/B 비교: 가상(필터 ON) vs 실거래(필터 OFF)"
+            desc="같은 전략을 가상 지갑(필터 ON)과 실제 거래(필터 OFF)에서 동시에 돌리면 같은 기간·같은 신호에서 필터 효과를 비교할 수 있습니다. 백테스트 vs 실제 비교 화면에서 '가상 지갑'과 '실제 거래'를 번갈아 선택해 EV를 비교하세요. 로그의 [AI 차단] 코인이 실거래에서 어떻게 끝났는지도 확인하면 좋습니다." />
+          <Step num={6} title="효과가 확인되면 '실제 거래 ON', 이후 2~4주마다 재학습"
+            desc="시장 성격은 계속 바뀌므로 주기적으로 다시 학습하세요. 전략 조건을 바꾸면 반드시 재학습해야 합니다(화면에 경고 표시)." />
+        </div>
+        <div className="bg-surface rounded-lg p-3 text-xs space-y-1">
+          <p className="text-gray-400">로그에서 확인하는 법 (가상 지갑·실제 거래 로그)</p>
+          <p className="text-gray-300">🤖 [AI 차단] XXXUSDT 예상 승률 38% &lt; 기준 52% → 진입 안 함 (4시간 동안 재판정 안 함)</p>
+          <p className="text-gray-300">🤖 [AI 통과] XXXUSDT 예상 승률 71% ≥ 기준 52% → 원래대로 진입</p>
+        </div>
+        <InfoBox type="warn">
+          AI는 진입을 <strong>거르기만</strong> 합니다. 손절·익절·그리드·청산 안전마진은 전략 설정 그대로 동작합니다.
+          판단에 필요한 데이터 조회가 실패하면 필터 없이 원래 전략대로 진입합니다.
+        </InfoBox>
+        <InfoBox type="warn">
+          학습 데이터는 현재 상장된 코인만 포함합니다(상장폐지 코인 제외). 그래서 검증 성과가 실제보다 약간 좋게 나올 수 있습니다.
+          검증 표의 개선 폭이 작으면 우연일 가능성이 크니 켜지 않는 것이 낫습니다.
+        </InfoBox>
+      </AccordionItem>
+
       <AccordionItem icon="🔑" title="Binance API 설정 방법">
         <div className="space-y-3">
           <Step num={1} title="Binance 접속 → 프로필 → API Management"

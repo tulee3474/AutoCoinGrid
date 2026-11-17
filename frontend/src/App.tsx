@@ -8,6 +8,7 @@ import PaperTrading from './components/PaperTrading';
 import LiveTrading from './components/LiveTrading';
 import TradeLogs from './components/TradeLogs';
 import StrategyComparison from './components/StrategyComparison';
+import AiFilter from './components/AiFilter';
 import Guide from './components/Guide';
 import Login from './pages/Login';
 import Admin from './pages/Admin';
@@ -47,6 +48,7 @@ function AppRoutes() {
         <Route path="live"      element={<LiveTrading />} />
         <Route path="logs"      element={<TradeLogs />} />
         <Route path="comparison" element={<StrategyComparison />} />
+        <Route path="ai-filter" element={<AiFilter />} />
         <Route path="profile"   element={<Profile />} />
         <Route path="guide"     element={<Guide />} />
       </Route>

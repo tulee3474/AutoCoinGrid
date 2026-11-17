@@ -278,7 +278,46 @@ export class BinanceService {
   private static readonly FUNDING_CALLS_PER_5M = 300;   // 바이낸스 한도 500 중 여유 두고 사용
   private static readonly FUNDING_MAX_PAGES = 8;        // 1시간 주기 코인 × 4h봉 백테스트(250일)도 커버
 
-  async getFundingRateHistory(symbol: string, startTime: number): Promise<FundingRateRow[] | null> {
+  // waitIfBusy: AI 필터 학습처럼 시간이 걸려도 펀딩이 빠지면 안 되는 작업용 — 5분 상한에 걸리면 생략 대신 대기
+  async getFundingRateHistory(symbol: string, startTime: number, waitIfBusy = false): Promise<FundingRateRow[] | null> {
+    if (waitIfBusy) {
+      for (;;) {
+        const now = Date.now();
+        BinanceService.fundingCallTimes = BinanceService.fundingCallTimes.filter(t => now - t < 300_000);
+        // 여러 페이지가 필요할 수 있어 페이지 상한만큼 여유가 생길 때까지 대기
+        if (BinanceService.fundingCallTimes.length + BinanceService.FUNDING_MAX_PAGES <= BinanceService.FUNDING_CALLS_PER_5M) break;
+        await new Promise(r => setTimeout(r, Math.max(1000, BinanceService.fundingCallTimes[0] + 300_000 - now + 500)));
+      }
+    }
+    return this.getFundingRateHistoryInner(symbol, startTime);
+  }
+
+  // 장기 구간 캔들 (startTime ~ 현재) — 1500개씩 여러 페이지, weight 예산 안에서 받음. 캐시하지 않음(메모리 보호)
+  async getFuturesKlinesRange(symbol: string, interval: string, startTime: number): Promise<Kline[]> {
+    const out: Kline[] = [];
+    let cursor = startTime;
+    for (let page = 0; page < 20; page++) {
+      let data: any[] | null = null;
+      for (let attempt = 0; attempt <= 2 && data === null; attempt++) {
+        try {
+          await acquireFuturesWeight(klinesWeight(1500));
+          data = (await this.futuresClient.get('/fapi/v1/klines', { params: { symbol, interval, startTime: cursor, limit: 1500 } })).data;
+        } catch (e: any) {
+          const throttled = e.response?.status === 429 || /일시 제한|IP 차단/.test(e.message ?? '');
+          if (!throttled || attempt >= 2) throw e;
+        }
+      }
+      const batch: Kline[] = data!.map((k: any[]) => ({
+        openTime: k[0], open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5], closeTime: k[6]
+      }));
+      out.push(...batch);
+      if (batch.length < 1500) break;
+      cursor = batch[batch.length - 1].openTime + 1;
+    }
+    return out;
+  }
+
+  private async getFundingRateHistoryInner(symbol: string, startTime: number): Promise<FundingRateRow[] | null> {
     const cached = BinanceService.fundingCache.get(symbol);
     if (cached && cached.from <= startTime && Date.now() - cached.ts < BinanceService.FUNDING_CACHE_TTL) {
       return cached.rows;

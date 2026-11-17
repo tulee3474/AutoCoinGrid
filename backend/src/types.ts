@@ -54,6 +54,7 @@ export interface StrategyConfig {
   conditions: StrategyConditions;
   trade: TradeConfig;
   createdAt: number;
+  mlFilter?: unknown;   // AI 진입 필터 상태 (services/ml/trainer.ts MlFilterState) — 스캐너가 진입 직전 판정에 사용
 }
 
 export interface MarketSnapshot {

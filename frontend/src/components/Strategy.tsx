@@ -995,6 +995,9 @@ export default function Strategy() {
             <Link to="/comparison" className="text-xs text-accent hover:underline mt-1 inline-block">
               저장된 전략의 백테스트 vs 실제 거래 비교 →
             </Link>
+            <Link to="/ai-filter" className="text-xs text-accent hover:underline mt-1 ml-3 inline-block">
+              AI 진입 필터 →
+            </Link>
           </div>
           <button onClick={handleValidate} disabled={validating} className="btn-outline flex-shrink-0 disabled:opacity-50">
             {validating ? '분석 중...' : '승률 검증'}

@@ -13,6 +13,7 @@ import liveRoutes, { setLiveBroadcast } from './routes/live';
 import authRoutes from './routes/auth';
 import adminRoutes from './routes/admin';
 import presetRoutes from './routes/presets';
+import mlRoutes from './routes/ml';
 import { fetchFromCoinGecko } from './services/btcDominanceHistory';
 import { restoreScanners } from './services/autoScanner';
 import { restoreLiveScanners } from './services/liveTrader';
@@ -40,6 +41,7 @@ app.use('/api/live', liveRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/presets', presetRoutes);
+app.use('/api/ml', mlRoutes);
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', time: Date.now() }));
 

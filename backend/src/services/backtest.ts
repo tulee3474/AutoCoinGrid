@@ -28,6 +28,8 @@ interface BacktestOptions {
   // BTC 변동률 필터용 — 대상 코인 klines와 동일한 개수/끝 시점으로 정렬된 BTCUSDT 캔들
   // (호출부에서 정렬해서 넘겨줌 — 대상 코인이 BTC보다 상장이 늦어 캔들 수가 적을 수 있음)
   btcKlines?: Kline[];
+  // true면 펀딩비 조회 한도에 걸려도 생략하지 않고 기다림 (AI 필터 학습 데이터용 — 순손익 라벨이 정확해야 함)
+  fundingWait?: boolean;
 }
 
 // kline 간격(분) 맵
@@ -257,7 +259,7 @@ export async function runBacktest(
   options: BacktestOptions,
   symbol: string
 ): Promise<BacktestResult> {
-  const { conditions, trade, interval, side = 'SHORT', btcKlines } = options;
+  const { conditions, trade, interval, side = 'SHORT', btcKlines, fundingWait = false } = options;
   const simTrades: { trade: SimTrade; fills: SimFill[] }[] = [];
 
   // 유지증거금률 구간표는 심볼당 하나(포지션 규모별 상수)라 캔들 루프 전에 한 번만 조회 —
@@ -304,7 +306,7 @@ export async function runBacktest(
 
   // 펀딩비는 신호가 실제로 나온 코인만 조회 (전체 알트 검증에서도 호출 수가 신호 코인 수로 제한됨)
   const fundingRows = simTrades.length > 0
-    ? await binance.getFundingRateHistory(symbol, simTrades[0].trade.entryTime)
+    ? await binance.getFundingRateHistory(symbol, simTrades[0].trade.entryTime, fundingWait)
     : null;
   const candleMs = (MINS_PER_CANDLE[interval] ?? 60) * 60_000;
   const priceAt = (time: number) => {

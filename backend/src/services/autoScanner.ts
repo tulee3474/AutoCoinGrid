@@ -1,5 +1,6 @@
 import { binance, estimateLiquidationPrice } from './binance';
 import { scanMarket } from './scanner';
+import { checkMlFilter } from './ml/filter';
 import { openPaperPosition, closePaperPosition, getOrCreateWallet } from './paperWallet';
 import { computeIndicators } from './indicator';
 import { calcPdfStopLoss, calcTakeProfitPrice, capSlWithLiquidation, updateAvgEntryOnFill } from './gridUtils';
@@ -62,7 +63,8 @@ async function loadStrategies(userId: string): Promise<StrategyConfig[]> {
     coins:      r.coins as string[],
     conditions: r.conditions as unknown as StrategyConditions,
     trade:      r.trade as unknown as TradeConfig,
-    createdAt:  r.createdAt.getTime()
+    createdAt:  r.createdAt.getTime(),
+    mlFilter:   r.mlFilter
   }));
 }
 
@@ -311,6 +313,16 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
       addLog(userId, `전략 "${strategy.name}"(${strategy.side}): 후보 ${signals.length}개, 충족 ${fullSignals.length}개`);
 
       for (const signal of fullSignals) {
+        // AI 진입 필터 (전략에 켜져 있을 때만) — 판정 실패 시 필터 없이 원래 전략대로 진입
+        const ml = await checkMlFilter(strategy, signal.symbol, 'paper').catch((e: any) => {
+          addLog(userId, `🤖 AI 필터 판정 실패 ${signal.symbol} — 필터 없이 진행: ${e.message}`, 'error');
+          return null;
+        });
+        if (ml && !ml.pass) {
+          if (ml.fresh) addLog(userId, `🤖 [AI 차단] ${signal.symbol} 예상 승률 ${(ml.prob * 100).toFixed(0)}% < 기준 ${(ml.threshold * 100).toFixed(0)}% (4시간 동안 재판정 안 함)`, 'info');
+          continue;
+        }
+        if (ml?.fresh) addLog(userId, `🤖 [AI 통과] ${signal.symbol} 예상 승률 ${(ml.prob * 100).toFixed(0)}% ≥ 기준 ${(ml.threshold * 100).toFixed(0)}%`, 'info');
         const pos = await openPaperPosition(userId, signal.symbol, signal.price, strategy.trade, strategy.name, strategy.side);
         if (pos) {
           addLog(userId,

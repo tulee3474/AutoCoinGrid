@@ -36,6 +36,7 @@ model Strategy {
   conditions Json
   trade      Json
   coins      Json     @default("[]")
+  mlFilter   Json?    // AI 진입 필터 (모델+검증 결과+사용 여부/기준). null = 학습 안 함
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
