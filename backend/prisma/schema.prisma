@@ -195,3 +195,14 @@ model MlSample {
   @@index([strategyId, source])
   @@map("ml_samples")
 }
+
+// AI 필터 입력값 "시장 분위기" 시계열 — 후보 알트 전체의 24h 수익률 분포 (1시간 단위)
+// 백테스트 데이터 수집 때 계산해 저장 → 실거래 표본 변환 시 그 시각 값을 조회
+model MlMarketHour {
+  hour DateTime @id   // 이 시각에 시작한 1h 캔들 기준
+  med  Float          // 24h 수익률 중앙값 (%)
+  frac Float          // 24h +10% 이상 비율
+  n    Int            // 계산에 쓴 코인 수
+
+  @@map("ml_market_hours")
+}

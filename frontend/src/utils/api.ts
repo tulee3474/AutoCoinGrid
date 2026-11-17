@@ -398,7 +398,9 @@ export interface AdminPreset {
 // ── AI 진입 필터 ──────────────────────────────────────────────
 export interface MlPnlStats { winRate: number; avgProfitPct: number; avgLossPct: number; expectedValuePct: number }
 export interface MlThresholdRow { threshold: number; keptPct: number; trades: number; stats: MlPnlStats; sumPct: number }
+export type MlTarget = 'profit' | 'avoidLoss';
 export interface MlFilterInfo {
+  target?: MlTarget;     // 없으면 profit (옛 모델)
   applyPaper: boolean;   // 가상 지갑에 적용
   applyLive: boolean;    // 실제 거래에 적용
   threshold: number;
@@ -416,13 +418,17 @@ export interface MlFilterInfo {
     sources?: { backtest: number; live: number; liveReplaced: number; liveWeight: number };
     liveTest?: { samples: number; auc: number | null };
     dataFrom?: number; dataTo?: number;
+    lossCutPct?: number; labelPosPct?: number;
+    params?: { depth: number; minLeaf: number; lr: number; trees: number };
+    search?: { depth: number; minLeaf: number; lr: number; trees: number; auc: number }[];
+    missingPct?: Record<string, number>;
   };
 }
 export interface MlJobInfo { status: 'running' | 'done' | 'error'; phase: string; done: number; total: number; startedAt: number; mode?: 'manual' | 'auto'; error?: string }
 interface MlSourceInfo { count: number; from: number | null; to: number | null }
 export interface MlDataInfo {
   state: {
-    collectedFrom: number; collectedUntil: number; includeLive: boolean; liveWeight: number;
+    collectedFrom: number; collectedUntil: number; includeLive: boolean; liveWeight: number; target?: MlTarget;
     autoUpdate: boolean; autoEveryDays: number;
     lastCollect?: { at: number; coins: number; failed: number; added: number };
     lastAuto?: { at: number; ok: boolean; message: string };
@@ -431,8 +437,9 @@ export interface MlDataInfo {
   live: MlSourceInfo;
   liveTradesAvailable: number;
   configChanged: boolean;
+  featureChanged: boolean;
 }
-export interface MlTrainOptions { days: number; reset?: boolean; includeLive?: boolean; liveWeight?: number }
+export interface MlTrainOptions { days: number; reset?: boolean; includeLive?: boolean; liveWeight?: number; target?: MlTarget }
 
 export const getMlFilter = (strategyId: string) =>
   api.get(`/ml/${strategyId}`).then(r => r.data as { filter: MlFilterInfo | null; data: MlDataInfo; job: MlJobInfo | null });

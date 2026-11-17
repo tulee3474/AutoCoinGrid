@@ -1209,10 +1209,10 @@ async function runLiveScanCycle(userId: string, broadcast: (data: unknown) => vo
           return null;
         });
         if (ml && !ml.pass) {
-          if (ml.fresh) addLog(userId, `🤖 [AI 차단] ${signal.symbol} 예상 승률 ${(ml.prob * 100).toFixed(0)}% < 기준 ${(ml.threshold * 100).toFixed(0)}% (4시간 동안 재판정 안 함)`, 'info');
+          if (ml.fresh) addLog(userId, `🤖 [AI 차단] ${signal.symbol} AI 점수 ${(ml.prob * 100).toFixed(0)}% < 기준 ${(ml.threshold * 100).toFixed(0)}% (4시간 동안 재판정 안 함)`, 'info');
           continue;
         }
-        if (ml?.fresh) addLog(userId, `🤖 [AI 통과] ${signal.symbol} 예상 승률 ${(ml.prob * 100).toFixed(0)}% ≥ 기준 ${(ml.threshold * 100).toFixed(0)}%`, 'info');
+        if (ml?.fresh) addLog(userId, `🤖 [AI 통과] ${signal.symbol} AI 점수 ${(ml.prob * 100).toFixed(0)}% ≥ 기준 ${(ml.threshold * 100).toFixed(0)}%`, 'info');
         await openLivePosition(userId, signal.symbol, signal.price, strategy.name, strategy.trade, strategy.side, broadcast);
       }
       broadcast({ type: 'live_scan', data: { signals: fullSignals, scannedAt: Date.now() } });

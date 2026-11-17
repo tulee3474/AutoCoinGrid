@@ -45,6 +45,7 @@ async function dataStatus(row: any) {
     live: g('live'),
     liveTradesAvailable: liveTrades,
     configChanged: !!d && d.configHash !== strategyHash({ conditions: row.conditions, trade: row.trade, side: row.side }),
+    featureChanged: !!d && d.featureVer !== FEATURE_VER,   // 서버 업데이트로 입력값이 바뀜 → 다음 학습 때 처음부터 수집
   };
 }
 
@@ -55,7 +56,7 @@ router.get('/:strategyId', requireAuth, async (req: AuthRequest, res: Response) 
   res.json({ filter: publicState(row), data: await dataStatus(row), job: getJob(row.id) });
 });
 
-// POST /api/ml/:strategyId/train { days, reset, includeLive, liveWeight } — 학습 시작
+// POST /api/ml/:strategyId/train { days, reset, includeLive, liveWeight, target } — 학습 시작
 // 저장된 데이터가 있으면 마지막 수집 이후분만 추가 수집 후 누적 전체로 학습 (reset=true면 처음부터)
 router.post('/:strategyId/train', requireAuth, async (req: AuthRequest, res: Response) => {
   const row = await findStrategy(req);
@@ -64,7 +65,8 @@ router.post('/:strategyId/train', requireAuth, async (req: AuthRequest, res: Res
   const liveWeight = Math.min(5, Math.max(1, Number(req.body?.liveWeight) || 2));
   try {
     res.json({ job: startTraining(req.userId!, row.id, {
-      days, reset: req.body?.reset === true, includeLive: req.body?.includeLive !== false, liveWeight, mode: 'manual',
+      days, reset: req.body?.reset === true, includeLive: req.body?.includeLive !== false, liveWeight,
+      target: req.body?.target === 'profit' ? 'profit' : 'avoidLoss', mode: 'manual',
     }) });
   } catch (e: any) {
     res.status(409).json({ error: e.message });
@@ -85,7 +87,7 @@ router.get('/:strategyId/samples.csv', requireAuth, async (req: AuthRequest, res
       r.netPnlPct.toFixed(4), r.grossPnlPct.toFixed(4), r.netPnlPct > 0 ? 1 : 0,
       r.source === 'live' || r.configHash === hash ? 1 : 0,
       r.featureVer === FEATURE_VER ? 1 : 0,
-      ...(r.features as number[]).map(v => +v.toFixed(6)),
+      ...(r.features as (number | null)[]).map(v => (v === null ? '' : +v.toFixed(6))),
     ].join(','));
   }
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');

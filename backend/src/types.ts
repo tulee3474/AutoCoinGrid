@@ -6,6 +6,7 @@ export interface Kline {
   low: number;
   volume: number;
   closeTime: number;
+  takerBuyVolume?: number;   // 시장가 매수 체결량 (바이낸스 kline 10번째 값)
 }
 
 export interface StrategyConditions {

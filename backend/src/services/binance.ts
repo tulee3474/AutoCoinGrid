@@ -47,6 +47,24 @@ function recordApiUsage(kind: 'spot' | 'futures', url: string | undefined, heade
 let futuresWeight = { minute: 0, used: 0 };
 export const BULK_FUTURES_WEIGHT_CAP = 1400;
 
+// ── /futures/data/* (미결제약정·롱숏비율 이력) 전용 한도 ─────────────
+// 이 엔드포인트들은 weight와 별개로 IP당 5분 1000회 제한 → 자체적으로 분당 150회까지만 사용
+const dataCallTimes: number[] = [];
+const DATA_CALLS_PER_MIN = 150;
+async function acquireDataSlot(): Promise<void> {
+  for (;;) {
+    const now = Date.now();
+    while (dataCallTimes.length > 0 && now - dataCallTimes[0] > 60_000) dataCallTimes.shift();
+    if (dataCallTimes.length < DATA_CALLS_PER_MIN) { dataCallTimes.push(now); return; }
+    await new Promise(r => setTimeout(r, dataCallTimes[0] + 60_000 - now + 50));
+  }
+}
+
+// 시계열 한 점 (t = 바이낸스 timestamp, v = 값)
+export interface SeriesRow { t: number; v: number }
+// 바이낸스는 이 데이터를 최근 30일치만 제공
+export const FUTURES_DATA_RETENTION_MS = 29.5 * 86_400_000;
+
 export function klinesWeight(limit: number): number {
   if (limit < 100) return 1;
   if (limit < 500) return 2;
@@ -231,7 +249,7 @@ export class BinanceService {
     }
     const data: Kline[] = res.data.map((k: any[]) => ({
       openTime: k[0], open: +k[1], high: +k[2], low: +k[3],
-      close: +k[4], volume: +k[5], closeTime: k[6]
+      close: +k[4], volume: +k[5], closeTime: k[6], takerBuyVolume: +k[9]
     }));
     if (cacheKey) this.klinesCache.set(cacheKey, { data, ts: Date.now() });
     return data;
@@ -243,7 +261,7 @@ export class BinanceService {
     });
     return data.map((k: any[]) => ({
       openTime: k[0], open: +k[1], high: +k[2], low: +k[3],
-      close: +k[4], volume: +k[5], closeTime: k[6]
+      close: +k[4], volume: +k[5], closeTime: k[6], takerBuyVolume: +k[9]
     }));
   }
 
@@ -257,7 +275,7 @@ export class BinanceService {
       });
       const batch: Kline[] = data.map((k: any[]) => ({
         openTime: k[0], open: +k[1], high: +k[2], low: +k[3],
-        close: +k[4], volume: +k[5], closeTime: k[6]
+        close: +k[4], volume: +k[5], closeTime: k[6], takerBuyVolume: +k[9]
       }));
       all.push(...batch);
       if (batch.length < 1500) break;
@@ -309,13 +327,51 @@ export class BinanceService {
         }
       }
       const batch: Kline[] = data!.map((k: any[]) => ({
-        openTime: k[0], open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5], closeTime: k[6]
+        openTime: k[0], open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5], closeTime: k[6], takerBuyVolume: +k[9]
       }));
       out.push(...batch);
       if (batch.length < 1500) break;
       cursor = batch[batch.length - 1].openTime + 1;
     }
     return out;
+  }
+
+  // 1h 단위 미결제약정(USDT 가치) / 전체 계정 롱숏비율 이력. 30일 이전 구간은 바이낸스가 제공하지 않음 → 잘라서 요청.
+  // startTime 미지정 = 최근 limit개. 실패(데이터 없는 코인 등)는 null
+  async getOpenInterestHist(symbol: string, startTime?: number, endTime?: number): Promise<SeriesRow[] | null> {
+    return this.getFuturesDataSeries('/futures/data/openInterestHist', symbol, r => +r.sumOpenInterestValue, startTime, endTime);
+  }
+  async getLongShortRatioHist(symbol: string, startTime?: number, endTime?: number): Promise<SeriesRow[] | null> {
+    return this.getFuturesDataSeries('/futures/data/globalLongShortAccountRatio', symbol, r => +r.longShortRatio, startTime, endTime);
+  }
+  private async getFuturesDataSeries(
+    path: string, symbol: string, pick: (r: any) => number, startTime?: number, endTime?: number
+  ): Promise<SeriesRow[] | null> {
+    const H = 3_600_000;
+    const now = Date.now();
+    try {
+      if (startTime === undefined) {
+        await acquireDataSlot();
+        const { data } = await this.futuresClient.get(path, { params: { symbol, period: '1h', limit: 30 } });
+        return (data as any[]).map(r => ({ t: +r.timestamp, v: pick(r) })).sort((a, b) => a.t - b.t);
+      }
+      const end = Math.min(endTime ?? now, now);
+      let cursor = Math.max(startTime, now - FUTURES_DATA_RETENTION_MS);
+      const out: SeriesRow[] = [];
+      for (let page = 0; page < 4 && cursor < end; page++) {
+        const pageEnd = Math.min(end, cursor + 499 * H);
+        await acquireDataSlot();
+        const { data } = await this.futuresClient.get(path, { params: { symbol, period: '1h', limit: 500, startTime: cursor, endTime: pageEnd } });
+        const rows = (data as any[]).map(r => ({ t: +r.timestamp, v: pick(r) }));
+        out.push(...rows);
+        cursor = pageEnd + 1;
+      }
+      out.sort((a, b) => a.t - b.t);
+      return out;
+    } catch (e: any) {
+      console.warn(`[futures/data] ${symbol} ${path} 실패: ${e.message}`);
+      return null;
+    }
   }
 
   private async getFundingRateHistoryInner(symbol: string, startTime: number): Promise<FundingRateRow[] | null> {
@@ -411,7 +467,7 @@ export class BinanceService {
       }
       const data: Kline[] = res.data.map((k: any[]) => ({
         openTime: k[0], open: +k[1], high: +k[2], low: +k[3],
-        close: +k[4], volume: +k[5], closeTime: k[6]
+        close: +k[4], volume: +k[5], closeTime: k[6], takerBuyVolume: +k[9]
       }));
       // 1h 캐시는 같은 사이클에 받은 심볼들이 정확히 같은 시각에 만료돼 5분마다 수백 개가 한꺼번에 재조회됨
       // → 만료 시점을 180~300초로 흩뿌려 피크 요청량을 낮춤 (ts를 과거로 밀면 그만큼 일찍 만료)
@@ -449,7 +505,7 @@ export class BinanceService {
     });
     const result: Kline[] = data.map((k: any[]) => ({
       openTime: k[0], open: +k[1], high: +k[2], low: +k[3],
-      close: +k[4], volume: +k[5], closeTime: k[6]
+      close: +k[4], volume: +k[5], closeTime: k[6], takerBuyVolume: +k[9]
     }));
     this.klinesCache.set(cacheKey, { data: result, ts: Date.now() });
     return result;

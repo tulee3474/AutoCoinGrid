@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { getStrategies, getMlFilter, trainMlFilter, updateMlFilter, deleteMlFilter, downloadMlSamples, MlFilterInfo, MlDataInfo, MlJobInfo, MlThresholdRow } from '../utils/api';
+import { getStrategies, getMlFilter, trainMlFilter, updateMlFilter, deleteMlFilter, downloadMlSamples, MlFilterInfo, MlDataInfo, MlJobInfo, MlThresholdRow, MlTarget } from '../utils/api';
 import { StrategyConfig } from '../types';
 import { fmtDate, fmtDateTime } from '../utils/datetime';
 
@@ -16,6 +16,7 @@ export default function AiFilter() {
   const [reset, setReset] = useState(false);
   const [includeLive, setIncludeLive] = useState(true);
   const [liveWeight, setLiveWeight] = useState(2);
+  const [target, setTarget] = useState<MlTarget>('avoidLoss');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -33,6 +34,7 @@ export default function AiFilter() {
       const r = await getMlFilter(id);
       setFilter(r.filter);
       setData(r.data);
+      if (r.data?.state?.target) setTarget(r.data.state.target);
       setJob(r.job);
       return r.job;
     } catch (e: any) {
@@ -57,7 +59,8 @@ export default function AiFilter() {
 
   const training = job?.status === 'running';
   const m = filter?.metrics;
-  const hasData = (data?.backtest.count ?? 0) > 0 && !data?.configChanged;
+  const hasData = (data?.backtest.count ?? 0) > 0 && !data?.configChanged && !data?.featureChanged;
+  const scoreLabel = (filter?.target ?? 'profit') === 'avoidLoss' ? '안전 점수' : '예상 승률';
   const pendingLive = Math.max(0, (data?.liveTradesAvailable ?? 0) - (data?.live.count ?? 0));
   const current: MlThresholdRow | undefined = m?.table.find(r => Math.abs(r.threshold - (filter?.threshold ?? -1)) < 1e-6);
 
@@ -89,8 +92,15 @@ export default function AiFilter() {
               <option value={365}>365일</option>
             </select>
           </div>
+          <div>
+            <label className="label">학습 목표</label>
+            <select value={target} onChange={e => setTarget(e.target.value as MlTarget)} className="input" disabled={training}>
+              <option value="avoidLoss">큰 손실 피하기 (추천)</option>
+              <option value="profit">수익 여부</option>
+            </select>
+          </div>
           <button
-            onClick={() => run(() => trainMlFilter(strategyId, { days, reset, includeLive, liveWeight }))}
+            onClick={() => run(() => trainMlFilter(strategyId, { days, reset, includeLive, liveWeight, target }))}
             disabled={!strategyId || training || busy}
             className="px-4 py-1.5 rounded-lg text-sm font-medium bg-accent/20 text-accent border border-accent/30 hover:bg-accent/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
@@ -123,6 +133,12 @@ export default function AiFilter() {
             : '처음에는 전체 알트코인 장기 백테스트로 학습 데이터를 만들어서 5~15분 걸립니다.'}
           {' '}이 페이지를 닫아도 서버에서 계속 진행됩니다.
           {data?.configChanged && ' 전략 설정이 바뀌어 백테스트 데이터를 새로 수집합니다 (실거래 데이터는 유지).'}
+          {data?.featureChanged && ' 서버 업데이트로 AI 입력 지표가 바뀌어 처음부터 다시 수집합니다.'}
+        </p>
+        <p className="text-xs text-gray-600">
+          {target === 'avoidLoss'
+            ? "큰 손실 피하기: '이긴 거래 수익 중앙값의 2배(최소 3%) 이상 잃은 거래'를 피하도록 학습합니다. 그리드 숏처럼 자주 조금 벌고 가끔 크게 잃는 전략에 적합합니다."
+            : '수익 여부: 순손익이 플러스로 끝날지를 맞히도록 학습합니다.'}
         </p>
         {training && job && (
           <div className="text-xs text-gray-400">
@@ -197,7 +213,7 @@ export default function AiFilter() {
                     : '필터 꺼짐'}
                 </p>
                 <p className="text-xs text-gray-500 mt-0.5">
-                  예상 승률 <span className="text-gray-200 font-semibold">{(filter.threshold * 100).toFixed(1)}%</span> 미만이면 진입하지 않음
+                  {scoreLabel} <span className="text-gray-200 font-semibold">{(filter.threshold * 100).toFixed(1)}%</span> 미만이면 진입하지 않음
                   {current && <> · 검증 구간 기준 신호의 {current.keptPct}%만 진입</>}
                   {' · '}학습 {fmtDateTime(filter.trainedAt)} ({filter.days}일)
                 </p>
@@ -250,7 +266,7 @@ export default function AiFilter() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-gray-500 border-b border-border text-left text-xs">
-                  <th className="pb-2 pr-3 font-medium">기준 예상 승률</th>
+                  <th className="pb-2 pr-3 font-medium">기준 {scoreLabel}</th>
                   <th className="pb-2 pr-3 font-medium">진입 비율</th>
                   <th className="pb-2 pr-3 font-medium">승률</th>
                   <th className="pb-2 pr-3 font-medium">EV(순손익)</th>
@@ -300,6 +316,30 @@ export default function AiFilter() {
                 <> 검증 구간 실거래 {m.liveTest.samples}건만 본 AUC: {m.liveTest.auc === null ? '표본 부족(20건 미만 또는 한쪽 결과만)' : m.liveTest.auc.toFixed(2)}.</>
               )}
             </p>
+            <p className="text-xs text-gray-600 mt-1">
+              학습 목표: {filter.target === 'avoidLoss'
+                ? <>큰 손실 피하기 (순손익 -{m.lossCutPct}% 이하 = 큰 손실, 안전 비율 {m.labelPosPct}%) — 안전 점수 = 큰 손실이 아닐 확률</>
+                : <>수익 여부{m.labelPosPct !== undefined && ` (이긴 거래 ${m.labelPosPct}%)`}</>}
+              {m.params && <> · 파라미터: 깊이 {m.params.depth}, 리프 최소 {m.params.minLeaf}, 학습률 {m.params.lr}, 트리 {m.params.trees}</>}
+            </p>
+            {m.search && m.search.length > 0 && (
+              <details className="mt-2 text-xs text-gray-500">
+                <summary className="cursor-pointer hover:text-gray-300">파라미터 탐색 결과 ({m.search.length}개 조합 · 학습 구간 안쪽 검증 AUC)</summary>
+                <div className="mt-1.5 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-0.5 num">
+                  {m.search.map((r, i) => (
+                    <span key={i} className={i === 0 ? 'text-accent' : ''}>
+                      깊이{r.depth} 리프{r.minLeaf} lr{r.lr}×{r.trees}: {r.auc.toFixed(3)}
+                    </span>
+                  ))}
+                </div>
+                {m.missingPct && Object.keys(m.missingPct).length > 0 && (
+                  <p className="mt-1.5">
+                    결측 비율: {Object.entries(m.missingPct).map(([k, v]) => `${k} ${v}%`).join(' · ')}
+                    {' '}(미결제약정·롱숏비율은 바이낸스가 최근 30일치만 제공 — 데이터가 쌓일수록 줄어듦)
+                  </p>
+                )}
+              </details>
+            )}
           </div>
 
           {/* 중요도 */}

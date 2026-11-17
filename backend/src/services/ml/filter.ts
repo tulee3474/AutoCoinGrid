@@ -1,6 +1,6 @@
 import { binance } from '../binance';
 import { StrategyConfig } from '../../types';
-import { computeFeatures, fundingRateAt, FEATURE_NAMES } from './features';
+import { computeFeatures, fundingRateAt, breadthOf, selectCandidateTickers, FEATURE_NAMES } from './features';
 import { predictGbdt } from './gbdt';
 import type { MlFilterState } from './trainer';
 
@@ -12,7 +12,7 @@ const decisions = new Map<string, { pass: boolean; prob: number; at: number }>()
 
 export interface MlDecision {
   pass: boolean;
-  prob: number;        // 순손익 플러스 확률 예측 (0~1)
+  prob: number;        // 모델 점수 (0~1) — 목표가 profit이면 순손익 플러스 확률, avoidLoss면 큰 손실이 아닐 확률
   threshold: number;
   fresh: boolean;      // 이번에 새로 판정했는지 (로그 중복 방지용)
 }
@@ -41,13 +41,19 @@ export async function checkMlFilter(strategy: StrategyConfig, symbol: string, ta
   }
 
   const now = Date.now();
-  const [coin1h, btc1h, onboard, funding] = await Promise.all([
+  const [coin1h, btc1h, onboard, funding, oi, ls, tickers] = await Promise.all([
     binance.getFuturesKlines(symbol, '1h', 200),
     binance.getFuturesKlines('BTCUSDT', '1h', 200),
     binance.getFuturesOnboardDates(),
     binance.getFundingRateHistory(symbol, now - 3 * 86_400_000),
+    binance.getOpenInterestHist(symbol),     // 최근 30시간 (실패 시 null → 결측)
+    binance.getLongShortRatioHist(symbol),
+    binance.getFutures24hrTickers(),
   ]);
-  const x = computeFeatures(coin1h, btc1h, now + 1, fundingRateAt(funding, now), onboard.get(symbol));
+  // 시장 분위기: 학습과 같은 후보 코인 기준, 현재 24h 등락률 분포
+  const cands = selectCandidateTickers(tickers as any[], onboard, strategy.conditions);
+  const breadth = breadthOf(cands.map(t => parseFloat(t.priceChangePercent)).filter(Number.isFinite));
+  const x = computeFeatures(coin1h, btc1h, now + 1, fundingRateAt(funding, now), onboard.get(symbol), { oi, ls, breadth });
   if (!x) return null;
 
   const prob = predictGbdt(f.model, x);
