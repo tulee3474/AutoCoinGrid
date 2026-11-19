@@ -15,6 +15,23 @@ export async function getOrCreateWallet(userId: string) {
   });
 }
 
+// 진입 가능 여부만 조용히 확인 (보유 중·손실 이력 영구 금지·재진입 쿨다운) — openPaperPosition과 같은 조건.
+// 스캐너가 AI 판정 전에 호출: 어차피 진입 안 할 신호에 AI 판정·기록을 남기지 않기 위해 (잔액은 제외 — 수시로 바뀜)
+export async function isPaperEntryEligible(userId: string, symbol: string, trade: TradeConfig, side: Side): Promise<boolean> {
+  const wallet = await getOrCreateWallet(userId);
+  if (wallet.openPositions.find(p => p.symbol === symbol && p.side === side)) return false;
+  if (trade.blockLossSymbols) {
+    const anyLoss = await prisma.paperTradeLog.findFirst({ where: { walletId: wallet.id, symbol, pnlUsdt: { lte: 0 } } });
+    if (anyLoss) return false;
+  }
+  const lastLog = await prisma.paperTradeLog.findFirst({ where: { walletId: wallet.id, symbol }, orderBy: { exitTime: 'desc' } });
+  if (lastLog) {
+    const cooldownHours = resolveReEntryCooldownHours(trade, lastLog.pnlUsdt > 0);
+    if (cooldownHours && Date.now() - lastLog.exitTime.getTime() < cooldownHours * 3_600_000) return false;
+  }
+  return true;
+}
+
 export async function openPaperPosition(
   userId: string,
   symbol: string,

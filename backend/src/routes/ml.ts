@@ -5,7 +5,7 @@ import { Prisma } from '@prisma/client';
 import { startTraining, getJob, strategyHash, MlFilterState, MlDataState, FEATURE_VER } from '../services/ml/trainer';
 import { FEATURE_NAMES } from '../services/ml/features';
 import { forgetModel } from '../services/ml/filter';
-import { summarizeDecisions, evaluatePendingDecisions } from '../services/ml/decisionEval';
+import { summarizeDecisions, evaluatePendingDecisions, findActualEntries } from '../services/ml/decisionEval';
 import { computeSkew } from '../services/ml/skew';
 
 // ── AI 진입 필터 API ──────────────────────────────────────────
@@ -141,11 +141,12 @@ const DECISION_LIST_FIELDS = {
   id: true, target: true, symbol: true, side: true, decidedAt: true, price: true, prob: true, threshold: true, pass: true,
   mlTarget: true, lossCutPct: true, modelTrainedAt: true, evalStatus: true, evalAt: true,
   simExitPrice: true, simExitTime: true, simExitReason: true, simGrids: true, simNetPnlPct: true, simGrossPnlPct: true,
-  good: true, correct: true,
+  good: true, correct: true, skipReason: true,
 } as const;
 
 function decisionWhere(strategyId: string, q: any) {
   const where: any = { strategyId };
+  if (q.showSkipped !== '1') where.skipReason = null;   // 기본: 보유 중 중복 판정 제외
   if (q.target === 'paper' || q.target === 'live') where.target = q.target;
   return where;
 }
@@ -155,11 +156,20 @@ router.get('/:strategyId/decisions', requireAuth, async (req: AuthRequest, res: 
   const row = await findStrategy(req);
   if (!row) return res.status(404).json({ error: 'not found' });
   const where = decisionWhere(row.id, req.query);
+  // 요약은 항상 정상 판정만 (보유 중 중복 판정은 같은 거래를 여러 번 세게 됨)
   const all = await prisma.mlDecision.findMany({
-    where, select: { pass: true, evalStatus: true, correct: true, good: true, simNetPnlPct: true, prob: true },
+    where: { ...where, skipReason: null }, select: { pass: true, evalStatus: true, correct: true, good: true, simNetPnlPct: true, prob: true },
   });
+  const skipped = await prisma.mlDecision.count({ where: { strategyId: row.id, skipReason: { not: null } } });
   const rows = await prisma.mlDecision.findMany({ where, orderBy: { decidedAt: 'desc' }, take: 300, select: DECISION_LIST_FIELDS });
-  res.json({ summary: summarizeDecisions(all), rows: rows.map(r => ({ ...r, decidedAt: r.decidedAt.getTime(), evalAt: r.evalAt?.getTime() ?? null, simExitTime: r.simExitTime?.getTime() ?? null })) });
+  const actual = await findActualEntries(req.userId!, rows);
+  res.json({
+    summary: { ...summarizeDecisions(all), skipped },
+    rows: rows.map(r => ({
+      ...r, decidedAt: r.decidedAt.getTime(), evalAt: r.evalAt?.getTime() ?? null, simExitTime: r.simExitTime?.getTime() ?? null,
+      actual: actual.get(r.id) ?? null,
+    })),
+  });
 });
 
 // POST /api/ml/:strategyId/decisions/evaluate — 평가 지금 실행 (보통은 1시간마다 자동)

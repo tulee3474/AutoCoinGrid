@@ -397,6 +397,22 @@ async function closeOnRsiReversal(userId: string, binanceSvc: BinanceService, br
 
 // ── 신규 포지션 진입 ──────────────────────────────────────────
 
+// 진입 가능 여부만 조용히 확인 (보유 중·손실 이력 영구 금지·재진입 쿨다운) — openLivePosition과 같은 조건.
+// 스캐너가 AI 판정 전에 호출: 어차피 진입 안 할 신호에 AI 판정·기록을 남기지 않기 위해
+// (로그는 openLivePosition이 그대로 남김 — 여기선 판정 여부만 결정)
+export async function isLiveEntryEligible(userId: string, symbol: string, trade: TradeConfig, side: Side): Promise<boolean> {
+  if (await prisma.livePosition.findFirst({ where: { userId, symbol, side } })) return false;
+  if (trade.blockLossSymbols) {
+    if (await prisma.liveTradeLog.findFirst({ where: { userId, symbol, pnlUsdt: { lte: 0 } } })) return false;
+  }
+  const lastClose = await prisma.liveTradeLog.findFirst({ where: { userId, symbol }, orderBy: { exitTime: 'desc' } });
+  if (lastClose) {
+    const cooldownHours = resolveReEntryCooldownHours(trade, lastClose.pnlUsdt > 0);
+    if (cooldownHours && cooldownHours * 3_600_000 - (Date.now() - lastClose.exitTime.getTime()) > 0) return false;
+  }
+  return true;
+}
+
 export async function openLivePosition(
   userId: string,
   symbol: string,
@@ -1204,7 +1220,9 @@ async function runLiveScanCycle(userId: string, broadcast: (data: unknown) => vo
       addLog(userId, `전략 "${strategy.name}"(${strategy.side}): 후보 ${signals.length}개, 충족 ${fullSignals.length}개`);
       for (const signal of fullSignals) {
         // AI 진입 필터 (전략에 켜져 있을 때만) — 판정 실패 시 필터 없이 원래 전략대로 진입
-        const ml = await checkMlFilter(strategy, signal.symbol, 'live', { userId, price: signal.price }).catch((e: any) => {
+        // 이미 보유 중·쿨다운 등으로 어차피 진입 안 할 신호는 AI 판정 생략 (판정 기록 중복 방지) — 진입 시도는 그대로 해서 기존 로그 유지
+        const eligible = await isLiveEntryEligible(userId, signal.symbol, strategy.trade, strategy.side);
+        const ml = !eligible ? null : await checkMlFilter(strategy, signal.symbol, 'live', { userId, price: signal.price }).catch((e: any) => {
           addLog(userId, `🤖 AI 필터 판정 실패 ${signal.symbol} — 필터 없이 진행: ${e.message}`, 'error');
           return null;
         });

@@ -35,7 +35,7 @@ export async function computeSkew(strategyId: string, configHash: string, interv
   const win = Math.max(2 * 3_600_000, 2 * (MINS[interval] ?? 60) * 60_000);
   const [decs, bts] = await Promise.all([
     prisma.mlDecision.findMany({
-      where: { strategyId, featureVer: FEATURE_VER, configHash },
+      where: { strategyId, skipReason: null, featureVer: FEATURE_VER, configHash },
       select: { symbol: true, decidedAt: true, features: true },
     }),
     prisma.mlSample.findMany({

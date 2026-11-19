@@ -8,8 +8,10 @@ import {
 } from './features';
 import { forgetModel } from './filter';
 import { FEATURE_VER, strategyHash } from './version';
+import { liveNetPct } from './liveNet';
+export { liveNetPct };
 export { FEATURE_VER, strategyHash };
-import { evaluatePendingDecisions } from './decisionEval';
+import { evaluatePendingDecisions, markHoldingDecisions } from './decisionEval';
 import { trainGbdtAsync, predictGbdt, auc, GbdtModel, GbdtParams, DEFAULT_PARAMS } from './gbdt';
 
 // ── AI 진입 필터 학습 ──────────────────────────────────────────
@@ -133,11 +135,6 @@ function alignByTime(btc: Kline[], target: Kline[]): Kline[] {
   return i < 0 ? [] : btc.slice(i, i + target.length);
 }
 
-// 실거래 기록의 순손익 % (증거금 대비) — 비교 화면(routes/strategy.ts)과 같은 계산
-export function liveNetPct(l: { pnlPct: number; pnlUsdt: number; entryAmountUsdt: number; fundingFee: number; commission: number }): number {
-  const basis = Math.abs(l.pnlPct) > 1e-9 ? l.pnlUsdt * 100 / l.pnlPct : l.entryAmountUsdt;
-  return basis > 0 ? (l.pnlUsdt + l.fundingFee + l.commission) / basis * 100 : 0;
-}
 
 // 사용자가 학습 도중 바꿀 수 있는 값(자동 업데이트 설정)을 덮어쓰지 않도록 DB 최신값과 병합해 저장
 async function saveData(strategyId: string, patch: Partial<MlDataState>) {
@@ -457,7 +454,7 @@ async function trainFromSamples(
   // AI 판정 기록: 채점 완료 + 지금과 같은 입력값 정의·전략 설정으로 판정한 것만
   const decs = opts.includeDecisions
     ? await prisma.mlDecision.findMany({
-        where: { strategyId, evalStatus: 'done', featureVer: FEATURE_VER, configHash },
+        where: { strategyId, evalStatus: 'done', skipReason: null, featureVer: FEATURE_VER, configHash },
         select: { symbol: true, decidedAt: true, features: true, simNetPnlPct: true },
       })
     : [];
@@ -652,6 +649,10 @@ export function startMlScheduler() {
   setInterval(tick, 60 * 60_000);
 
   migrateLegacyModels().catch(e => console.error('[ml] 모델 이전 실패', e));
+  // 이전 버전에서 보유 중에 쌓인 중복 판정 표시 (통계·학습·평가 제외)
+  markHoldingDecisions()
+    .then(n => { if (n > 0) console.log(`[ml] 보유 중 중복 판정 ${n}건 표시 (통계·학습 제외)`); })
+    .catch(e => console.error('[ml] 중복 판정 정리 실패', e));
 
   // AI 판정 사후 평가: 1시간마다 결과가 확정된 판정을 시뮬레이션해 맞음/틀림 기록 (학습 중엔 건너뜀 — 요청 한도 보호)
   const evalTick = async () => {

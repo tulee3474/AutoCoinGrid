@@ -19,16 +19,17 @@ export default function AiDecisions({ strategyId }: { strategyId: string }) {
   const [rows, setRows] = useState<MlDecisionRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  const [showSkipped, setShowSkipped] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const r = await getMlDecisions(strategyId, target);
+      const r = await getMlDecisions(strategyId, target, showSkipped);
       setSummary(r.summary);
       setRows(r.rows);
     } catch (e: any) {
       setMsg(e.response?.data?.error ?? e.message);
     }
-  }, [strategyId, target]);
+  }, [strategyId, target, showSkipped]);
 
   useEffect(() => {
     setSummary(null); setRows([]); setMsg('');
@@ -121,6 +122,7 @@ export default function AiDecisions({ strategyId }: { strategyId: string }) {
       )}
       <p className="text-xs text-gray-600">
         평가 대기 {summary.pending}건{summary.unresolved > 0 && ` · 30일 넘게 결과 미확정 ${summary.unresolved}건`} — 판정 후 최소 2시간이 지나고 거래가 끝나야(익절·손절·시간 만료) 평가됩니다.
+        {summary.skipped > 0 && ` 이미 보유 중일 때 나온 중복 판정 ${summary.skipped}건은 통계에서 뺐습니다 (이전 버전에서 생긴 기록).`}
       </p>
       {msg && <p className="text-xs text-gray-400">{msg}</p>}
 
@@ -130,6 +132,10 @@ export default function AiDecisions({ strategyId }: { strategyId: string }) {
           <button key={k} onClick={() => setTarget(k)}
             className={`px-2.5 py-1 rounded-md border ${target === k ? 'border-accent/40 text-accent bg-accent/10' : 'border-border text-gray-500'}`}>{l}</button>
         ))}
+        <span className="w-2" />
+        <label className="flex items-center gap-1 text-gray-500 cursor-pointer">
+          <input type="checkbox" checked={showSkipped} onChange={e => setShowSkipped(e.target.checked)} /> 중복 판정 보기
+        </label>
         <span className="w-2" />
         {([['block', '차단만'], ['pass', '통과만'], ['wrong', '틀린 것만'], ['all', '전체']] as const).map(([k, l]) => (
           <button key={k} onClick={() => setVerdict(k)}
@@ -147,13 +153,14 @@ export default function AiDecisions({ strategyId }: { strategyId: string }) {
               <th className="pb-2 pr-3 font-medium">판정</th>
               <th className="pb-2 pr-3 font-medium">AI 점수 / 기준</th>
               <th className="pb-2 pr-3 font-medium">판정 가격</th>
-              <th className="pb-2 pr-3 font-medium">진입했다면</th>
+              <th className="pb-2 pr-3 font-medium" title="판정 시각·가격에 진입했다고 가정한 시뮬레이션 결과 (차단된 신호는 '막지 않았다면')">가정 결과</th>
+              <th className="pb-2 pr-3 font-medium" title="통과 판정 직후 실제로 열린 포지션">실제 진입</th>
               <th className="pb-2 font-medium">AI</th>
             </tr>
           </thead>
           <tbody>
             {shown.map(r => (
-              <tr key={r.id} className="border-b border-border/40">
+              <tr key={r.id} className={`border-b border-border/40 ${r.skipReason ? 'opacity-40' : ''}`}>
                 <td className="py-1.5 pr-3 text-gray-400 whitespace-nowrap">
                   {fmtDateTime(r.decidedAt)}
                   <span className="ml-1 text-gray-600">{r.target === 'live' ? '실' : '가'}</span>
@@ -174,6 +181,13 @@ export default function AiDecisions({ strategyId }: { strategyId: string }) {
                     </span>
                   ) : r.evalStatus === 'unresolved' ? <span className="text-gray-600">미확정</span> : <span className="text-gray-600">대기</span>}
                 </td>
+                <td className="py-1.5 pr-3 num whitespace-nowrap">
+                  {r.skipReason === 'holding' ? <span className="text-gray-500">이미 보유 중</span>
+                    : !r.pass ? <span className="text-gray-600">진입 안 함</span>
+                    : !r.actual ? <span className="text-gray-600" title="잔액 부족·주문 실패 등으로 진입하지 못했거나 기록을 찾지 못함">없음</span>
+                    : r.actual.status === 'open' ? <span className="text-gray-300">보유 중 @ {price(r.actual.entryPrice)}</span>
+                    : <span className={(r.actual.netPnlPct ?? 0) >= 0 ? 'text-up' : 'text-down'}>{pct(r.actual.netPnlPct ?? 0)}</span>}
+                </td>
                 <td className="py-1.5">
                   {r.correct === null ? <span className="text-gray-600">⏳</span> : r.correct ? <span className="text-up">✅ 맞음</span> : <span className="text-down">❌ 틀림</span>}
                 </td>
@@ -184,6 +198,7 @@ export default function AiDecisions({ strategyId }: { strategyId: string }) {
         {shown.length === 0 && <p className="text-xs text-gray-600 text-center py-3">해당하는 판정이 없습니다.</p>}
       </div>
       <p className="text-[11px] text-gray-600">
+        가정 결과는 실제 거래가 아니라 "그 시각·가격에 진입했다면"을 계산한 값입니다 (차단된 신호도 막지 않았다면 어땠는지 계산). 실제 진입은 '실제 진입' 칸을 보세요.
         맞음 기준은 모델의 학습 목표와 같습니다 — 큰 손실 피하기: 진입했다면 '큰 손실'이었는지 / 수익 여부: 순손익이 플러스였는지.
         차단이 맞음 = 실제로 나쁜 거래를 막음, 통과가 맞음 = 좋은 거래를 들여보냄. 결과 칸에 마우스를 올리면 청산 시각·그리드 체결 수가 보입니다. 최근 300건까지 표시 (전체는 CSV).
       </p>

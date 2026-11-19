@@ -468,15 +468,18 @@ export interface MlDecisionRow {
   simExitPrice: number | null; simExitTime: number | null; simExitReason: 'takeProfit' | 'stopLoss' | 'timeout' | null;
   simGrids: number | null; simNetPnlPct: number | null; simGrossPnlPct: number | null;
   good: boolean | null; correct: boolean | null;
+  skipReason: string | null;   // 'holding' = 이미 보유 중이라 어차피 진입 안 했던 판정
+  actual: { status: 'open' | 'closed'; entryPrice: number; netPnlPct: number | null; exitReason: string | null } | null;   // 판정 직후 실제 진입
 }
 export interface MlDecisionGroup { total: number; evaluated: number; correct: number; goodCount: number; sumNetPct: number; avgNetPct: number }
 export interface MlDecisionSummary {
   total: number; pending: number; unresolved: number;
   blocked: MlDecisionGroup; passed: MlDecisionGroup;
   aiEffectSumPct: number; auc: number | null;
+  skipped: number;   // 통계에서 뺀 보유 중 중복 판정 수
 }
-export const getMlDecisions = (strategyId: string, target: 'all' | 'paper' | 'live') =>
-  api.get(`/ml/${strategyId}/decisions`, { params: { target } }).then(r => r.data as { summary: MlDecisionSummary; rows: MlDecisionRow[] });
+export const getMlDecisions = (strategyId: string, target: 'all' | 'paper' | 'live', showSkipped = false) =>
+  api.get(`/ml/${strategyId}/decisions`, { params: { target, showSkipped: showSkipped ? '1' : '0' } }).then(r => r.data as { summary: MlDecisionSummary; rows: MlDecisionRow[] });
 export const evaluateMlDecisions = (strategyId: string) =>
   api.post(`/ml/${strategyId}/decisions/evaluate`, {}, { timeout: 300_000 }).then(r => r.data as { done: number; unresolved: number; pending: number });
 export const downloadMlDecisions = async (strategyId: string) => {

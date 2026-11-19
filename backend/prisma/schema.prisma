@@ -245,6 +245,7 @@ model MlDecision {
   features       Json      // 판정 당시 AI 입력값 (FEATURE_NAMES 순서, null=결측)
   featureVer     String    @default("")   // 입력값 정의 버전 — 학습에 쓸 때 현재 버전과 같은 것만
   configHash     String    @default("")   // 판정 당시 전략 설정 해시 — 학습에 쓸 때 현재 설정과 같은 것만
+  skipReason     String?   // null = 정상 판정 / 'holding' = 이미 같은 코인 보유 중이라 어차피 진입 안 했던 판정 (통계·학습·평가 제외)
   evalStatus     String    @default("pending")   // pending | done | unresolved(30일 넘게 결과 확정 불가)
   evalAt         DateTime?
   simExitPrice   Float?
