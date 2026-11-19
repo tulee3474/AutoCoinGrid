@@ -209,7 +209,7 @@ export default function Guide() {
         </div>
         <div className="bg-surface rounded-lg p-3 text-xs space-y-1">
           <p className="text-gray-400">로그에서 확인하는 법 (가상 지갑·실제 거래 로그)</p>
-          <p className="text-gray-300">🤖 [AI 차단] XXXUSDT AI 점수 38% &lt; 기준 52% → 진입 안 함 (4시간 동안 재판정 안 함)</p>
+          <p className="text-gray-300">🤖 [AI 차단] XXXUSDT AI 점수 38% &lt; 기준 52% → 진입 안 함 (24시간 동안 재판정 안 함)</p>
           <p className="text-gray-300">🤖 [AI 통과] XXXUSDT AI 점수 71% ≥ 기준 52% → 원래대로 진입</p>
         </div>
         <InfoBox type="warn">

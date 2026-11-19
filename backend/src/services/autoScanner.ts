@@ -321,7 +321,7 @@ async function runScanCycle(userId: string, broadcast: (data: unknown) => void) 
           return null;
         });
         if (ml && !ml.pass) {
-          if (ml.fresh) addLog(userId, `🤖 [AI 차단] ${signal.symbol} AI 점수 ${(ml.prob * 100).toFixed(0)}% < 기준 ${(ml.threshold * 100).toFixed(0)}% (4시간 동안 재판정 안 함)`, 'info');
+          if (ml.fresh) addLog(userId, `🤖 [AI 차단] ${signal.symbol} AI 점수 ${(ml.prob * 100).toFixed(0)}% < 기준 ${(ml.threshold * 100).toFixed(0)}% (24시간 동안 재판정 안 함)`, 'info');
           continue;
         }
         if (ml?.fresh) addLog(userId, `🤖 [AI 통과] ${signal.symbol} AI 점수 ${(ml.prob * 100).toFixed(0)}% ≥ 기준 ${(ml.threshold * 100).toFixed(0)}%`, 'info');

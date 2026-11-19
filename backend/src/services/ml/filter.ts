@@ -7,9 +7,10 @@ import type { MlFilterState } from './trainer';
 import { FEATURE_VER, strategyHash } from './version';
 
 // ── 실전 적용: 스캐너 신호 → 진입 직전에 AI 필터 판정 ──────────────
-// 같은 신호가 매 분 반복되므로 (전략, 대상, 코인)별 판정을 4시간 기억 — 매 분 다시 판정하면
-// 우연히 기준을 넘는 순간 진입하게 돼(여러 번 굴리면 결국 통과) 필터 의미가 약해짐
-const DECISION_TTL = 4 * 3_600_000;
+// 같은 신호가 매 분 반복되므로 (전략, 대상, 코인)별 판정을 24시간 기억 — 매 분 다시 판정하면
+// 우연히 기준을 넘는 순간 진입하게 돼(여러 번 굴리면 결국 통과) 필터 의미가 약해짐.
+// 메모리에 없으면(서버 재시작·배포 직후) DB 판정 기록(ml_decisions)에서 24시간 안의 마지막 판정을 이어서 사용
+export const DECISION_TTL = 24 * 3_600_000;
 const FAIL_TTL = 10 * 60_000;   // 판정 실패(조회 오류 등)는 10분간 재시도 안 함 → 매분 바이낸스 재조회 폭주 방지
 const decisions = new Map<string, { pass: boolean; prob: number; at: number }>();
 const failures = new Map<string, number>();
@@ -66,6 +67,22 @@ export async function checkMlFilter(
   }
   const failedAt = failures.get(key);
   if (failedAt && Date.now() - failedAt < FAIL_TTL) return null;
+
+  // 서버 재시작 등으로 메모리 기억이 없으면 DB의 최근 판정(같은 모델)을 이어서 사용
+  if (!cached) {
+    const prev = await prisma.mlDecision.findFirst({
+      where: {
+        strategyId: strategy.id, target, symbol, modelTrainedAt: f.trainedAt, skipReason: null,
+        decidedAt: { gte: new Date(Date.now() - DECISION_TTL) },
+      },
+      orderBy: { decidedAt: 'desc' },
+      select: { prob: true, decidedAt: true },
+    }).catch(() => null);
+    if (prev) {
+      decisions.set(key, { pass: prev.prob >= f.threshold, prob: prev.prob, at: prev.decidedAt.getTime() });
+      return { pass: prev.prob >= f.threshold, prob: prev.prob, threshold: f.threshold, fresh: false };
+    }
+  }
 
   const now = Date.now();
   let prob: number, x: number[];
