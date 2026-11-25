@@ -1029,7 +1029,12 @@ async function resyncFullyFilledPositions(userId: string, binanceSvc: BinanceSer
     if (!freshPos) continue; // Binance에 없으면(청산됨 등) syncClosed가 별도로 처리
 
     const realEntryPrice = parseFloat(freshPos.entryPrice) || pos.avgEntryPrice || pos.entryPrice;
-    const realTotalUsdt  = parseFloat(freshPos.isolatedWallet) || pos.totalEntryUsdt || pos.entryAmountUsdt;
+    // 총증거금 = 실제 수량 × 평균단가 ÷ 레버리지. (격리 지갑 잔액 isolatedWallet은 펀딩비가 빠져나가며 줄어들어
+    // 그 값을 쓰면 청산 손익이 작게 계산되고, 펀딩비가 손익에서 한 번 더 빠지는 셈이 됐음)
+    const realQty        = Math.abs(parseFloat(freshPos.positionAmt) || 0);
+    const realTotalUsdt  = realQty > 0 && realEntryPrice > 0
+      ? realQty * realEntryPrice / pos.leverage
+      : (pos.totalEntryUsdt || pos.entryAmountUsdt);
     const liqPrice        = parseFloat(freshPos.liquidationPrice) || 0;
 
     const correctedTp = calcTakeProfitPrice(realEntryPrice, tradeCfg.takeProfitPct, posSide);
@@ -1100,7 +1105,8 @@ async function syncTradeFees(userId: string, broadcast: (data: unknown) => void)
   const pending = await prisma.liveTradeLog.findMany({
     // 수수료가 0으로 저장된 기존 로그(이전 필터 버그로 잘못 채워진 것)도 다시 채우도록 함께 조회
     // 7일 넘은 로그는 income 조회 대상에서 제외 — 조회 불가능한 과거 로그가 take 20 슬롯을 차지해 새 로그를 막는 것 방지
-    where:   { userId, exitTime: { gte: new Date(Date.now() - 7 * 86_400_000), lt: new Date(Date.now() - 2 * 60_000) }, OR: [{ feesSynced: false }, { feesSynced: true, commission: 0 }] },
+    // pnlSynced=false: 실현손익을 바이낸스 값으로 아직 교체 안 한 로그 (도입 전 로그도 30일치는 한 번 보정)
+    where:   { userId, exitTime: { gte: new Date(Date.now() - 30 * 86_400_000), lt: new Date(Date.now() - 2 * 60_000) }, OR: [{ feesSynced: false }, { feesSynced: true, commission: 0 }, { pnlSynced: false }] },
     orderBy: { exitTime: 'asc' },
     take:    20
   });
@@ -1115,12 +1121,14 @@ async function syncTradeFees(userId: string, broadcast: (data: unknown) => void)
   const windowEnd   = Math.max(...pending.map(l => l.exitTime.getTime())) + 60_000;
   const fundingRows: any[] = [];
   const commissionAll: any[] = [];
+  const realizedAll: any[] = [];
   try {
     let s = windowStart;
     while (s < windowEnd) {
       const e = Math.min(s + FEE_SYNC_CHUNK_MS - 1, windowEnd);
       fundingRows.push(...await binanceSvc.getIncomeAll('FUNDING_FEE', s, e));
       commissionAll.push(...await binanceSvc.getIncomeAll('COMMISSION', s, e));
+      realizedAll.push(...await binanceSvc.getIncomeAll('REALIZED_PNL', s, e));
       s = e + 1;
     }
   } catch (e: any) {
@@ -1145,10 +1153,13 @@ async function syncTradeFees(userId: string, broadcast: (data: unknown) => void)
     const commission = comms.reduce((a, r) => a + parseFloat(r.income || '0'), 0);
     // 체결이 있었던 거래는 수수료 내역이 반드시 있음 — 0건이면 조회가 덜 반영된 것이므로 확정하지 않고 재시도
     if (comms.length === 0) continue;
+    // 실현손익(가격 손익, 펀딩·수수료 제외)은 앱 추정값 대신 바이낸스 실제값으로 — 그리드 체결가·수량 차이까지 반영
+    const realized = realizedAll.filter(inLog);
+    const pnlUsdt  = realized.length > 0 ? realized.reduce((a, r) => a + parseFloat(r.income || '0'), 0) : log.pnlUsdt;
     try {
       await prisma.liveTradeLog.update({
         where: { id: log.id },
-        data:  { fundingFee, commission, feesSynced: true }
+        data:  { fundingFee, commission, feesSynced: true, pnlUsdt, pnlSynced: true }
       });
     } catch (e: any) {
       addLog(userId, `펀딩피/수수료 저장 실패 ${log.symbol}: ${e.message}`, 'error');
