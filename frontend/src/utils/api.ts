@@ -159,6 +159,7 @@ export const getStrategyComparisonActual = (strategyId: string, type: 'live' | '
     conditions: StrategyConditions; trade: TradeConfig;
     type: 'live' | 'paper';
     actual: { trades: number; winRate: number; avgProfitPct: number; avgLossPct: number; expectedValuePct: number };
+    actualUsd?: import('../types').UsdStats;   // 금액 기준 (실거래 순손익 / 가상 가격 손익)
     liveExtra: {
       gross: { trades: number; winRate: number; avgProfitPct: number; avgLossPct: number; expectedValuePct: number };
       avgCostPct: number;      // 건당 평균 펀딩피+수수료 (증거금 대비 %, 음수=비용)
@@ -397,7 +398,7 @@ export interface AdminPreset {
 
 // ── AI 진입 필터 ──────────────────────────────────────────────
 export interface MlPnlStats { winRate: number; avgProfitPct: number; avgLossPct: number; expectedValuePct: number }
-export interface MlThresholdRow { threshold: number; keptPct: number; trades: number; stats: MlPnlStats; sumPct: number }
+export interface MlThresholdRow { threshold: number; keptPct: number; trades: number; stats: MlPnlStats; sumPct: number; sumBasePct?: number; evBasePct?: number }
 export type MlTarget = 'profit' | 'avoidLoss';
 export interface MlFilterInfo {
   target?: MlTarget;     // 없으면 profit (옛 모델)
@@ -410,7 +411,7 @@ export interface MlFilterInfo {
   outdated: boolean;   // 서버 업데이트로 모델 형식이 바뀜 → 재학습 필요 (그 전까지 자동으로 꺼짐)
   metrics: {
     samples: number; trainSamples: number; testSamples: number; testFrom: number; auc: number;
-    baseline: { trades: number; stats: MlPnlStats; sumPct: number };
+    baseline: { trades: number; stats: MlPnlStats; sumPct: number; sumBasePct?: number; evBasePct?: number };
     table: MlThresholdRow[];
     recommended: number | null;
     importance: { name: string; label: string; pct: number }[];
@@ -419,8 +420,10 @@ export interface MlFilterInfo {
     liveTest?: { samples: number; auc: number | null };
     dataFrom?: number; dataTo?: number;
     lossCutPct?: number; labelPosPct?: number;
-    params?: { depth: number; minLeaf: number; lr: number; trees: number };
-    search?: { depth: number; minLeaf: number; lr: number; trees: number; auc: number }[];
+    params?: { depth: number; minLeaf: number; lr: number; trees: number; subsample?: number; colsample?: number; lambda?: number };
+    search?: { depth: number; minLeaf: number; lr: number; trees: number; auc: number; subsample?: number; colsample?: number; lambda?: number; aucStd?: number }[];
+    searchMode?: 'quick' | 'thorough';
+    recommendBasis?: 'usd';
     missingPct?: Record<string, number>;
   };
 }
@@ -428,7 +431,7 @@ export interface MlJobInfo { status: 'running' | 'done' | 'error'; phase: string
 interface MlSourceInfo { count: number; from: number | null; to: number | null }
 export interface MlDataInfo {
   state: {
-    collectedFrom: number; collectedUntil: number; includeLive: boolean; includeDecisions?: boolean; liveWeight: number; target?: MlTarget;
+    collectedFrom: number; collectedUntil: number; includeLive: boolean; includeDecisions?: boolean; liveWeight: number; target?: MlTarget; searchMode?: 'quick' | 'thorough';
     autoUpdate: boolean; autoEveryDays: number;
     lastCollect?: { at: number; coins: number; failed: number; added: number };
     lastAuto?: { at: number; ok: boolean; message: string };
@@ -439,7 +442,7 @@ export interface MlDataInfo {
   configChanged: boolean;
   featureChanged: boolean;
 }
-export interface MlTrainOptions { days: number; reset?: boolean; includeLive?: boolean; includeDecisions?: boolean; liveWeight?: number; target?: MlTarget }
+export interface MlTrainOptions { days: number; reset?: boolean; includeLive?: boolean; includeDecisions?: boolean; liveWeight?: number; target?: MlTarget; searchMode?: 'quick' | 'thorough' }
 export interface MlSkewFeature {
   name: string; label: string; pairs: number; meanLive: number; meanTrain: number; meanAbsDiff: number;
   stdDiff: number; corr: number | null; missingLive: number; missingTrain: number;

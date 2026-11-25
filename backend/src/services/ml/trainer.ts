@@ -11,8 +11,8 @@ import { FEATURE_VER, strategyHash } from './version';
 import { liveNetPct } from './liveNet';
 export { liveNetPct };
 export { FEATURE_VER, strategyHash };
-import { evaluatePendingDecisions, markHoldingDecisions } from './decisionEval';
-import { trainGbdtAsync, predictGbdt, auc, GbdtModel, GbdtParams, DEFAULT_PARAMS } from './gbdt';
+import { evaluatePendingDecisions, markIneligibleDecisions } from './decisionEval';
+import { trainGbdtAsync, predictGbdt, predictStaged, auc, GbdtModel, GbdtParams, DEFAULT_PARAMS } from './gbdt';
 
 // ── AI 진입 필터 학습 ──────────────────────────────────────────
 // 데이터(DB ml_samples 테이블에 누적 저장):
@@ -30,7 +30,9 @@ export interface ThresholdRow {
   keptPct: number;       // 검증 구간 거래 중 통과 비율 (%)
   trades: number;
   stats: PnlStats;       // 통과한 거래의 순손익 통계
-  sumPct: number;        // 통과 거래 순손익 % 합 (거래당 증거금 동일 → 총수익에 비례)
+  sumPct: number;        // 통과 거래 순손익 % 합 (증거금 대비 — 거래마다 증거금이 달라 금액과는 다름)
+  sumBasePct?: number;   // 금액 기준 합: 순손익 ÷ 기본 진입금 (그리드로 커진 증거금 반영 — 진입금 $100이면 $ 합계와 같은 숫자)
+  evBasePct?: number;    // 금액 기준 EV (= sumBasePct ÷ 거래 수)
 }
 
 export type MlTarget = 'profit' | 'avoidLoss';
@@ -54,7 +56,7 @@ export interface MlFilterState {
     testSamples: number;
     testFrom: number;          // 검증 구간 시작 시각
     auc: number;
-    baseline: { trades: number; stats: PnlStats; sumPct: number };
+    baseline: { trades: number; stats: PnlStats; sumPct: number; sumBasePct?: number; evBasePct?: number };
     table: ThresholdRow[];
     recommended: number | null;   // null = 필터를 써도 검증 구간 성과가 나아지지 않음
     importance: { name: string; label: string; pct: number }[];
@@ -72,8 +74,11 @@ export interface MlFilterState {
     dataTo?: number;
     lossCutPct?: number;          // avoidLoss: 이 % 이하 순손익을 '큰 손실'로 봄
     labelPosPct?: number;         // 라벨=1 비율 (%)
-    params?: { depth: number; minLeaf: number; lr: number; trees: number };
-    search?: { depth: number; minLeaf: number; lr: number; trees: number; auc: number }[];   // 파라미터 탐색 결과 (내부 검증 AUC)
+    params?: { depth: number; minLeaf: number; lr: number; trees: number; subsample?: number; colsample?: number; lambda?: number };
+    // 파라미터 탐색 결과 (학습 구간 안쪽 검증 AUC). thorough 모드는 3구간 평균 ± 표준편차
+    search?: { depth: number; minLeaf: number; lr: number; trees: number; auc: number; subsample?: number; colsample?: number; lambda?: number; aucStd?: number }[];
+    searchMode?: 'quick' | 'thorough';
+    recommendBasis?: 'usd';       // 추천 기준이 금액 기준 합인지 (없으면 이전 버전: % 합)
     missingPct?: Record<string, number>;   // feature별 결측 비율 (%) — OI·롱숏비율은 최근 30일만 있음
   };
 }
@@ -87,6 +92,8 @@ export interface MlDataState {
   liveWeight: number;
   includeDecisions?: boolean;
   target?: MlTarget;
+  searchMode?: 'quick' | 'thorough';
+  marginVer?: number;          // 표본에 증거금 배수(marginMult)가 들어간 버전 — 없으면 다시 수집
   featureVer?: string;         // 표본 입력값 정의 버전 — 바뀌면 처음부터 다시 수집
   autoUpdate: boolean;         // 주기적으로 새 데이터 추가 + 재학습
   autoEveryDays: number;
@@ -101,6 +108,7 @@ export interface TrainOptions {
   includeDecisions: boolean;   // AI 판정 기록(채점 완료분)도 학습에 사용
   liveWeight: number;
   target: MlTarget;
+  searchMode: 'quick' | 'thorough';   // 파라미터 탐색: 빠름(12조합·1구간) / 정밀(30조합·3구간·트리 수 자동)
   mode: 'manual' | 'auto';
 }
 
@@ -173,15 +181,17 @@ async function runTraining(userId: string, strategyId: string, opts: TrainOption
   let data = row.mlData as unknown as MlDataState | null;
   // 입력값 정의가 바뀐 옛 실거래 표본은 지우고 새 정의로 다시 변환
   await prisma.mlSample.deleteMany({ where: { strategyId, source: 'live', featureVer: { not: FEATURE_VER } } });
-  if (opts.reset || !data || data.configHash !== hash || data.featureVer !== FEATURE_VER) {
+  // 증거금 배수 도입 전 표본은 금액 기준 계산이 틀리므로 다시 수집 (실거래 표본은 다시 변환)
+  if (!data || data.marginVer !== 1) await prisma.mlSample.deleteMany({ where: { strategyId, source: 'live' } });
+  if (opts.reset || !data || data.configHash !== hash || data.featureVer !== FEATURE_VER || data.marginVer !== 1) {
     await prisma.mlSample.deleteMany({ where: { strategyId, source: 'backtest' } });
     const from = runStart - opts.days * DAY;
     data = await saveData(strategyId, {
-      configHash: hash, featureVer: FEATURE_VER, collectedFrom: from, collectedUntil: from, lastCollect: undefined,
-      includeLive: opts.includeLive, includeDecisions: opts.includeDecisions, liveWeight: opts.liveWeight, target: opts.target,
+      configHash: hash, featureVer: FEATURE_VER, marginVer: 1, collectedFrom: from, collectedUntil: from, lastCollect: undefined,
+      includeLive: opts.includeLive, includeDecisions: opts.includeDecisions, liveWeight: opts.liveWeight, target: opts.target, searchMode: opts.searchMode,
     });
   } else {
-    data = await saveData(strategyId, { includeLive: opts.includeLive, includeDecisions: opts.includeDecisions, liveWeight: opts.liveWeight, target: opts.target });
+    data = await saveData(strategyId, { includeLive: opts.includeLive, includeDecisions: opts.includeDecisions, liveWeight: opts.liveWeight, target: opts.target, searchMode: opts.searchMode });
   }
   if (runStart - data.collectedUntil > 3_600_000) {
     const r = await collectBacktestSamples(strategyId, conditions, trade, side, hash, data.collectedUntil, runStart, job);
@@ -330,7 +340,7 @@ async function collectBacktestSamples(
             strategyId, source: 'backtest', symbol: sym,
             entryTime: new Date(t.entryTime), exitTime: new Date(t.exitTime),
             features: x, featureVer: FEATURE_VER, configHash,
-            netPnlPct: t.netPnlPct, grossPnlPct: t.pnlPct,
+            netPnlPct: t.netPnlPct, grossPnlPct: t.pnlPct, marginMult: 1 + t.gridsFilled,
           });
           rowT.push(t.entryTime);
         }
@@ -422,6 +432,8 @@ async function syncLiveSamples(userId: string, strategyId: string, strategyName:
             entryTime: l.entryTime, exitTime: l.exitTime,
             features: toJsonFeatures(x), featureVer: FEATURE_VER, configHash: '',
             netPnlPct: liveNetPct(l), grossPnlPct: l.pnlPct, liveTradeId: l.id,
+            // 증거금 배수 = 실제 증거금 ÷ 기본 진입금 (그리드 체결 시 1보다 큼)
+            marginMult: Math.abs(l.pnlPct) > 1e-9 && l.entryAmountUsdt > 0 ? Math.max(1, (l.pnlUsdt * 100 / l.pnlPct) / l.entryAmountUsdt) : 1,
           });
         }
       } catch (e: any) {
@@ -435,8 +447,79 @@ async function syncLiveSamples(userId: string, strategyId: string, strategyName:
   return rows.length;
 }
 
+// ── 하이퍼파라미터 탐색 (학습 구간 안쪽에서만) ─────────────────────
+// quick:    기존 12조합 (깊이×리프×학습률/트리), 앞 75% 학습 → 뒤 25% 검증 1회
+// thorough: 무작위 30조합 (깊이·리프·학습률·행/지표 샘플링·L2) × 시간순 3구간 검증(walk-forward),
+//           트리 수는 모델 하나를 50~400개 단계별로 평가해 고름. 평균 AUC가 가장 높은 설정 선택.
+//           구간마다 성능이 크게 출렁이는 설정은 우연일 가능성이 있어 표준편차도 함께 기록
+const STAGES = [50, 100, 150, 200, 300, 400];
+async function searchParams(tr: Sample[], mode: 'quick' | 'thorough', job: MlJob) {
+  const search: NonNullable<MlFilterState['metrics']['search']> = [];
+  job.phase = mode === 'thorough' ? '파라미터 정밀 탐색' : '파라미터 탐색';
+  job.done = 0;
+
+  if (mode === 'quick') {
+    const grid: GbdtParams[] = [];
+    for (const depth of [2, 3, 4]) for (const minLeaf of [20, 50]) for (const [lr, trees] of [[0.05, 150], [0.02, 350]]) {
+      grid.push({ ...DEFAULT_PARAMS, depth, minLeaf, lr, trees });
+    }
+    const ic = Math.floor(tr.length * 0.75);
+    const iTr = tr.slice(0, ic), iVa = tr.slice(ic);
+    job.total = grid.length;
+    for (const p of grid) {
+      const m = await trainGbdtAsync(iTr.map(s => s.x), iTr.map(s => s.y), p, iTr.map(s => s.w));
+      search.push({ depth: p.depth, minLeaf: p.minLeaf, lr: p.lr, trees: p.trees, auc: +auc(iVa.map(s => predictGbdt(m, s.x)), iVa.map(s => s.y)).toFixed(3) });
+      job.done++;
+    }
+    const bestIdx = search.reduce((b, r, i) => (r.auc > search[b].auc + 1e-9 ? i : b), 0);   // 동률이면 단순한(앞쪽) 설정
+    return { params: grid[bestIdx], search };
+  }
+
+  // thorough: 시간순 3구간 — [0, a)로 학습 → [a, b) 검증
+  const folds = [[0.55, 0.70], [0.70, 0.85], [0.85, 1.0]].map(([a, b]) => ({
+    train: tr.slice(0, Math.floor(tr.length * a)), val: tr.slice(Math.floor(tr.length * a), Math.floor(tr.length * b)),
+  })).filter(f => f.val.some(s => s.y === 1) && f.val.some(s => s.y === 0) && f.train.length >= 50);
+  if (folds.length === 0) return searchParams(tr, 'quick', job);
+
+  // 재현 가능한 무작위 조합 (기본값 포함)
+  let seed = 7;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  const pick = <T,>(xs: T[]) => xs[Math.floor(rnd() * xs.length)];
+  const combos: GbdtParams[] = [{ ...DEFAULT_PARAMS, trees: 400, colsample: 1 }];
+  const seen = new Set<string>();
+  while (combos.length < 30) {
+    const c: GbdtParams = {
+      ...DEFAULT_PARAMS, trees: 400,
+      depth: pick([2, 3, 4]), minLeaf: pick([10, 20, 50, 100]), lr: pick([0.02, 0.05, 0.1]),
+      subsample: pick([0.6, 0.8, 1.0]), colsample: pick([0.5, 0.8, 1.0]), lambda: pick([1, 5, 20]),
+    };
+    const key = JSON.stringify(c);
+    if (!seen.has(key)) { seen.add(key); combos.push(c); }
+  }
+  job.total = combos.length;
+  let best: { p: GbdtParams; auc: number } | null = null;
+  for (const c of combos) {
+    // 구간마다 400개 트리 모델 하나 → 트리 수 단계별 AUC
+    const aucs: number[][] = STAGES.map(() => []);
+    for (const f of folds) {
+      const m = await trainGbdtAsync(f.train.map(s => s.x), f.train.map(s => s.y), c, f.train.map(s => s.w));
+      const staged = f.val.map(s => predictStaged(m, s.x, STAGES));
+      const yv = f.val.map(s => s.y);
+      STAGES.forEach((_, k) => aucs[k].push(auc(staged.map(p => p[k]), yv)));
+    }
+    STAGES.forEach((trees, k) => {
+      const mean = aucs[k].reduce((a, b) => a + b, 0) / aucs[k].length;
+      const std = Math.sqrt(aucs[k].reduce((a, b) => a + (b - mean) ** 2, 0) / aucs[k].length);
+      search.push({ depth: c.depth, minLeaf: c.minLeaf, lr: c.lr, trees, subsample: c.subsample, colsample: c.colsample, lambda: c.lambda, auc: +mean.toFixed(3), aucStd: +std.toFixed(3) });
+      if (!best || mean > best.auc + 1e-9) best = { p: { ...c, trees }, auc: mean };
+    });
+    job.done++;
+  }
+  return { params: best!.p, search };
+}
+
 // ── 누적 표본으로 학습·검증 ─────────────────────────────────────
-interface Sample { x: number[]; y: number; pnl: number; t: number; w: number; live: boolean }
+interface Sample { x: number[]; y: number; pnl: number; t: number; w: number; live: boolean; mult: number }   // mult = 증거금 ÷ 기본 진입금
 
 async function trainFromSamples(
   strategyId: string, configHash: string, opts: TrainOptions, interval: string, job: MlJob, data: MlDataState
@@ -448,14 +531,14 @@ async function trainFromSamples(
       strategyId, featureVer: FEATURE_VER,
       OR: [{ source: 'backtest', configHash }, ...(opts.includeLive ? [{ source: 'live' }] : [])],
     },
-    select: { source: true, symbol: true, entryTime: true, features: true, netPnlPct: true },
+    select: { source: true, symbol: true, entryTime: true, features: true, netPnlPct: true, marginMult: true },
   });
 
   // AI 판정 기록: 채점 완료 + 지금과 같은 입력값 정의·전략 설정으로 판정한 것만
   const decs = opts.includeDecisions
     ? await prisma.mlDecision.findMany({
         where: { strategyId, evalStatus: 'done', skipReason: null, featureVer: FEATURE_VER, configHash },
-        select: { symbol: true, decidedAt: true, features: true, simNetPnlPct: true },
+        select: { symbol: true, decidedAt: true, features: true, simNetPnlPct: true, simGrids: true },
       })
     : [];
 
@@ -475,27 +558,27 @@ async function trainFromSamples(
     return m;
   };
   const liveRows = bySym(raw.filter(r => r.source === 'live').map(r => ({ ...r, x: fromJsonFeatures(r.features), rt: false })), r => r.entryTime.getTime());
-  const decOnly: { symbol: string; t: number; x: number[]; pnl: number }[] = [];
+  const decOnly: { symbol: string; t: number; x: number[]; pnl: number; mult: number }[] = [];
   let liveRealtime = 0;
   for (const d of decs) {
     if (d.simNetPnlPct === null) continue;
     const t = d.decidedAt.getTime();
     const lv = near(liveRows.get(d.symbol), t) as any;
     if (lv && !lv.rt) { lv.x = fromJsonFeatures(d.features); lv.rt = true; liveRealtime++; continue; }
-    decOnly.push({ symbol: d.symbol, t, x: fromJsonFeatures(d.features), pnl: d.simNetPnlPct });
+    decOnly.push({ symbol: d.symbol, t, x: fromJsonFeatures(d.features), pnl: d.simNetPnlPct, mult: 1 + (d.simGrids ?? 0) });
   }
   const decBySym = bySym(decOnly, r => r.t);
 
   let liveReplaced = 0, decisionReplaced = 0;
   const samples: Sample[] = [];
-  for (const list of liveRows.values()) for (const r of list) samples.push({ x: r.x, y: 0, pnl: r.netPnlPct, t: r.t, w: opts.liveWeight, live: true });
-  for (const d of decOnly) samples.push({ x: d.x, y: 0, pnl: d.pnl, t: d.t, w: 1, live: false });
+  for (const list of liveRows.values()) for (const r of list) samples.push({ x: r.x, y: 0, pnl: r.netPnlPct, t: r.t, w: opts.liveWeight, live: true, mult: r.marginMult });
+  for (const d of decOnly) samples.push({ x: d.x, y: 0, pnl: d.pnl, t: d.t, w: 1, live: false, mult: d.mult });
   for (const r of raw) {
     if (r.source !== 'backtest') continue;
     const t = r.entryTime.getTime();
     if (near(liveRows.get(r.symbol), t)) { liveReplaced++; continue; }
     if (near(decBySym.get(r.symbol), t)) { decisionReplaced++; continue; }
-    samples.push({ x: fromJsonFeatures(r.features), y: 0, pnl: r.netPnlPct, t, w: 1, live: false });
+    samples.push({ x: fromJsonFeatures(r.features), y: 0, pnl: r.netPnlPct, t, w: 1, live: false, mult: r.marginMult });
   }
 
   if (samples.length < MIN_SAMPLES) {
@@ -524,23 +607,8 @@ async function trainFromSamples(
   const cut = Math.floor(samples.length * 0.7);
   const tr = samples.slice(0, cut), te = samples.slice(cut);
 
-  // 파라미터 탐색: 학습 구간 안에서만 (앞 75% 학습 / 뒤 25% 검증, 시간순) — 최종 검증 구간(te)은 건드리지 않음
-  const grid: GbdtParams[] = [];
-  for (const depth of [2, 3, 4]) for (const minLeaf of [20, 50]) for (const [lr, trees] of [[0.05, 150], [0.02, 350]]) {
-    grid.push({ ...DEFAULT_PARAMS, depth, minLeaf, lr, trees });
-  }
-  const ic = Math.floor(tr.length * 0.75);
-  const iTr = tr.slice(0, ic), iVa = tr.slice(ic);
-  const search: NonNullable<MlFilterState['metrics']['search']> = [];
-  job.total = grid.length;
-  for (const p of grid) {
-    job.phase = '파라미터 탐색';
-    const m = await trainGbdtAsync(iTr.map(s => s.x), iTr.map(s => s.y), p, iTr.map(s => s.w));
-    search.push({ depth: p.depth, minLeaf: p.minLeaf, lr: p.lr, trees: p.trees, auc: +auc(iVa.map(s => predictGbdt(m, s.x)), iVa.map(s => s.y)).toFixed(3) });
-    job.done++;
-  }
-  const bestIdx = search.reduce((b, r, i) => (r.auc > search[b].auc + 1e-9 ? i : b), 0);   // 동률이면 단순한(앞쪽) 설정
-  const params = grid[bestIdx];
+  // 파라미터 탐색: 학습 구간(tr) 안에서만 — 최종 검증 구간(te)은 건드리지 않음
+  const { params, search } = await searchParams(tr, opts.searchMode, job);
 
   job.phase = '최종 검증·학습';
   job.done = 0; job.total = 0;
@@ -548,28 +616,36 @@ async function trainFromSamples(
   const pTest = te.map(s => predictGbdt(evalModel, s.x));
   const yTest = te.map(s => s.y);
   const pnlTest = te.map(s => s.pnl);
+  const baseTest = te.map(s => s.pnl * s.mult);   // 금액 기준: 순손익 ÷ 기본 진입금 (%)
+  const sumOf = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 
-  const baseline = { trades: te.length, stats: computePnlStats(pnlTest), sumPct: pnlTest.reduce((a, b) => a + b, 0) };
+  const baseline = {
+    trades: te.length, stats: computePnlStats(pnlTest), sumPct: sumOf(pnlTest),
+    sumBasePct: sumOf(baseTest), evBasePct: te.length ? sumOf(baseTest) / te.length : 0,
+  };
   const sortedP = [...pTest].sort((a, b) => b - a);
   const table: ThresholdRow[] = [];
   for (const keep of [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3]) {
     const k = Math.max(1, Math.round(sortedP.length * keep));
     const threshold = sortedP[k - 1];
     const kept = pnlTest.filter((_, i) => pTest[i] >= threshold);
+    const keptBase = baseTest.filter((_, i) => pTest[i] >= threshold);
     if (kept.length < 10) continue;
     table.push({
       threshold: +threshold.toFixed(4),
       keptPct: +(kept.length / pnlTest.length * 100).toFixed(1),
       trades: kept.length,
       stats: computePnlStats(kept),
-      sumPct: kept.reduce((a, b) => a + b, 0),
+      sumPct: sumOf(kept),
+      sumBasePct: sumOf(keptBase),
+      evBasePct: sumOf(keptBase) / kept.length,
     });
   }
-  // 추천: 검증 구간 순손익 합이 가장 큰 기준. 단, 모델 구분력(AUC)이 0.55 이상이고 기준선(필터 없음)보다
-  // 나을 때만 — AUC가 0.5 근처면 표의 개선은 우연(노이즈)일 가능성이 커서 추천하지 않음
+  // 추천: 검증 구간 "금액 기준" 순손익 합이 가장 큰 기준 (% 합은 그리드로 커진 손절 손실을 과소평가).
+  // 단, 모델 구분력(AUC)이 0.55 이상이고 기준선(필터 없음)보다 나을 때만 — AUC가 0.5 근처면 표의 개선은 우연일 가능성이 큼
   const testAuc = auc(pTest, yTest);
-  const best = table.reduce<ThresholdRow | null>((b, r) => (!b || r.sumPct > b.sumPct ? r : b), null);
-  const recommended = best && best.sumPct > baseline.sumPct && testAuc >= MIN_AUC ? best.threshold : null;
+  const best = table.reduce<ThresholdRow | null>((b, r) => (!b || r.sumBasePct! > b.sumBasePct! ? r : b), null);
+  const recommended = best && best.sumBasePct! > baseline.sumBasePct && testAuc >= MIN_AUC ? best.threshold : null;
 
   // 검증 구간 중 실거래 표본만 따로 본 AUC (실제 체결 결과에서도 구분이 되는지)
   const liveIdx = te.map((s, i) => (s.live ? i : -1)).filter(i => i >= 0);
@@ -616,8 +692,10 @@ async function trainFromSamples(
       liveTest: { samples: liveIdx.length, auc: liveAuc },
       dataFrom, dataTo,
       lossCutPct, labelPosPct: +(nPos / samples.length * 100).toFixed(1),
-      params: { depth: params.depth, minLeaf: params.minLeaf, lr: params.lr, trees: params.trees },
-      search: [...search].sort((a, b) => b.auc - a.auc),
+      params: { depth: params.depth, minLeaf: params.minLeaf, lr: params.lr, trees: params.trees, subsample: params.subsample, colsample: params.colsample ?? 1, lambda: params.lambda },
+      search: [...search].sort((a, b) => b.auc - a.auc).slice(0, 40),
+      searchMode: opts.searchMode,
+      recommendBasis: 'usd',
       missingPct,
     },
   };
@@ -637,7 +715,7 @@ export function startMlScheduler() {
         if (now - last < (d.autoEveryDays || 7) * DAY) continue;
         console.log(`[ml] 자동 업데이트 시작: ${r.id}`);
         startTraining(r.userId, r.id, {
-          days: 180, reset: false, includeLive: d.includeLive ?? true, includeDecisions: d.includeDecisions ?? true, liveWeight: d.liveWeight ?? 2, target: d.target ?? 'profit', mode: 'auto',
+          days: 180, reset: false, includeLive: d.includeLive ?? true, includeDecisions: d.includeDecisions ?? true, searchMode: d.searchMode ?? 'quick', liveWeight: d.liveWeight ?? 2, target: d.target ?? 'profit', mode: 'auto',
         });
         return;   // 한 번에 하나
       }
@@ -650,8 +728,8 @@ export function startMlScheduler() {
 
   migrateLegacyModels().catch(e => console.error('[ml] 모델 이전 실패', e));
   // 이전 버전에서 보유 중에 쌓인 중복 판정 표시 (통계·학습·평가 제외)
-  markHoldingDecisions()
-    .then(n => { if (n > 0) console.log(`[ml] 보유 중 중복 판정 ${n}건 표시 (통계·학습 제외)`); })
+  markIneligibleDecisions()
+    .then(n => { if (n > 0) console.log(`[ml] 진입 불가 시점 판정(보유 중·쿨다운·손실 금지) ${n}건 표시 (통계·학습 제외)`); })
     .catch(e => console.error('[ml] 중복 판정 정리 실패', e));
 
   // AI 판정 사후 평가: 1시간마다 결과가 확정된 판정을 시뮬레이션해 맞음/틀림 기록 (학습 중엔 건너뜀 — 요청 한도 보호)

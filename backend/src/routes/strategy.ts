@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { StrategyConditions, TradeConfig } from '../types';
 import prisma from '../lib/prisma';
+import { computeUsdStats } from '../services/backtest';
 
 const router = Router();
 
@@ -109,6 +110,7 @@ router.get('/:id/comparison', requireAuth, async (req: AuthRequest, res: Respons
   const type = (req.query.type as string) === 'paper' ? 'paper' : 'live';
 
   let pnlPcts: number[];
+  let actualUsd: ReturnType<typeof computeUsdStats>;   // 금액 기준 (실거래는 순손익, 가상은 가격 손익)
   // 실거래 전용: 가격 기준(펀딩피·수수료 제외) 통계와 비용 정보 — 순손익 EV와 나란히 참고용
   let liveExtra: { gross: ReturnType<typeof computeAggregateStats>; avgCostPct: number; unsyncedTrades: number } | null = null;
   if (type === 'live') {
@@ -116,6 +118,7 @@ router.get('/:id/comparison', requireAuth, async (req: AuthRequest, res: Respons
       where:  { userId: req.userId, strategyName: strategy.name },
       select: { pnlPct: true, pnlUsdt: true, entryAmountUsdt: true, fundingFee: true, commission: true, feesSynced: true }
     });
+    actualUsd = computeUsdStats(logs.map(l => ({ netUsdt: l.pnlUsdt + l.fundingFee + l.commission, baseUsdt: l.entryAmountUsdt })));
     // 순손익 % = 가격 손익 % + (펀딩피+수수료)/투입 증거금. 그리드 추가진입 시 증거금이 entryAmountUsdt보다
     // 커서(로그엔 totalEntryUsdt가 없음) pnlUsdt/pnlPct로 실제 기준 증거금을 역산 — pnlPct가 0이면 1차 진입액 사용
     const costPcts = logs.map(l => {
@@ -133,16 +136,18 @@ router.get('/:id/comparison', requireAuth, async (req: AuthRequest, res: Respons
     const logs = wallet
       ? await prisma.paperTradeLog.findMany({
           where:  { walletId: wallet.id, strategyName: strategy.name },
-          select: { pnlPct: true }
+          select: { pnlPct: true, pnlUsdt: true, entryAmountUsdt: true }
         })
       : [];
     pnlPcts = logs.map(l => l.pnlPct);
+    actualUsd = computeUsdStats(logs.map(l => ({ netUsdt: l.pnlUsdt, baseUsdt: l.entryAmountUsdt })));
   }
 
   res.json({
     ...toClientShape(strategy),
     type,
     actual: computeAggregateStats(pnlPcts),   // 실거래는 순손익(펀딩피·수수료 반영) 기준
+    actualUsd,
     liveExtra
   });
 });

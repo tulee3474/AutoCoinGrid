@@ -18,6 +18,7 @@ export default function AiFilter() {
   const [reset, setReset] = useState(false);
   const [includeLive, setIncludeLive] = useState(true);
   const [includeDecisions, setIncludeDecisions] = useState(true);
+  const [searchMode, setSearchMode] = useState<'quick' | 'thorough'>('quick');
   const [liveWeight, setLiveWeight] = useState(2);
   const [target, setTarget] = useState<MlTarget>('avoidLoss');
   const [error, setError] = useState('');
@@ -43,7 +44,7 @@ export default function AiFilter() {
         settingsLoadedFor.current = id;
         const st = r.data?.state;
         if (st?.target) setTarget(st.target);
-        if (st) { setIncludeLive(st.includeLive ?? true); setIncludeDecisions(st.includeDecisions ?? true); setLiveWeight(st.liveWeight ?? 2); }
+        if (st) { setIncludeLive(st.includeLive ?? true); setIncludeDecisions(st.includeDecisions ?? true); setLiveWeight(st.liveWeight ?? 2); setSearchMode(st.searchMode ?? 'quick'); }
       }
       setJob(r.job);
       return r.job;
@@ -72,6 +73,7 @@ export default function AiFilter() {
   const hasData = (data?.backtest.count ?? 0) > 0 && !data?.configChanged && !data?.featureChanged;
   const scoreLabel = (filter?.target ?? 'profit') === 'avoidLoss' ? '안전 점수' : '예상 승률';
   const pendingLive = Math.max(0, (data?.liveTradesAvailable ?? 0) - (data?.live.count ?? 0));
+  const hasBase = m?.baseline.sumBasePct !== undefined;   // 금액 기준 열 (이 기능 이후 학습한 모델만)
   const current: MlThresholdRow | undefined = m?.table.find(r => Math.abs(r.threshold - (filter?.threshold ?? -1)) < 1e-6);
 
   return (
@@ -110,7 +112,7 @@ export default function AiFilter() {
             </select>
           </div>
           <button
-            onClick={() => run(() => trainMlFilter(strategyId, { days, reset, includeLive, includeDecisions, liveWeight, target }))}
+            onClick={() => run(() => trainMlFilter(strategyId, { days, reset, includeLive, includeDecisions, liveWeight, target, searchMode }))}
             disabled={!strategyId || training || busy}
             className="px-4 py-1.5 rounded-lg text-sm font-medium bg-accent/20 text-accent border border-accent/30 hover:bg-accent/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
@@ -125,6 +127,13 @@ export default function AiFilter() {
           <label className="flex items-center gap-1.5 cursor-pointer" title="채점이 끝난 AI 판정(차단 신호 포함)을 실시간 입력값 그대로 학습에 사용 — 같은 신호의 백테스트 데이터를 대체">
             <input type="checkbox" checked={includeDecisions} onChange={e => setIncludeDecisions(e.target.checked)} disabled={training} />
             AI 판정 기록도 학습
+          </label>
+          <label className="flex items-center gap-1.5" title="정밀: 30개 조합 × 시간순 3구간 검증 + 트리 수 자동 선택 (학습 시간 몇 분 더 걸림)">
+            파라미터 탐색
+            <select value={searchMode} onChange={e => setSearchMode(e.target.value as 'quick' | 'thorough')} className="input py-0.5 text-xs" disabled={training}>
+              <option value="quick">빠름 (12조합)</option>
+              <option value="thorough">정밀 (30조합·3구간)</option>
+            </select>
           </label>
           {includeLive && (
             <label className="flex items-center gap-1.5">
@@ -285,6 +294,8 @@ export default function AiFilter() {
                   <th className="pb-2 pr-3 font-medium">승률</th>
                   <th className="pb-2 pr-3 font-medium">EV(순손익)</th>
                   <th className="pb-2 pr-3 font-medium">순손익 합</th>
+                  {hasBase && <th className="pb-2 pr-3 font-medium" title="거래당 평균 순손익 ÷ 기본 진입금 — 그리드로 커진 증거금 반영">금액 EV</th>}
+                  {hasBase && <th className="pb-2 pr-3 font-medium" title="순손익 합계 ÷ 기본 진입금 (진입금 $100이면 $ 합계와 같은 숫자)">금액 합</th>}
                   <th className="pb-2 font-medium"></th>
                 </tr>
               </thead>
@@ -295,11 +306,14 @@ export default function AiFilter() {
                   <td className="py-2 pr-3 num">{(m.baseline.stats.winRate * 100).toFixed(1)}%</td>
                   <td className="py-2 pr-3 num">{pct(m.baseline.stats.expectedValuePct)}</td>
                   <td className="py-2 pr-3 num">{pct(m.baseline.sumPct, 0)}</td>
+                  {hasBase && <td className="py-2 pr-3 num">{pct(m.baseline.evBasePct ?? 0)}</td>}
+                  {hasBase && <td className="py-2 pr-3 num">{pct(m.baseline.sumBasePct ?? 0, 0)}</td>}
                   <td />
                 </tr>
                 {m.table.map(r => {
                   const selected = Math.abs(r.threshold - filter.threshold) < 1e-6;
                   const better = r.sumPct > m.baseline.sumPct;
+                  const betterBase = (r.sumBasePct ?? 0) > (m.baseline.sumBasePct ?? 0);
                   return (
                     <tr key={r.threshold} className={`border-b border-border/40 ${selected ? 'bg-accent/10' : ''}`}>
                       <td className="py-2 pr-3 num text-gray-200">
@@ -309,7 +323,9 @@ export default function AiFilter() {
                       <td className="py-2 pr-3 num text-gray-300">{r.keptPct}% <span className="text-gray-600">({r.trades}건)</span></td>
                       <td className="py-2 pr-3 num text-gray-300">{(r.stats.winRate * 100).toFixed(1)}%</td>
                       <td className={`py-2 pr-3 num ${r.stats.expectedValuePct > m.baseline.stats.expectedValuePct ? 'text-up' : 'text-down'}`}>{pct(r.stats.expectedValuePct)}</td>
-                      <td className={`py-2 pr-3 num font-semibold ${better ? 'text-up' : 'text-down'}`}>{pct(r.sumPct, 0)}</td>
+                      <td className={`py-2 pr-3 num ${hasBase ? '' : 'font-semibold'} ${better ? 'text-up' : 'text-down'}`}>{pct(r.sumPct, 0)}</td>
+                      {hasBase && <td className={`py-2 pr-3 num ${(r.evBasePct ?? 0) > (m.baseline.evBasePct ?? 0) ? 'text-up' : 'text-down'}`}>{pct(r.evBasePct ?? 0)}</td>}
+                      {hasBase && <td className={`py-2 pr-3 num font-semibold ${betterBase ? 'text-up' : 'text-down'}`}>{pct(r.sumBasePct ?? 0, 0)}</td>}
                       <td className="py-2 text-right">
                         {selected ? <span className="text-xs text-accent">사용 중</span> : (
                           <button onClick={() => run(() => updateMlFilter(strategyId, { threshold: r.threshold }))} disabled={busy}
@@ -322,7 +338,10 @@ export default function AiFilter() {
               </tbody>
             </table>
             <p className="text-xs text-gray-600 mt-3">
-              "순손익 합"은 진입 1건당 같은 금액을 넣었을 때의 총 수익(증거금 대비 %)입니다. 기준을 높이면 EV는 오르지만 진입 수가 줄어 총 수익은 줄 수 있습니다.
+              {hasBase
+                ? <>"금액 합"은 기본 진입금 대비 순손익 합계로, 그리드로 증거금이 커진 손절 손실까지 반영한 실제 돈 기준입니다 (진입금 $100이면 $ 합계와 같은 숫자). 추천 기준도 이 값으로 고릅니다. "순손익 합"(증거금 대비 %)은 손절 손실의 무게를 과소평가해 참고용입니다.</>
+                : <>"순손익 합"은 진입 1건당 같은 금액을 넣었을 때의 총 수익(증거금 대비 %)입니다. 다시 학습하면 금액 기준 열이 추가됩니다.</>}
+              {' '}기준을 높이면 EV는 오르지만 진입 수가 줄어 총 수익은 줄 수 있습니다.
               학습 데이터 {m.samples}건
               {m.sources && <> (백테스트 {m.sources.backtest} · 실거래 {m.sources.live}건 ×{m.sources.liveWeight}배 가중{m.sources.liveReplaced > 0 && ` · 같은 신호의 백테스트 ${m.sources.liveReplaced}건은 실거래로 대체`}{(m.sources.decision ?? 0) > 0 && ` · AI 판정 기록 ${m.sources.decision}건(백테스트 ${m.sources.decisionReplaced ?? 0}건 대체)`}{(m.sources.liveRealtime ?? 0) > 0 && ` · 실거래 중 ${m.sources.liveRealtime}건은 판정 당시 실시간 입력값 사용`})</>}
               {m.dataFrom && <> · {fmtDate(m.dataFrom)} ~ {fmtDate(m.dataTo!)}</>}.
@@ -334,15 +353,18 @@ export default function AiFilter() {
               학습 목표: {filter.target === 'avoidLoss'
                 ? <>큰 손실 피하기 (순손익 -{m.lossCutPct}% 이하 = 큰 손실, 안전 비율 {m.labelPosPct}%) — 안전 점수 = 큰 손실이 아닐 확률</>
                 : <>수익 여부{m.labelPosPct !== undefined && ` (이긴 거래 ${m.labelPosPct}%)`}</>}
-              {m.params && <> · 파라미터: 깊이 {m.params.depth}, 리프 최소 {m.params.minLeaf}, 학습률 {m.params.lr}, 트리 {m.params.trees}</>}
+              {m.params && <> · 파라미터{m.searchMode === 'thorough' ? '(정밀 탐색)' : ''}: 깊이 {m.params.depth}, 리프 최소 {m.params.minLeaf}, 학습률 {m.params.lr}, 트리 {m.params.trees}
+                {m.params.subsample !== undefined && `, 행 샘플 ${m.params.subsample}`}{m.params.colsample !== undefined && `, 지표 샘플 ${m.params.colsample}`}{m.params.lambda !== undefined && `, L2 ${m.params.lambda}`}</>}
             </p>
             {m.search && m.search.length > 0 && (
               <details className="mt-2 text-xs text-gray-500">
-                <summary className="cursor-pointer hover:text-gray-300">파라미터 탐색 결과 ({m.search.length}개 조합 · 학습 구간 안쪽 검증 AUC)</summary>
+                <summary className="cursor-pointer hover:text-gray-300">
+                  파라미터 탐색 결과 ({m.searchMode === 'thorough' ? '상위 40개 · 시간순 3구간 평균 AUC ± 편차' : `${m.search.length}개 조합 · 학습 구간 안쪽 검증 AUC`})
+                </summary>
                 <div className="mt-1.5 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-0.5 num">
                   {m.search.map((r, i) => (
                     <span key={i} className={i === 0 ? 'text-accent' : ''}>
-                      깊이{r.depth} 리프{r.minLeaf} lr{r.lr}×{r.trees}: {r.auc.toFixed(3)}
+                      깊이{r.depth} 리프{r.minLeaf} lr{r.lr}×{r.trees}{r.colsample !== undefined && ` 행${r.subsample} 지표${r.colsample} L2 ${r.lambda}`}: {r.auc.toFixed(3)}{r.aucStd !== undefined && ` ±${r.aucStd.toFixed(3)}`}
                     </span>
                   ))}
                 </div>

@@ -5,6 +5,7 @@ import { runBacktest } from '../utils/api';
 import { BacktestResult } from '../types';
 import { fmtDate } from '../utils/datetime';
 import { netStatsOf, costSummary } from '../utils/netPnl';
+import UsdLine from './UsdLine';
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   ReferenceLine, CartesianGrid
@@ -256,6 +257,7 @@ export default function Backtest() {
                 승률·평균·EV는 펀딩피·수수료(시장가 0.05%)를 뺀 순손익 기준 · {costSummary(backtestResult)}
               </p>
             )}
+            <div className="mt-1"><UsdLine stats={backtestResult.usd} pctEv={nb.expectedValuePct} /></div>
             <div className={`mt-5 p-4 rounded-lg border text-sm ${
               nb.expectedValuePct > 0
                 ? 'bg-up/8 border-up/25 text-up'

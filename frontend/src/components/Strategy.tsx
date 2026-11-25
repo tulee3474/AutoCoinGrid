@@ -6,6 +6,7 @@ import { createStrategy, updateStrategy, getStrategies, deleteStrategy, toggleSt
 import { ValidationResult, BacktestResult, StrategyConditions, TradeConfig, Side, mirrorConditionsForSide, mirrorTradeForSide, DEFAULT_CANDIDATE_TOP_PCT, FULL_CANDIDATE_TOP_PCT } from '../types';
 import { fmtDate } from '../utils/datetime';
 import { netStatsOf, costSummary } from '../utils/netPnl';
+import UsdLine from './UsdLine';
 
 // ── 공통 입력 ────────────────────────────────────────────────
 
@@ -210,7 +211,8 @@ function CoinDetailModal({
                       </div>
                     ))}
                   </div>
-                  {costSummary(result) && <p className="text-xs text-gray-500 mb-3">{costSummary(result)}</p>}
+                  {costSummary(result) && <p className="text-xs text-gray-500 mb-1">{costSummary(result)}</p>}
+                  <div className="mb-3"><UsdLine stats={result.usd} pctEv={modalNet?.expectedValuePct} /></div>
                   <div className="space-y-1.5 max-h-60 overflow-y-auto">
                     <p className="text-xs text-gray-500 mb-2">개별 거래 내역</p>
                     {result.trades.map((t, i) => (
@@ -394,6 +396,10 @@ function ValidationPanel({ result, loading, conditions, trade, side }: {
             승률·평균·EV는 펀딩피·수수료(시장가 0.05%)를 뺀 순손익 기준 · {costSummary(result)}
           </p>
         )}
+        <div className="-mt-3 mb-4 space-y-0.5">
+          <UsdLine stats={result.usd} pctEv={nv.expectedValuePct} />
+          <UsdLine stats={result.recentUsd} label="최근 2개월 금액 기준" />
+        </div>
         <button onClick={() => setShowPerCoin(v => !v)} className="text-xs text-accent hover:underline flex items-center gap-1">
           {showPerCoin ? '▲' : '▼'} 코인별 신호 상세 ({result.coinsWithSignal}개 코인)
           <span className="text-gray-500">· 클릭하면 상세 백테스트</span>

@@ -122,7 +122,7 @@ export default function AiDecisions({ strategyId }: { strategyId: string }) {
       )}
       <p className="text-xs text-gray-600">
         평가 대기 {summary.pending}건{summary.unresolved > 0 && ` · 30일 넘게 결과 미확정 ${summary.unresolved}건`} — 판정 후 최소 2시간이 지나고 거래가 끝나야(익절·손절·시간 만료) 평가됩니다.
-        {summary.skipped > 0 && ` 이미 보유 중일 때 나온 중복 판정 ${summary.skipped}건은 통계에서 뺐습니다 (이전 버전에서 생긴 기록).`}
+        {summary.skipped > 0 && ` 어차피 진입할 수 없던 시점(보유 중·재진입 대기·손실 이력 금지)의 판정 ${summary.skipped}건은 통계에서 뺐습니다 (이전 버전에서 생긴 기록).`}
       </p>
       {msg && <p className="text-xs text-gray-400">{msg}</p>}
 
@@ -134,7 +134,7 @@ export default function AiDecisions({ strategyId }: { strategyId: string }) {
         ))}
         <span className="w-2" />
         <label className="flex items-center gap-1 text-gray-500 cursor-pointer">
-          <input type="checkbox" checked={showSkipped} onChange={e => setShowSkipped(e.target.checked)} /> 중복 판정 보기
+          <input type="checkbox" checked={showSkipped} onChange={e => setShowSkipped(e.target.checked)} /> 진입 불가 시점 판정 보기
         </label>
         <span className="w-2" />
         {([['block', '차단만'], ['pass', '통과만'], ['wrong', '틀린 것만'], ['all', '전체']] as const).map(([k, l]) => (
@@ -178,11 +178,19 @@ export default function AiDecisions({ strategyId }: { strategyId: string }) {
                     <span title={`청산 ${r.simExitTime ? fmtDateTime(r.simExitTime) : ''} @ ${price(r.simExitPrice)} · 그리드 ${r.simGrids ?? 0}개 · 가격 손익 ${pct(r.simGrossPnlPct ?? 0)}`}>
                       <span className={(r.simNetPnlPct ?? 0) >= 0 ? 'text-up' : 'text-down'}>{pct(r.simNetPnlPct ?? 0)}</span>
                       <span className="text-gray-500"> {EXIT_LABEL[r.simExitReason ?? ''] ?? ''} @ {price(r.simExitPrice)}</span>
+                      {/* 익절인데 순손익이 마이너스처럼 보이는 경우: 가격은 목표에 닿았지만 펀딩·수수료가 더 컸던 것 */}
+                      {Math.abs((r.simNetPnlPct ?? 0) - (r.simGrossPnlPct ?? 0)) >= 1 && (
+                        <span className="block text-[10px] text-gray-600">
+                          가격 {pct(r.simGrossPnlPct ?? 0)} · 펀딩·수수료 {pct((r.simNetPnlPct ?? 0) - (r.simGrossPnlPct ?? 0))}
+                        </span>
+                      )}
                     </span>
                   ) : r.evalStatus === 'unresolved' ? <span className="text-gray-600">미확정</span> : <span className="text-gray-600">대기</span>}
                 </td>
                 <td className="py-1.5 pr-3 num whitespace-nowrap">
                   {r.skipReason === 'holding' ? <span className="text-gray-500">이미 보유 중</span>
+                    : r.skipReason === 'cooldown' ? <span className="text-gray-500">재진입 대기 중</span>
+                    : r.skipReason === 'lossBlock' ? <span className="text-gray-500">손실 이력 금지</span>
                     : !r.pass ? <span className="text-gray-600">진입 안 함</span>
                     : !r.actual ? <span className="text-gray-600" title="잔액 부족·주문 실패 등으로 진입하지 못했거나 기록을 찾지 못함">없음</span>
                     : r.actual.status === 'open' ? <span className="text-gray-300">보유 중 @ {price(r.actual.entryPrice)}</span>

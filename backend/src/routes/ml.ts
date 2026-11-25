@@ -70,7 +70,8 @@ router.post('/:strategyId/train', requireAuth, async (req: AuthRequest, res: Res
     res.json({ job: startTraining(req.userId!, row.id, {
       days, reset: req.body?.reset === true, includeLive: req.body?.includeLive !== false,
       includeDecisions: req.body?.includeDecisions !== false, liveWeight,
-      target: req.body?.target === 'profit' ? 'profit' : 'avoidLoss', mode: 'manual',
+      target: req.body?.target === 'profit' ? 'profit' : 'avoidLoss',
+      searchMode: req.body?.searchMode === 'thorough' ? 'thorough' : 'quick', mode: 'manual',
     }) });
   } catch (e: any) {
     res.status(409).json({ error: e.message });

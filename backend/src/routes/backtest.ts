@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { binance } from '../services/binance';
-import { runBacktest, computePnlStats } from '../services/backtest';
+import { runBacktest, computePnlStats, computeUsdStats } from '../services/backtest';
 import { selectTopVolume } from '../services/candidateFilter';
 import { StrategyConditions, TradeConfig, Kline, Side } from '../types';
 import { requireAuth, AuthRequest } from '../middleware/auth';
@@ -196,6 +196,9 @@ router.post('/validate', async (req, res) => {
       net, recentNet,
       avgCommissionPct, avgFundingPct,
       fundingMissingTrades: allTrades.length - fundedTrades.length,
+      // 금액 기준 (거래당 평균 순손익 ÷ 진입금) — 그리드로 증거금이 커진 손절의 무게까지 반영
+      usd:       computeUsdStats(allTrades.map(t => ({ netUsdt: t.netPnlUsdt, baseUsdt: trade.entryAmountUsdt }))),
+      recentUsd: computeUsdStats(recentAllTrades.map(t => ({ netUsdt: t.netPnlUsdt, baseUsdt: trade.entryAmountUsdt }))),
       perCoin: validResults
         .map(r => {
           const recentTrades = r.trades.filter(t => t.entryTime >= recentCutoff);

@@ -99,6 +99,15 @@ export interface PnlStats {
   expectedValuePct: number;
 }
 
+// 금액 기준 통계 — % EV는 거래마다 증거금이 달라(그리드 체결 시 2~3배) 손절 손실의 무게를 과소평가함.
+// evOnBasePct = 거래당 평균 순손익 ÷ 기본 진입금 × 100 (진입금 $100이면 거래당 평균 $와 같은 숫자)
+export interface UsdStats {
+  trades: number;
+  totalUsdt: number;     // 순손익 합계 ($)
+  avgUsdt: number;       // 거래당 평균 순손익 ($)
+  evOnBasePct: number;   // 금액 기준 EV (기본 진입금 대비 %)
+}
+
 export interface BacktestResult {
   symbol: string;
   timeframe: string;
@@ -116,6 +125,7 @@ export interface BacktestResult {
   avgCommissionPct: number;      // 거래당 평균 수수료 (증거금 대비 %, 음수)
   avgFundingPct: number;         // 거래당 평균 펀딩피 (증거금 대비 %, 음수=지불, 반영된 거래만)
   fundingMissingTrades: number;
+  usd: UsdStats;                 // 금액 기준 (그리드로 증거금이 커진 손실 거래의 무게까지 반영)
   trades: BacktestTrade[];
   equityCurve: { time: number; equity: number }[];   // 순손익 누적
 }

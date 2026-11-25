@@ -189,6 +189,7 @@ model MlSample {
   configHash  String   // 백테스트 표본: 수집 당시 전략 설정 해시 / 실거래 표본: ''
   netPnlPct   Float    // 순손익 % (증거금 대비, 수수료+펀딩 반영) — 라벨은 이 값 > 0
   grossPnlPct Float
+  marginMult  Float    @default(1)   // 증거금 ÷ 기본 진입금 (그리드 체결 시 1보다 큼) — 금액 기준 계산용
   liveTradeId String?  // 실거래 표본의 원본 LiveTradeLog id
   createdAt   DateTime @default(now())
 

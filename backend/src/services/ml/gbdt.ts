@@ -28,6 +28,7 @@ export interface GbdtParams {
   subsample: number;
   lambda: number;
   seed: number;
+  colsample?: number;   // 트리마다 쓸 지표 비율 (0~1, 기본 1) — 잡음 많은 지표에 과적합 줄임
 }
 
 export const DEFAULT_PARAMS: GbdtParams = { trees: 150, depth: 3, lr: 0.05, minLeaf: 15, subsample: 0.8, lambda: 1, seed: 42 };
@@ -76,6 +77,11 @@ function* trainSteps(X: number[][], y: number[], p: GbdtParams, w?: number[]): G
     const rows: number[] = [];
     for (let i = 0; i < n; i++) if (rand() < p.subsample) rows.push(i);
     if (rows.length < p.minLeaf * 2) { yield; continue; }
+    // 이 트리에서 분할 후보로 쓸 지표 (colsample < 1이면 일부만)
+    const cs = p.colsample ?? 1;
+    let feats: number[] = [];
+    for (let f = 0; f < nf; f++) if (cs >= 1 || rand() < cs) feats.push(f);
+    if (feats.length === 0) feats = [Math.floor(rand() * nf)];
 
     const nodes: TreeNode[] = [];
     const build = (idx: number[], depth: number): number => {
@@ -89,7 +95,7 @@ function* trainSteps(X: number[][], y: number[], p: GbdtParams, w?: number[]): G
       const score = (gl: number, hl: number) => (gl * gl) / (hl + p.lambda) + ((G - gl) ** 2) / (H - hl + p.lambda) - parentScore;
       let best = { gain: 1e-9, f: -1, t: 0, m: 0 };
       for (const i of idx) mask[i] = 1;
-      for (let f = 0; f < nf; f++) {
+      for (const f of feats) {
         let GM = 0, HM = 0, cntM = 0;
         for (const i of idx) if (isMissing(X[i][f])) { GM += g[i]; HM += h[i]; cntM++; }
         const cntN = idx.length - cntM;
@@ -167,6 +173,20 @@ export function predictGbdt(m: GbdtModel, x: number[]): number {
   for (const t of m.trees) z += m.lr * evalTree(t, x);
   return sigmoid(z);
 }
+
+// 트리 앞 k개까지만 쓴 예측을 여러 k에 대해 한 번에 (트리 개수 튜닝용 — 모델 하나로 50/100/200...개 성능 비교)
+export function predictStaged(m: GbdtModel, x: number[], ks: number[]): number[] {
+  const out: number[] = [];
+  let z = m.base, t = 0;
+  for (const k of ks) {
+    for (; t < Math.min(k, m.trees.length); t++) z += m.lr * evalTree(m.trees[t], x);
+    out.push(sigmoid(z));
+  }
+  return out;
+}
+
+// 앞 k개 트리만 남긴 모델
+export const truncateModel = (m: GbdtModel, k: number): GbdtModel => ({ ...m, trees: m.trees.slice(0, k) });
 
 // 순위 기반 AUC (0.5 = 무작위, 1 = 완벽)
 export function auc(scores: number[], y: number[]): number {

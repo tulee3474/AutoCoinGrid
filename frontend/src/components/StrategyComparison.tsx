@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { getStrategies, getStrategyComparisonActual, validateStrategy } from '../utils/api';
 import { StrategyConfig, ValidationResult } from '../types';
 import { netStatsOf, costSummary } from '../utils/netPnl';
+import UsdLine from './UsdLine';
 
 type LogType = 'live' | 'paper';
 
@@ -68,6 +69,10 @@ export default function StrategyComparison() {
     // 실거래: 비용 제외한 가격 기준 EV도 참고로 표시 — 차이 중 얼마가 비용 모델 오차 때문인지 구분용
     ...(useNet && actual.liveExtra ? [
       { label: '└ 가격 기준 EV', backtest: backtest.expectedValuePct, actual: actual.liveExtra.gross.expectedValuePct, fmt: fmtPct, higherIsBetter: true },
+    ] : []),
+    // 금액 기준 EV: 거래당 평균 순손익 ÷ 진입금 — 그리드로 커진 증거금의 손절 손실까지 반영한 실제 돈 기준
+    ...(backtest.usd && actual.actualUsd ? [
+      { label: '금액 기준 EV (진입금 대비)', backtest: backtest.usd.evOnBasePct, actual: actual.actualUsd.evOnBasePct, fmt: fmtPct, higherIsBetter: true },
     ] : []),
   ] : null;
 
@@ -164,6 +169,10 @@ export default function StrategyComparison() {
             백테스트: 과거 {backtest!.coinsAnalyzed}개 알트코인 대상 {backtest!.totalSignals}건 신호 · 실제: {actual!.actual.trades}건 거래 기준.
             표본 수가 적으면(특히 실제 거래) 차이가 통계적으로 유의미하지 않을 수 있습니다.
           </p>
+          <div className="mt-1 space-y-0.5">
+            <UsdLine stats={backtest!.usd} label="백테스트 금액 기준" />
+            <UsdLine stats={actual!.actualUsd} label={`실제 금액 기준`} pctEv={actual!.actual.expectedValuePct} />
+          </div>
           {(backtest!.coinsFailed ?? 0) > 0 && (
             <p className="text-xs text-warn mt-1">
               ⚠ 백테스트에서 {backtest!.coinsFailed}개 코인이 바이낸스 조회 실패로 빠졌습니다 — 표본이 불완전하니 잠시 후 다시 비교하세요.

@@ -128,6 +128,9 @@ export interface PnlStats {
   expectedValuePct: number;
 }
 
+// 금액 기준 통계 (백엔드 UsdStats와 동일) — evOnBasePct = 거래당 평균 순손익 ÷ 기본 진입금 × 100
+export interface UsdStats { trades: number; totalUsdt: number; avgUsdt: number; evOnBasePct: number }
+
 export interface BacktestResult {
   symbol: string;
   timeframe: string;
@@ -144,6 +147,7 @@ export interface BacktestResult {
   avgCommissionPct?: number;    // 거래당 평균 수수료 (증거금 대비 %, 음수)
   avgFundingPct?: number;       // 거래당 평균 펀딩피 (증거금 대비 %, 음수=지불)
   fundingMissingTrades?: number;
+  usd?: UsdStats;
   trades: BacktestTrade[];
   equityCurve: { time: number; equity: number }[];
 }
@@ -189,6 +193,8 @@ export interface ValidationResult {
   avgCommissionPct?: number;
   avgFundingPct?: number;
   fundingMissingTrades?: number;
+  usd?: UsdStats;
+  recentUsd?: UsdStats;
   perCoin: {
     symbol: string;
     signals: number;

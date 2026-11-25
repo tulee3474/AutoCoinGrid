@@ -1,4 +1,4 @@
-import { Kline, StrategyConditions, TradeConfig, BacktestResult, BacktestTrade, Side, PnlStats } from '../types';
+import { Kline, StrategyConditions, TradeConfig, BacktestResult, BacktestTrade, Side, PnlStats, UsdStats } from '../types';
 import { calcRSI, calc24hChange, candlesPerDay } from './indicator';
 import { calcPdfGridPrices, calcPdfAvgEntry, calcPdfStopLoss, calcTakeProfitPrice, calcSimpleStopLoss, calcIsolatedLiquidationPrice, capSlWithLiquidation, truncateGridsToSafeZone, resolveReEntryCooldownHours, dirSign } from './gridUtils';
 import { binance, binanceMaster, pickLeverageBracket, LeverageBracket, FundingRateRow } from './binance';
@@ -11,6 +11,13 @@ const TAKER_FEE_RATE = 0.0005;
 // 시뮬레이션 내부용 — 펀딩피 계산에 필요한 체결 이력 (펀딩 시점의 보유 수량을 구하기 위함)
 interface SimFill { time: number; qty: number }
 type SimTrade = Omit<BacktestTrade, 'commissionUsdt' | 'fundingUsdt' | 'fundingMissing' | 'netPnlUsdt' | 'netPnlPct'>;
+
+export function computeUsdStats(rows: { netUsdt: number; baseUsdt: number }[]): UsdStats {
+  const n = rows.length;
+  const total = rows.reduce((a, r) => a + r.netUsdt, 0);
+  const evOnBase = n ? rows.reduce((a, r) => a + (r.baseUsdt > 0 ? r.netUsdt / r.baseUsdt : 0), 0) / n * 100 : 0;
+  return { trades: n, totalUsdt: total, avgUsdt: n ? total / n : 0, evOnBasePct: evOnBase };
+}
 
 export function computePnlStats(pcts: number[]): PnlStats {
   const wins   = pcts.filter(p => p > 0);
@@ -385,6 +392,7 @@ export async function runBacktest(
     avgCommissionPct: avg(commissionPcts),
     avgFundingPct:    avg(fundingPcts),
     fundingMissingTrades: trades.length - fundedTrades.length,
+    usd: computeUsdStats(trades.map(t => ({ netUsdt: t.netPnlUsdt, baseUsdt: trade.entryAmountUsdt }))),
     trades,
     equityCurve
   };

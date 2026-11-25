@@ -2,6 +2,7 @@ import prisma from '../../lib/prisma';
 import { binance } from '../binance';
 import { simulateEntryAt } from '../backtest';
 import { TradeConfig, Side } from '../../types';
+import { resolveReEntryCooldownHours } from '../gridUtils';
 import { auc } from './gbdt';
 import { liveNetPct } from './liveNet';
 
@@ -113,31 +114,53 @@ export function summarizeDecisions(rows: { pass: boolean; evalStatus: string; co
   };
 }
 
-// ── 이전 버전 기록 정리: 같은 코인을 이미 보유 중일 때 나온 판정 (어차피 진입 안 했던 신호) ─────────
-// 수정 전에는 진입 가능 여부 확인 전에 AI를 돌려, 보유 중에도 4시간마다 판정이 쌓였음 → 한 거래가 통계에 여러 번 잡힘.
-// 판정 시각에 같은 코인·방향 포지션이 이미 열려 있었으면 skipReason='holding'으로 표시해 통계·학습·평가에서 제외
-export async function markHoldingDecisions(): Promise<number> {
+// ── 이전 버전 기록 정리: 어차피 진입할 수 없었던 시점의 판정 ─────────────────
+// 수정 전에는 진입 가능 여부 확인 전에 AI를 돌려, 아래 상황에도 판정이 쌓였음 → 한 거래가 여러 번 잡히거나
+// 진입 못 한 신호가 통계에 섞임. 판정 당시 매매 설정 스냅샷으로 다시 확인해 skipReason을 표시 (통계·학습·평가 제외)
+//   holding  = 같은 코인·방향 포지션 보유 중
+//   lossBlock = 손실 이력 영구 재진입 금지 (blockLossSymbols)
+//   cooldown = 직전 청산 후 재진입 쿨다운 중
+// (실거래/가상 진입 함수와 같은 규칙: 손실 금지·쿨다운은 방향 무관하게 같은 코인 기준)
+export async function markIneligibleDecisions(): Promise<number> {
   const rows = await prisma.mlDecision.findMany({
     where: { skipReason: null },
-    select: { id: true, userId: true, target: true, symbol: true, side: true, decidedAt: true },
+    select: { id: true, userId: true, target: true, symbol: true, side: true, decidedAt: true, trade: true },
   });
   const wallets = new Map<string, string | null>();
   let marked = 0;
   for (const d of rows) {
-    const before = new Date(d.decidedAt.getTime() - 60_000);   // 이 판정 직후 진입한 포지션은 제외 (판정 1분 전 이전에 열린 것만)
-    let holding = false;
+    const before = new Date(d.decidedAt.getTime() - 60_000);   // 이 판정 직후 진입한 포지션은 제외 (판정 1분 전 이전 것만)
+    const trade = d.trade as unknown as TradeConfig;
+    let reason: string | null = null;
+    let lastClose: { pnlUsdt: number; exitTime: Date } | null = null;
+    let anyLoss = false;
     if (d.target === 'live') {
-      holding = !!(await prisma.liveTradeLog.findFirst({ where: { userId: d.userId, symbol: d.symbol, side: d.side, entryTime: { lte: before }, exitTime: { gt: d.decidedAt } }, select: { id: true } }))
+      const holding = !!(await prisma.liveTradeLog.findFirst({ where: { userId: d.userId, symbol: d.symbol, side: d.side, entryTime: { lte: before }, exitTime: { gt: d.decidedAt } }, select: { id: true } }))
         || !!(await prisma.livePosition.findFirst({ where: { userId: d.userId, symbol: d.symbol, side: d.side, openedAt: { lte: before } }, select: { id: true } }));
+      if (holding) reason = 'holding';
+      else {
+        lastClose = await prisma.liveTradeLog.findFirst({ where: { userId: d.userId, symbol: d.symbol, exitTime: { lte: d.decidedAt } }, orderBy: { exitTime: 'desc' }, select: { pnlUsdt: true, exitTime: true } });
+        if (trade?.blockLossSymbols) anyLoss = !!(await prisma.liveTradeLog.findFirst({ where: { userId: d.userId, symbol: d.symbol, exitTime: { lte: d.decidedAt }, pnlUsdt: { lte: 0 } }, select: { id: true } }));
+      }
     } else {
       if (!wallets.has(d.userId)) wallets.set(d.userId, (await prisma.paperWallet.findUnique({ where: { userId: d.userId }, select: { id: true } }))?.id ?? null);
       const walletId = wallets.get(d.userId);
       if (!walletId) continue;
-      holding = !!(await prisma.paperTradeLog.findFirst({ where: { walletId, symbol: d.symbol, side: d.side, entryTime: { lte: before }, exitTime: { gt: d.decidedAt } }, select: { id: true } }))
+      const holding = !!(await prisma.paperTradeLog.findFirst({ where: { walletId, symbol: d.symbol, side: d.side, entryTime: { lte: before }, exitTime: { gt: d.decidedAt } }, select: { id: true } }))
         || !!(await prisma.paperPosition.findFirst({ where: { walletId, symbol: d.symbol, side: d.side, openedAt: { lte: before } }, select: { id: true } }));
+      if (holding) reason = 'holding';
+      else {
+        lastClose = await prisma.paperTradeLog.findFirst({ where: { walletId, symbol: d.symbol, exitTime: { lte: d.decidedAt } }, orderBy: { exitTime: 'desc' }, select: { pnlUsdt: true, exitTime: true } });
+        if (trade?.blockLossSymbols) anyLoss = !!(await prisma.paperTradeLog.findFirst({ where: { walletId, symbol: d.symbol, exitTime: { lte: d.decidedAt }, pnlUsdt: { lte: 0 } }, select: { id: true } }));
+      }
     }
-    if (holding) {
-      await prisma.mlDecision.update({ where: { id: d.id }, data: { skipReason: 'holding' } });
+    if (!reason && anyLoss) reason = 'lossBlock';
+    if (!reason && lastClose && trade) {
+      const h = resolveReEntryCooldownHours(trade, lastClose.pnlUsdt > 0);
+      if (h && d.decidedAt.getTime() - lastClose.exitTime.getTime() < h * 3_600_000) reason = 'cooldown';
+    }
+    if (reason) {
+      await prisma.mlDecision.update({ where: { id: d.id }, data: { skipReason: reason } });
       marked++;
     }
   }
