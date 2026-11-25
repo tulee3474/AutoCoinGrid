@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import FundingWhatIf from './FundingWhatIf';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { useStore } from '../store';
 import { createStrategy, updateStrategy, getStrategies, deleteStrategy, toggleStrategy, validateStrategy, runBacktest, getPresets, AdminPreset } from '../utils/api';
@@ -739,6 +740,31 @@ export default function Strategy() {
                 <NumberInput label="" value={draftConditions.minListingDays}
                   onChange={v => setDraftConditions({ minListingDays: v })} min={1} max={365} unit="일 미만 상장 코인 제외"
                   fieldId="min-listing-days" emptyTracker={emptyFields} />
+              </div>
+            )}
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <input type="checkbox" id="maxFundingCost" className="w-4 h-4 accent-accent"
+                checked={draftConditions.maxFundingCostPerDay != null}
+                onChange={e => setDraftConditions({ maxFundingCostPerDay: e.target.checked ? 1 : null })} />
+              <label htmlFor="maxFundingCost" className="text-sm text-gray-300 cursor-pointer">
+                펀딩 비용 필터 <span className="text-gray-500 text-xs">(보유 중 펀딩비를 많이 내야 하는 코인 진입 안 함)</span>
+              </label>
+            </div>
+            {draftConditions.maxFundingCostPerDay != null && (
+              <div className="ml-7 space-y-2">
+                <NumberInput label="" value={draftConditions.maxFundingCostPerDay}
+                  onChange={v => setDraftConditions({ maxFundingCostPerDay: v })} min={0} max={100}
+                  unit="% 넘으면 진입 안 함 (하루 펀딩 비용, 포지션 명목가치 대비)" fieldId="max-funding-cost" emptyTracker={emptyFields} />
+                <p className="text-xs text-gray-600">
+                  하루 비용 = 직전 정산 펀딩비 × 하루 정산 횟수. {draftSide === 'SHORT' ? '숏은 펀딩비가 마이너스일 때 비용' : '롱은 펀딩비가 플러스일 때 비용'}입니다.
+                  예: 1시간 정산 −0.4% → 하루 9.6% / 8시간 정산 −0.01% → 하루 0.03%. 레버리지 2배면 증거금 대비로는 그 2배입니다.
+                  백테스트·전략 검증에도 같은 규칙이 적용됩니다.
+                </p>
+                {editingId
+                  ? <FundingWhatIf strategyId={editingId} limit={draftConditions.maxFundingCostPerDay} />
+                  : <p className="text-xs text-gray-600">저장된 전략을 '수정'으로 열면 과거 거래로 효과를 확인할 수 있습니다.</p>}
               </div>
             )}
           </div>

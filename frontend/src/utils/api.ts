@@ -494,3 +494,13 @@ export const updateMlFilter = (strategyId: string, patch: { applyPaper?: boolean
   api.patch(`/ml/${strategyId}`, patch).then(r => r.data as { filter: MlFilterInfo });
 export const deleteMlFilter = (strategyId: string) =>
   api.delete(`/ml/${strategyId}`).then(r => r.data);
+
+// ── 펀딩 비용 필터 사후 점검: 전략의 과거 거래마다 진입 시각의 하루 펀딩 비용 ──
+export interface FundingWhatIfTrade {
+  symbol: string; entryTime: number; exitTime: number; exitReason: string;
+  netUsdt: number; netPct: number; fundingUsdt: number | null;   // 실거래: 순손익(펀딩·수수료 포함) / 가상: 가격 손익
+  costPerDayPct: number | null; ratePct: number | null; intervalH: number | null;   // null = 펀딩 이력 없음
+}
+export const getFundingWhatIf = (strategyId: string, source: 'live' | 'paper', days: number) =>
+  api.post('/backtest/funding-whatif', { strategyId, source, days }, { timeout: 600_000 })
+    .then(r => r.data as { source: string; days: number; side: string; trades: FundingWhatIfTrade[]; symbolsFailed: number });

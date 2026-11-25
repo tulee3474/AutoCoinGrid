@@ -19,6 +19,8 @@ export interface StrategyConditions {
   btcChangeFilter?: { timeframe: '1h' | '4h' | '24h'; min: number; max: number } | null;
   // null/미설정 = 100(전체). 유동성 통과 코인 중 거래량 상위 N%만 스캔·검증 (백엔드와 동일 기준)
   candidateTopPct?: number | null;
+  // null/미설정 = 비활성. 하루 펀딩 비용(명목가치 대비 %)이 이 값보다 크면 진입 안 함 (숏: 펀딩비 마이너스가 비용)
+  maxFundingCostPerDay?: number | null;
   // 하위 호환성
   priceAboveMa200?: boolean;
 }

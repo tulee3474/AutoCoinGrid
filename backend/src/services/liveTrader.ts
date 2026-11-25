@@ -1,6 +1,7 @@
 import { BinanceService, binance } from './binance';
 import { scanMarket } from './scanner';
 import { checkMlFilter } from './ml/filter';
+import { checkFundingNow, shouldLogFundingBlock, fmtFundingCost } from './fundingFilter';
 import { computeIndicators } from './indicator';
 import { StrategyConfig, StrategyConditions, TradeConfig, Side } from '../types';
 import prisma from '../lib/prisma';
@@ -1231,6 +1232,14 @@ async function runLiveScanCycle(userId: string, broadcast: (data: unknown) => vo
       addLog(userId, `전략 "${strategy.name}"(${strategy.side}): 후보 ${signals.length}개, 충족 ${fullSignals.length}개`);
       for (const signal of fullSignals) {
         // AI 진입 필터 (전략에 켜져 있을 때만) — 판정 실패 시 필터 없이 원래 전략대로 진입
+        // 펀딩 비용 필터 (전략에 설정했을 때만) — 하루 펀딩 비용이 상한보다 크면 진입 안 함. 조회 실패 시 막지 않음
+        const fc = await checkFundingNow(strategy.conditions, strategy.side, signal.symbol);
+        if (fc.blocked) {
+          if (fc.cost && shouldLogFundingBlock(`${userId}:${strategy.id}:${signal.symbol}`)) {
+            addLog(userId, `💸 [펀딩 필터] ${signal.symbol} ${fmtFundingCost(fc.cost)} > 기준 ${strategy.conditions.maxFundingCostPerDay}% — 진입 안 함 (1시간마다 다시 확인)`, 'info');
+          }
+          continue;
+        }
         // 이미 보유 중·쿨다운 등으로 어차피 진입 안 할 신호는 AI 판정 생략 (판정 기록 중복 방지) — 진입 시도는 그대로 해서 기존 로그 유지
         const eligible = await isLiveEntryEligible(userId, signal.symbol, strategy.trade, strategy.side);
         const ml = !eligible ? null : await checkMlFilter(strategy, signal.symbol, 'live', { userId, price: signal.price }).catch((e: any) => {

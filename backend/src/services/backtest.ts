@@ -2,6 +2,7 @@ import { Kline, StrategyConditions, TradeConfig, BacktestResult, BacktestTrade, 
 import { calcRSI, calc24hChange, candlesPerDay } from './indicator';
 import { calcPdfGridPrices, calcPdfAvgEntry, calcPdfStopLoss, calcTakeProfitPrice, calcSimpleStopLoss, calcIsolatedLiquidationPrice, capSlWithLiquidation, truncateGridsToSafeZone, resolveReEntryCooldownHours, dirSign } from './gridUtils';
 import { binance, binanceMaster, pickLeverageBracket, LeverageBracket, FundingRateRow } from './binance';
+import { fundingCostAt, fundingBlocked } from './fundingFilter';
 
 // 실거래는 진입·그리드 추가·TP/SL 전부 시장가(MARKET/STOP_MARKET/TAKE_PROFIT_MARKET)라 테이커 수수료 적용
 // (바이낸스 USDT-M 기본 테이커 0.05%, BNB 할인/VIP 미반영)
@@ -292,9 +293,16 @@ export async function runBacktest(
     ? await binanceMaster.getLeverageBracket(symbol).catch(() => [])
     : [];
 
+  let fundingForFilter: FundingRateRow[] | null | undefined;
   let i = 20; // MA20 기준으로 워밍업
   while (i < klines.length - 1) {
     if (checkConditions(klines, i, conditions, interval, side, btcKlines)) {
+      // 펀딩 비용 필터: 진입 시각(다음 캔들 시작) 기준 직전 정산 펀딩비로 판정 — 실거래 스캐너와 같은 규칙.
+      // 펀딩 이력은 신호가 처음 나온 코인만 받음 (아래 순손익 계산에서도 캐시로 재사용)
+      if (conditions.maxFundingCostPerDay != null && i + 1 < klines.length) {
+        if (fundingForFilter === undefined) fundingForFilter = await binance.getFundingRateHistory(symbol, klines[0].openTime, fundingWait);
+        if (fundingBlocked(conditions, fundingCostAt(fundingForFilter, klines[i + 1].openTime, side))) { i++; continue; }
+      }
       const sim = simulateTrade(klines, i, trade, interval, brackets, side);
       if (sim) {
         const tradeSim = sim.trade;

@@ -2,7 +2,11 @@ import { Router } from 'express';
 import { binance } from '../services/binance';
 import { runBacktest, computePnlStats } from '../services/backtest';
 import { selectTopVolume } from '../services/candidateFilter';
-import { StrategyConditions, TradeConfig, Kline } from '../types';
+import { StrategyConditions, TradeConfig, Kline, Side } from '../types';
+import { requireAuth, AuthRequest } from '../middleware/auth';
+import prisma from '../lib/prisma';
+import { fundingCostAt } from '../services/fundingFilter';
+import { liveNetPct } from '../services/ml/liveNet';
 
 const router = Router();
 
@@ -210,6 +214,61 @@ router.post('/validate', async (req, res) => {
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// POST /api/backtest/funding-whatif { strategyId, source: 'live'|'paper', days } — 펀딩 비용 필터 사후 점검
+// 이 전략의 과거 거래마다 "진입 시각의 하루 펀딩 비용"을 바이낸스 공개 펀딩비 이력으로 다시 계산해 돌려줌.
+// 상한값에 따른 걸러짐/결과 계산은 화면에서 즉시 (값을 바꿔볼 때마다 다시 조회하지 않도록)
+router.post('/funding-whatif', requireAuth, async (req: AuthRequest, res) => {
+  const strategy = await prisma.strategy.findFirst({
+    where: { id: String(req.body?.strategyId ?? ''), userId: req.userId },
+    select: { id: true, name: true, side: true },
+  });
+  if (!strategy) return res.status(404).json({ error: '전략을 찾을 수 없음' });
+  const source = req.body?.source === 'paper' ? 'paper' : 'live';
+  const days = Math.min(365, Math.max(7, Number(req.body?.days) || 90));
+  const since = new Date(Date.now() - days * 86_400_000);
+  const side = (strategy.side as Side) ?? 'SHORT';
+
+  type Row = { symbol: string; entryTime: Date; exitTime: Date; exitReason: string; netUsdt: number; netPct: number; fundingUsdt: number | null };
+  let trades: Row[] = [];
+  if (source === 'live') {
+    const logs = await prisma.liveTradeLog.findMany({ where: { userId: req.userId, strategyName: strategy.name, side, entryTime: { gte: since } } });
+    trades = logs.map(l => ({
+      symbol: l.symbol, entryTime: l.entryTime, exitTime: l.exitTime, exitReason: l.exitReason,
+      netUsdt: l.pnlUsdt + l.fundingFee + l.commission, netPct: liveNetPct(l), fundingUsdt: l.feesSynced ? l.fundingFee : null,
+    }));
+  } else {
+    const wallet = await prisma.paperWallet.findUnique({ where: { userId: req.userId }, select: { id: true } });
+    const logs = wallet ? await prisma.paperTradeLog.findMany({ where: { walletId: wallet.id, strategyName: strategy.name, side, entryTime: { gte: since } } }) : [];
+    // 가상 지갑 기록엔 펀딩·수수료가 없음 → 가격 손익 기준
+    trades = logs.map(l => ({ symbol: l.symbol, entryTime: l.entryTime, exitTime: l.exitTime, exitReason: l.exitReason, netUsdt: l.pnlUsdt, netPct: l.pnlPct, fundingUsdt: null }));
+  }
+
+  // 코인별로 펀딩비 이력 1번씩 (동시 4개, 바이낸스 요청 한도 안에서 대기)
+  const bySym = new Map<string, Row[]>();
+  for (const t of trades) (bySym.get(t.symbol) ?? bySym.set(t.symbol, []).get(t.symbol)!).push(t);
+  const out: any[] = [];
+  let failed = 0;
+  const queue = [...bySym.entries()];
+  await Promise.all(Array.from({ length: 4 }, async () => {
+    for (let item; (item = queue.shift()); ) {
+      const [sym, list] = item;
+      const minT = Math.min(...list.map(t => t.entryTime.getTime()));
+      const rows = await binance.getFundingRateHistory(sym, minT - 2 * 86_400_000, true).catch(() => null);
+      if (!rows) failed++;
+      for (const t of list) {
+        const c = fundingCostAt(rows, t.entryTime.getTime(), side);
+        out.push({
+          symbol: sym, entryTime: t.entryTime.getTime(), exitTime: t.exitTime.getTime(), exitReason: t.exitReason,
+          netUsdt: t.netUsdt, netPct: t.netPct, fundingUsdt: t.fundingUsdt,
+          costPerDayPct: c?.costPerDayPct ?? null, ratePct: c?.ratePct ?? null, intervalH: c?.intervalH ?? null,
+        });
+      }
+    }
+  }));
+  out.sort((a, b) => b.entryTime - a.entryTime);
+  res.json({ source, days, side, trades: out, symbolsFailed: failed });
 });
 
 export default router;
