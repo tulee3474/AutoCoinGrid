@@ -399,7 +399,7 @@ export interface AdminPreset {
 // ── AI 진입 필터 ──────────────────────────────────────────────
 export interface MlPnlStats { winRate: number; avgProfitPct: number; avgLossPct: number; expectedValuePct: number }
 export interface MlThresholdRow { threshold: number; keptPct: number; trades: number; stats: MlPnlStats; sumPct: number; sumBasePct?: number; evBasePct?: number }
-export type MlTarget = 'profit' | 'avoidLoss';
+export type MlTarget = 'profit' | 'avoidLoss' | 'avoidLossUsd';
 export interface MlFilterInfo {
   target?: MlTarget;     // 없으면 profit (옛 모델)
   applyPaper: boolean;   // 가상 지갑에 적용

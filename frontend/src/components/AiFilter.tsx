@@ -20,7 +20,7 @@ export default function AiFilter() {
   const [includeDecisions, setIncludeDecisions] = useState(true);
   const [searchMode, setSearchMode] = useState<'quick' | 'thorough'>('quick');
   const [liveWeight, setLiveWeight] = useState(2);
-  const [target, setTarget] = useState<MlTarget>('avoidLoss');
+  const [target, setTarget] = useState<MlTarget>('avoidLossUsd');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -71,7 +71,7 @@ export default function AiFilter() {
   const training = job?.status === 'running';
   const m = filter?.metrics;
   const hasData = (data?.backtest.count ?? 0) > 0 && !data?.configChanged && !data?.featureChanged;
-  const scoreLabel = (filter?.target ?? 'profit') === 'avoidLoss' ? '안전 점수' : '예상 승률';
+  const scoreLabel = (filter?.target ?? 'profit') === 'profit' ? '예상 승률' : '안전 점수';
   const pendingLive = Math.max(0, (data?.liveTradesAvailable ?? 0) - (data?.live.count ?? 0));
   const hasBase = m?.baseline.sumBasePct !== undefined;   // 금액 기준 열 (이 기능 이후 학습한 모델만)
   const current: MlThresholdRow | undefined = m?.table.find(r => Math.abs(r.threshold - (filter?.threshold ?? -1)) < 1e-6);
@@ -107,7 +107,8 @@ export default function AiFilter() {
           <div>
             <label className="label">학습 목표</label>
             <select value={target} onChange={e => setTarget(e.target.value as MlTarget)} className="input" disabled={training}>
-              <option value="avoidLoss">큰 손실 피하기 (추천)</option>
+              <option value="avoidLossUsd">큰 금액 손실 피하기 (추천)</option>
+              <option value="avoidLoss">큰 손실 피하기 (% 기준)</option>
               <option value="profit">수익 여부</option>
             </select>
           </div>
@@ -159,8 +160,10 @@ export default function AiFilter() {
           {data?.featureChanged && ' 서버 업데이트로 AI 입력 지표가 바뀌어 처음부터 다시 수집합니다.'}
         </p>
         <p className="text-xs text-gray-600">
-          {target === 'avoidLoss'
-            ? "큰 손실 피하기: '이긴 거래 수익 중앙값의 2배(최소 3%) 이상 잃은 거래'를 피하도록 학습합니다. 그리드 숏처럼 자주 조금 벌고 가끔 크게 잃는 전략에 적합합니다."
+          {target === 'avoidLossUsd'
+            ? "큰 금액 손실 피하기: 손익을 기본 진입금 대비(그리드로 커진 증거금 반영)로 보고, '이긴 거래 수익 중앙값의 2배(최소 3%) 넘게 잃은 거래'를 피하도록 학습합니다. 그리드가 다 찬 뒤 손절처럼 실제로 돈을 많이 잃는 거래를 직접 겨냥합니다."
+            : target === 'avoidLoss'
+            ? "큰 손실 피하기 (% 기준): '이긴 거래 수익 중앙값의 2배(최소 3%) 이상 잃은 거래'를 증거금 대비 %로 판단합니다. 그리드로 증거금이 커진 손절의 무게는 반영되지 않습니다."
             : '수익 여부: 순손익이 플러스로 끝날지를 맞히도록 학습합니다.'}
         </p>
         {training && job && (
@@ -350,7 +353,9 @@ export default function AiFilter() {
               )}
             </p>
             <p className="text-xs text-gray-600 mt-1">
-              학습 목표: {filter.target === 'avoidLoss'
+              학습 목표: {filter.target === 'avoidLossUsd'
+                ? <>큰 금액 손실 피하기 (진입금 대비 -{m.lossCutPct}% 이하 손실 = 큰 손실, 안전 비율 {m.labelPosPct}%) — 안전 점수 = 큰 금액 손실이 아닐 확률</>
+                : filter.target === 'avoidLoss'
                 ? <>큰 손실 피하기 (순손익 -{m.lossCutPct}% 이하 = 큰 손실, 안전 비율 {m.labelPosPct}%) — 안전 점수 = 큰 손실이 아닐 확률</>
                 : <>수익 여부{m.labelPosPct !== undefined && ` (이긴 거래 ${m.labelPosPct}%)`}</>}
               {m.params && <> · 파라미터{m.searchMode === 'thorough' ? '(정밀 탐색)' : ''}: 깊이 {m.params.depth}, 리프 최소 {m.params.minLeaf}, 학습률 {m.params.lr}, 트리 {m.params.trees}

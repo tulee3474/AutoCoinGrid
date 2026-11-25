@@ -35,7 +35,10 @@ export interface ThresholdRow {
   evBasePct?: number;    // 금액 기준 EV (= sumBasePct ÷ 거래 수)
 }
 
-export type MlTarget = 'profit' | 'avoidLoss';
+// profit = 순손익 > 0 / avoidLoss = 큰 손실(증거금 대비 %)이 아님 /
+// avoidLossUsd = 큰 금액 손실이 아님 — 순손익을 기본 진입금 대비로 봐서(그리드로 커진 증거금 반영) 그리드가 다 찬 뒤 손절처럼
+//   실제로 돈을 많이 잃는 거래를 직접 겨냥
+export type MlTarget = 'profit' | 'avoidLoss' | 'avoidLossUsd';
 
 export interface MlFilterState {
   version: 1;
@@ -587,18 +590,20 @@ async function trainFromSamples(
 
   // 라벨
   let lossCutPct: number | undefined;
-  if (opts.target === 'avoidLoss') {
-    const wins = samples.map(s => s.pnl).filter(v => v > 0).sort((a, b) => a - b);
+  if (opts.target === 'avoidLoss' || opts.target === 'avoidLossUsd') {
+    // avoidLossUsd: 기본 진입금 대비 % (= 순손익 % × 증거금 배수). 진입금 $100이면 손익 $와 같은 숫자
+    const val = (s: Sample) => (opts.target === 'avoidLossUsd' ? s.pnl * s.mult : s.pnl);
+    const wins = samples.map(val).filter(v => v > 0).sort((a, b) => a - b);
     const medWin = wins.length ? wins[wins.length >> 1] : 0;
     lossCutPct = +Math.max(3, 2 * medWin).toFixed(2);
-    for (const s of samples) s.y = s.pnl > -lossCutPct ? 1 : 0;
+    for (const s of samples) s.y = val(s) > -lossCutPct ? 1 : 0;
   } else {
     for (const s of samples) s.y = s.pnl > 0 ? 1 : 0;
   }
   const nNeg = samples.filter(s => s.y === 0).length, nPos = samples.length - nNeg;
   if (Math.min(nNeg, nPos) < 15) {
-    throw new Error(opts.target === 'avoidLoss'
-      ? `큰 손실(순손익 ${-lossCutPct!}% 이하) 거래가 ${nNeg}건뿐이라 학습할 수 없습니다. 학습 목표를 '수익 여부'로 바꾸거나 기간을 늘려보세요.`
+    throw new Error(opts.target !== 'profit'
+      ? `큰 손실(${opts.target === 'avoidLossUsd' ? '진입금 대비' : '순손익'} ${-lossCutPct!}% 이하) 거래가 ${nNeg}건뿐이라 학습할 수 없습니다. 학습 목표를 '수익 여부'로 바꾸거나 기간을 늘려보세요.`
       : `이긴 거래 ${nPos}건 / 진 거래 ${nNeg}건 — 한쪽이 너무 적어 학습할 수 없습니다.`);
   }
 

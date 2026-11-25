@@ -17,7 +17,9 @@ const H = 3_600_000;
 const MINS: Record<string, number> = { '15m': 15, '30m': 30, '1h': 60, '4h': 240, '1d': 1440 };
 const GIVE_UP_MS = 30 * 24 * H;   // 30일이 지나도 결과가 안 나오면(시간 만료 없는 전략 등) 미확정 처리
 
-export function isGood(mlTarget: string, netPnlPct: number, lossCutPct: number | null): boolean {
+// grids: 그리드 체결 수 — avoidLossUsd는 순손익 %에 증거금 배수(1+grids)를 곱한 진입금 대비 % 로 판단
+export function isGood(mlTarget: string, netPnlPct: number, lossCutPct: number | null, grids = 0): boolean {
+  if (mlTarget === 'avoidLossUsd') return netPnlPct * (1 + grids) > -(lossCutPct ?? 0);
   return mlTarget === 'avoidLoss' ? netPnlPct > -(lossCutPct ?? 0) : netPnlPct > 0;
 }
 
@@ -49,7 +51,7 @@ export async function evaluatePendingDecisions(limit = 100): Promise<{ done: num
       const r = await simulateEntryAt(klines, t0, d.price, d.trade as unknown as TradeConfig, d.interval, d.side as Side, d.symbol, funding);
       // 결과 미확정: 아직 진행 중(데이터 끝 캔들에서 끊김) — 다음 평가 때 다시
       if (!r || (r.exitReason === 'timeout' && r.exitTime >= klines[klines.length - 1].openTime)) { await giveUp(); continue; }
-      const good = isGood(d.mlTarget, r.netPnlPct, d.lossCutPct);
+      const good = isGood(d.mlTarget, r.netPnlPct, d.lossCutPct, r.gridsFilled);
       await prisma.mlDecision.update({
         where: { id: d.id },
         data: {
